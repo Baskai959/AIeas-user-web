@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+qa-screenshots/
+vite-dev.*.log
+*.tsbuildinfo
+*.local
+.env.local
+.env.*.local
+/AGENTS.md
+/参考UI
+/public/media/

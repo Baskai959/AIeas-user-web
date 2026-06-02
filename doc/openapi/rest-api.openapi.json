@@ -1,0 +1,2245 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "直播竞拍用户端 REST API",
+    "version": "2026.05.26-fixed",
+    "description": "修正后的用户端 REST API 规范。本文档不包含 WebSocket 连接和实时消息定义。金额单位为人民币分，JSON ID 统一使用字符串，除图片二进制接口外响应统一为 { code, message, data, trace_id }。"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:4523/m1/8317345-8081123-default",
+      "description": "Apifox Mock 或本地联调基地址"
+    },
+    {
+      "url": "http://127.0.0.1:8080",
+      "description": "本地后端服务"
+    }
+  ],
+  "tags": [
+    {
+      "name": "认证",
+      "description": "登录、令牌刷新、当前用户和退出登录"
+    },
+    {
+      "name": "公共基础",
+      "description": "图片、心跳和基础指标"
+    },
+    {
+      "name": "直播间",
+      "description": "直播间列表、详情、拍品列表和统计"
+    },
+    {
+      "name": "拍卖",
+      "description": "拍品状态快照和报名"
+    },
+    {
+      "name": "订单",
+      "description": "我的订单、订单详情和支付"
+    }
+  ],
+  "paths": {
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "认证"
+        ],
+        "summary": "用户、商家、管理员登录",
+        "operationId": "authLogin",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "登录成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "tags": [
+          "认证"
+        ],
+        "summary": "刷新访问令牌",
+        "operationId": "authRefresh",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "刷新成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "tags": [
+          "认证"
+        ],
+        "summary": "获取当前用户",
+        "operationId": "authMe",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "获取成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "认证"
+        ],
+        "summary": "退出登录并注销刷新令牌",
+        "operationId": "authLogout",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogoutRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "退出成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogoutResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/images": {
+      "get": {
+        "tags": [
+          "公共基础"
+        ],
+        "summary": "读取商品图片",
+        "description": "返回图片二进制流，不使用 JSON 响应包装。对象 key 使用 query 参数承载，避免 path 参数无法表达子路径。",
+        "operationId": "getImage",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "description": "对象存储 key，不允许为空或包含 ..。",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "lots/3001.jpg"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "图片二进制流",
+            "headers": {
+              "Content-Type": {
+                "required": true,
+                "description": "实际图片类型或 application/octet-stream。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "required": false,
+                "description": "建议 private, max-age=300。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/ping": {
+      "get": {
+        "tags": [
+          "公共基础"
+        ],
+        "summary": "服务心跳",
+        "operationId": "ping",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "服务正常",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PingResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "公共基础"
+        ],
+        "summary": "基础指标",
+        "operationId": "metrics",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "获取成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricsResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/live-rooms": {
+      "get": {
+        "tags": [
+          "直播间"
+        ],
+        "summary": "查询直播间列表",
+        "description": "用户端默认查询正在开播直播间，status 不传时服务端按 LIVE 处理。",
+        "operationId": "listLiveRooms",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "直播间状态。不传时默认 LIVE。",
+            "schema": {
+              "$ref": "#/components/schemas/LiveRoomStatus"
+            }
+          },
+          {
+            "name": "merchantId",
+            "in": "query",
+            "required": false,
+            "description": "商家 ID。",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Offset"
+          },
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "查询成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveRoomPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/live-rooms/{id}": {
+      "get": {
+        "tags": [
+          "直播间"
+        ],
+        "summary": "获取直播间详情",
+        "operationId": "getLiveRoom",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PathId"
+          },
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "获取成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveRoomResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/live-rooms/{id}/lots": {
+      "get": {
+        "tags": [
+          "直播间"
+        ],
+        "summary": "查询直播间拍品列表",
+        "description": "返回面向用户端展示的拍品模型，不直接暴露后端内部拍卖表结构。",
+        "operationId": "listLiveRoomLots",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PathId"
+          },
+          {
+            "$ref": "#/components/parameters/LotsLimit"
+          },
+          {
+            "$ref": "#/components/parameters/Offset"
+          },
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "查询成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveRoomLotPageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/live-rooms/{id}/stats": {
+      "get": {
+        "tags": [
+          "直播间"
+        ],
+        "summary": "查询直播间实时统计",
+        "operationId": "getLiveRoomStats",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PathId"
+          },
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "查询成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveRoomStatsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/auctions/{id}/state": {
+      "get": {
+        "tags": [
+          "拍卖"
+        ],
+        "summary": "查询拍品实时状态快照",
+        "description": "用于断线恢复、倒计时归零确认和实时层要求刷新状态时修正本地状态。",
+        "operationId": "getAuctionState",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PathId"
+          },
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "查询成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuctionStateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/auctions/{id}/enroll": {
+      "post": {
+        "tags": [
+          "拍卖"
+        ],
+        "summary": "买家报名并冻结保证金",
+        "description": "该操作有副作用，必须提交 Idempotency-Key。重复提交相同幂等键和相同请求体时返回同一报名结果。",
+        "operationId": "enrollAuction",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PathId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "报名成功或重复返回既有结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/orders/mine": {
+      "get": {
+        "tags": [
+          "订单"
+        ],
+        "summary": "查询当前用户订单",
+        "description": "当前用户由访问令牌推导，不允许用户端传 winnerId 或 sellerId 伪造身份过滤。",
+        "operationId": "listMyOrders",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "auctionId",
+            "in": "query",
+            "required": false,
+            "description": "按拍卖 ID 查询结果页订单。",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "订单状态。",
+            "schema": {
+              "$ref": "#/components/schemas/OrderStatus"
+            }
+          },
+          {
+            "name": "payStatus",
+            "in": "query",
+            "required": false,
+            "description": "支付状态。",
+            "schema": {
+              "$ref": "#/components/schemas/PayStatus"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Offset"
+          },
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "查询成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/orders/{id}": {
+      "get": {
+        "tags": [
+          "订单"
+        ],
+        "summary": "获取订单详情",
+        "operationId": "getOrder",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PathId"
+          },
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "获取成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/orders/{id}/pay": {
+      "post": {
+        "tags": [
+          "订单"
+        ],
+        "summary": "支付订单",
+        "description": "当前版本用于模拟支付，真实支付渠道接入前仍应保持幂等。",
+        "operationId": "payOrder",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PathId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "支付成功或重复返回既有结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "parameters": {
+      "XRequestId": {
+        "name": "X-Request-Id",
+        "in": "header",
+        "required": false,
+        "description": "可选请求追踪 ID。未传时服务端生成，并在响应 trace_id 中返回。",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "description": "幂等键。相同用户、方法、路径、键和请求体重复提交时返回同一成功结果；请求体不同应返回 409。",
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "PathId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "资源 ID。JSON 层统一使用字符串，服务端内部可映射为 uint64。",
+        "schema": {
+          "$ref": "#/components/schemas/Id"
+        }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "每页数量。",
+        "schema": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        }
+      },
+      "LotsLimit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "直播间拍品列表每页数量。",
+        "schema": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 50
+        }
+      },
+      "Offset": {
+        "name": "offset",
+        "in": "query",
+        "required": false,
+        "description": "分页偏移量。",
+        "schema": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0,
+          "default": 0
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "请求参数错误，包含缺少幂等键。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "未登录或访问令牌无效。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "无权限或账号停用。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "资源不存在。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "资源状态冲突或幂等请求内容冲突。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "description": "请求过于频繁。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "服务端内部错误。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Id": {
+        "type": "string",
+        "minLength": 1,
+        "example": "1001",
+        "description": "资源 ID。JSON 中使用字符串，避免 JavaScript 丢失 uint64 精度。"
+      },
+      "MoneyCent": {
+        "type": "integer",
+        "format": "int64",
+        "minimum": 0,
+        "description": "金额，单位为人民币分。",
+        "example": 150100
+      },
+      "TimestampMs": {
+        "type": "integer",
+        "format": "int64",
+        "minimum": 0,
+        "description": "Unix 毫秒时间戳。",
+        "example": 1779811200000
+      },
+      "TraceId": {
+        "type": "string",
+        "example": "req_01HY..."
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32",
+            "example": 40001
+          },
+          "message": {
+            "type": "string",
+            "example": "参数不合法"
+          },
+          "data": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": true,
+            "example": null
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      },
+      "UserRole": {
+        "type": "string",
+        "enum": [
+          "buyer",
+          "merchant",
+          "admin"
+        ]
+      },
+      "UserStatus": {
+        "type": "string",
+        "enum": [
+          "ACTIVE",
+          "DISABLED"
+        ]
+      },
+      "SafeUser": {
+        "type": "object",
+        "required": [
+          "id",
+          "nickname",
+          "role",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "nickname": {
+            "type": "string",
+            "example": "竞拍用户"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole"
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserStatus"
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "account",
+          "password",
+          "role"
+        ],
+        "properties": {
+          "account": {
+            "type": "string",
+            "minLength": 1,
+            "example": "buyer001"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "format": "password",
+            "example": "Passw0rd!"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole"
+          }
+        }
+      },
+      "LoginResult": {
+        "type": "object",
+        "required": [
+          "accessToken",
+          "refreshToken",
+          "expiresIn",
+          "user"
+        ],
+        "properties": {
+          "accessToken": {
+            "type": "string"
+          },
+          "refreshToken": {
+            "type": "string"
+          },
+          "expiresIn": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 1,
+            "description": "访问令牌有效期，单位秒。",
+            "example": 43200
+          },
+          "user": {
+            "$ref": "#/components/schemas/SafeUser"
+          }
+        }
+      },
+      "RefreshRequest": {
+        "type": "object",
+        "required": [
+          "refreshToken"
+        ],
+        "properties": {
+          "refreshToken": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "RefreshResult": {
+        "type": "object",
+        "required": [
+          "accessToken",
+          "expiresIn"
+        ],
+        "properties": {
+          "accessToken": {
+            "type": "string"
+          },
+          "expiresIn": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 1,
+            "example": 43200
+          }
+        }
+      },
+      "LogoutRequest": {
+        "type": "object",
+        "required": [
+          "refreshToken"
+        ],
+        "properties": {
+          "refreshToken": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "LogoutResult": {
+        "type": "object",
+        "required": [
+          "loggedOut"
+        ],
+        "properties": {
+          "loggedOut": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "LiveRoomStatus": {
+        "type": "string",
+        "enum": [
+          "LIVE",
+          "UPCOMING",
+          "ENDED"
+        ],
+        "default": "LIVE"
+      },
+      "LiveRoom": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "merchantName",
+          "status",
+          "onlineCount",
+          "watcherCount"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "title": {
+            "type": "string",
+            "example": "珠宝严选直播间"
+          },
+          "merchantId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "merchantName": {
+            "type": "string",
+            "example": "珠宝严选"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LiveRoomStatus"
+          },
+          "coverUrl": {
+            "type": "string",
+            "format": "uri-reference",
+            "example": "/api/v1/images?key=rooms/1001.jpg"
+          },
+          "videoUrl": {
+            "type": "string",
+            "format": "uri-reference",
+            "example": "/media/live-room-demo.mp4"
+          },
+          "onlineCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 328
+          },
+          "watcherCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 1208
+          },
+          "activeAuctionId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ],
+            "nullable": true
+          },
+          "liveSessionId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ],
+            "nullable": true
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "AuctionStatus": {
+        "type": "string",
+        "enum": [
+          "UPCOMING",
+          "READY",
+          "WARMING_UP",
+          "RUNNING",
+          "EXTENDED",
+          "HAMMER_PENDING",
+          "CLOSED_WON",
+          "CLOSED_FAILED",
+          "SETTLED",
+          "CANCELED"
+        ]
+      },
+      "AuctionRuleSnapshot": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "startPrice": {
+            "$ref": "#/components/schemas/MoneyCent"
+          },
+          "minIncrement": {
+            "$ref": "#/components/schemas/MoneyCent"
+          },
+          "ceilingPrice": {
+            "$ref": "#/components/schemas/MoneyCent"
+          },
+          "antiSnipeSec": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 30
+          },
+          "extendSec": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 30
+          }
+        }
+      },
+      "LiveRoomLot": {
+        "type": "object",
+        "required": [
+          "id",
+          "auctionId",
+          "roomId",
+          "title",
+          "status",
+          "startPrice",
+          "currentPrice",
+          "endTsMs"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "auctionId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "roomId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "title": {
+            "type": "string",
+            "example": "18K 金钻石项链"
+          },
+          "subtitle": {
+            "type": "string",
+            "example": "GIA 证书"
+          },
+          "description": {
+            "type": "string",
+            "example": "主石 0.8ct，18K 金镶嵌"
+          },
+          "imageUrl": {
+            "type": "string",
+            "format": "uri-reference",
+            "example": "/api/v1/images?key=lots/3001.jpg"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AuctionStatus"
+          },
+          "startPrice": {
+            "$ref": "#/components/schemas/MoneyCent"
+          },
+          "currentPrice": {
+            "$ref": "#/components/schemas/MoneyCent"
+          },
+          "finalPrice": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MoneyCent"
+              }
+            ],
+            "nullable": true,
+            "description": "落槌价。终态 CLOSED_WON、SETTLED、HAMMER_PENDING 返回；流拍时为空。"
+          },
+          "leaderBidderId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ],
+            "nullable": true
+          },
+          "startTsMs": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TimestampMs"
+              }
+            ],
+            "nullable": true
+          },
+          "endTsMs": {
+            "$ref": "#/components/schemas/TimestampMs"
+          },
+          "ruleSnapshot": {
+            "$ref": "#/components/schemas/AuctionRuleSnapshot"
+          },
+          "depositAmount": {
+            "$ref": "#/components/schemas/MoneyCent"
+          },
+          "participantCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 18
+          },
+          "bidCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 36
+          },
+          "sortOrder": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 1
+          }
+        }
+      },
+      "LiveRoomStats": {
+        "type": "object",
+        "required": [
+          "roomId",
+          "onlineCount",
+          "watcherCount",
+          "bidCount"
+        ],
+        "properties": {
+          "roomId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "onlineCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 328
+          },
+          "watcherCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 1208
+          },
+          "bidCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 36
+          },
+          "gmvCent": {
+            "$ref": "#/components/schemas/MoneyCent"
+          }
+        }
+      },
+      "DepositStatus": {
+        "type": "string",
+        "enum": [
+          "NOT_ENROLLED",
+          "PENDING",
+          "READY",
+          "CAPTURED",
+          "RELEASED",
+          "FAILED"
+        ]
+      },
+      "MyEnrollment": {
+        "type": "object",
+        "required": [
+          "enrolled",
+          "depositStatus"
+        ],
+        "properties": {
+          "enrolled": {
+            "type": "boolean",
+            "example": true
+          },
+          "depositStatus": {
+            "$ref": "#/components/schemas/DepositStatus"
+          },
+          "depositLedgerId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ],
+            "nullable": true
+          }
+        }
+      },
+      "AuctionState": {
+        "type": "object",
+        "required": [
+          "auctionId",
+          "status",
+          "currentPrice",
+          "endTsMs",
+          "serverTsMs",
+          "myEnrollment"
+        ],
+        "properties": {
+          "auctionId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AuctionStatus"
+          },
+          "currentPrice": {
+            "$ref": "#/components/schemas/MoneyCent"
+          },
+          "leaderBidderId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ],
+            "nullable": true
+          },
+          "bidCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 36
+          },
+          "participantCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 18
+          },
+          "endTsMs": {
+            "$ref": "#/components/schemas/TimestampMs"
+          },
+          "serverTsMs": {
+            "$ref": "#/components/schemas/TimestampMs"
+          },
+          "myEnrollment": {
+            "$ref": "#/components/schemas/MyEnrollment"
+          }
+        }
+      },
+      "EnrollRequest": {
+        "type": "object",
+        "required": [
+          "depositPayChannel"
+        ],
+        "properties": {
+          "depositPayChannel": {
+            "type": "string",
+            "enum": [
+              "MOCK_PAY",
+              "BALANCE"
+            ],
+            "example": "MOCK_PAY"
+          }
+        }
+      },
+      "EnrollResult": {
+        "type": "object",
+        "required": [
+          "auctionId",
+          "userId",
+          "enrolled",
+          "depositLedgerId",
+          "depositAmount",
+          "depositStatus"
+        ],
+        "properties": {
+          "auctionId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "userId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "enrolled": {
+            "type": "boolean",
+            "example": true
+          },
+          "depositLedgerId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "depositAmount": {
+            "$ref": "#/components/schemas/MoneyCent"
+          },
+          "depositStatus": {
+            "$ref": "#/components/schemas/DepositStatus"
+          }
+        }
+      },
+      "OrderStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING_PAY",
+          "PAID",
+          "CANCELED",
+          "TIMEOUT",
+          "REFUNDED"
+        ]
+      },
+      "PayStatus": {
+        "type": "string",
+        "enum": [
+          "UNPAID",
+          "PAID",
+          "REFUNDED"
+        ]
+      },
+      "FulfillmentStatus": {
+        "type": "string",
+        "enum": [
+          "UNSHIPPED",
+          "SHIPPED",
+          "RECEIVED"
+        ]
+      },
+      "Order": {
+        "type": "object",
+        "required": [
+          "id",
+          "auctionId",
+          "buyerId",
+          "amount",
+          "status",
+          "payStatus",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "auctionId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "buyerId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "merchantId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/MoneyCent"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          },
+          "payStatus": {
+            "$ref": "#/components/schemas/PayStatus"
+          },
+          "fulfillmentStatus": {
+            "$ref": "#/components/schemas/FulfillmentStatus"
+          },
+          "payDeadline": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lotTitle": {
+            "type": "string",
+            "example": "18K 金钻石项链"
+          },
+          "lotImageUrl": {
+            "type": "string",
+            "format": "uri-reference",
+            "example": "/api/v1/images?key=lots/3001.jpg"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "paidAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "shippedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "PayRequest": {
+        "type": "object",
+        "required": [
+          "payChannel"
+        ],
+        "properties": {
+          "payChannel": {
+            "type": "string",
+            "enum": [
+              "MOCK_PAY",
+              "BALANCE"
+            ],
+            "example": "MOCK_PAY"
+          }
+        }
+      },
+      "PingResult": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "pong"
+          }
+        }
+      },
+      "MetricsResult": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "ok"
+          },
+          "roomsOnline": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 2
+          },
+          "activeAuctions": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 1
+          }
+        }
+      },
+      "LiveRoomPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LiveRoom"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 1
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 1,
+            "example": 20
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 0
+          }
+        }
+      },
+      "LiveRoomLotPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LiveRoomLot"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 1
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 1,
+            "example": 50
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 0
+          }
+        }
+      },
+      "OrderPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Order"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 1
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 1,
+            "example": 20
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "example": 0
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 0
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/LoginResult"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      },
+      "RefreshResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 0
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/RefreshResult"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 0
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SafeUser"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      },
+      "LogoutResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 0
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/LogoutResult"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      },
+      "PingResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 0
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PingResult"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      },
+      "MetricsResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 0
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MetricsResult"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      },
+      "LiveRoomPageResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 0
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/LiveRoomPage"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      },
+      "LiveRoomResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 0
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/LiveRoom"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      },
+      "LiveRoomLotPageResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 0
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/LiveRoomLotPage"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      },
+      "LiveRoomStatsResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 0
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/LiveRoomStats"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      },
+      "AuctionStateResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 0
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AuctionState"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      },
+      "EnrollResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 0
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/EnrollResult"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      },
+      "OrderPageResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 0
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/OrderPage"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      },
+      "OrderResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 0
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/Order"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/TraceId"
+          }
+        }
+      }
+    }
+  }
+}

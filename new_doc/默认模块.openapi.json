@@ -1,0 +1,3421 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "默认模块",
+    "description": "3 周 MVP 直播竞拍系统 REST API 与 WebSocket 连接说明。\nREST 路径保持 /api/v1 前缀，金额单位为分，时间字段使用 ISO 8601 或毫秒时间戳。\n",
+    "version": "1.0.0"
+  },
+  "tags": [
+    {
+      "name": "公共基础/认证"
+    },
+    {
+      "name": "公共基础/媒体"
+    },
+    {
+      "name": "公共基础/系统"
+    },
+    {
+      "name": "公共基础/实时连接"
+    },
+    {
+      "name": "用户端/直播间"
+    },
+    {
+      "name": "用户端/拍品"
+    },
+    {
+      "name": "用户端/订单"
+    }
+  ],
+  "paths": {
+    "/api/v1/auth/login": {
+      "post": {
+        "summary": "用户/商家登录",
+        "deprecated": false,
+        "description": "公开接口。role 必须为 buyer/merchant；admin 推荐使用管理员登录入口。",
+        "operationId": "postauth_login",
+        "tags": [
+          "公共基础/认证"
+        ],
+        "parameters": [
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              },
+              "examples": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/LoginResult"
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "example": "req_..."
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "data",
+                    "trace_id"
+                  ],
+                  "description": "统一响应 envelope；trace_id 来自 X-Request-Id/X-Trace-Id 或服务端生成。"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "summary": "刷新访问令牌",
+        "deprecated": false,
+        "description": "公开接口。refreshToken 无效时返回 401/10002。",
+        "operationId": "postauth_refresh",
+        "tags": [
+          "公共基础/认证"
+        ],
+        "parameters": [
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              },
+              "examples": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/RefreshResult"
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "example": "req_..."
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "data",
+                    "trace_id"
+                  ],
+                  "description": "统一响应 envelope；trace_id 来自 X-Request-Id/X-Trace-Id 或服务端生成。"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "summary": "获取当前用户",
+        "deprecated": false,
+        "description": "JWT 保护；buyer/merchant/admin 均可使用。",
+        "operationId": "getauth_me",
+        "tags": [
+          "公共基础/认证"
+        ],
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Bearer 访问令牌。格式：Bearer <accessToken>。对应 Apifox 鉴权组件 bearerAuth，可使用 Bearer {{bearerToken}}。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^Bearer\\s+.+$",
+              "example": "Bearer {{bearerToken}}"
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/SafeUser"
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "example": "req_..."
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "data",
+                    "trace_id"
+                  ],
+                  "description": "统一响应 envelope；trace_id 来自 X-Request-Id/X-Trace-Id 或服务端生成。"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "summary": "退出登录",
+        "deprecated": false,
+        "description": "JWT 保护；buyer/merchant/admin 均可使用。refreshToken 可选，accessToken 会加入黑名单。",
+        "operationId": "postauth_logout",
+        "tags": [
+          "公共基础/认证"
+        ],
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Bearer 访问令牌。格式：Bearer <accessToken>。对应 Apifox 鉴权组件 bearerAuth，可使用 Bearer {{bearerToken}}。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^Bearer\\s+.+$",
+              "example": "Bearer {{bearerToken}}"
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogoutRequest"
+              },
+              "examples": {}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "loggedOut": {
+                          "type": "boolean",
+                          "example": true
+                        }
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "example": "req_..."
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "data",
+                    "trace_id"
+                  ],
+                  "description": "统一响应 envelope；trace_id 来自 X-Request-Id/X-Trace-Id 或服务端生成。"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/images/{key}": {
+      "get": {
+        "summary": "读取商品图片",
+        "deprecated": false,
+        "description": "公开接口。key 来自商品 images 代理 URL，后端读取对象存储后返回图片二进制流；成功响应不包统一 JSON envelope。",
+        "operationId": "getapi_v1_images_key",
+        "tags": [
+          "公共基础/媒体"
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "description": "对象 key，可包含对象存储前缀子路径；禁止空值和 ..。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "图片二进制流；成功响应不使用统一 JSON envelope。",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            },
+            "headers": {
+              "Content-Type": {
+                "required": true,
+                "description": "实际图片类型或 application/octet-stream。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "required": false,
+                "description": "private, max-age=300",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/ping": {
+      "get": {
+        "summary": "服务心跳",
+        "deprecated": false,
+        "description": "公开接口。返回 Hertz 进程心跳；该接口直接返回 {\"message\":\"pong\"}，不使用统一 envelope。",
+        "operationId": "getping",
+        "tags": [
+          "公共基础/系统"
+        ],
+        "parameters": [
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PingResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "基础指标占位",
+        "deprecated": false,
+        "description": "公开接口；仅当 observability.metricsPath 配置为 /metrics 时注册。当前实现返回统一 envelope，data.status=ok，不是 Prometheus 文本指标。",
+        "operationId": "getmetrics",
+        "tags": [
+          "公共基础/系统"
+        ],
+        "parameters": [
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/MetricsResponse"
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "example": "req_..."
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "data",
+                    "trace_id"
+                  ],
+                  "description": "统一响应 envelope；trace_id 来自 X-Request-Id/X-Trace-Id 或服务端生成。"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/ws/auctions/{auction_id}": {
+      "get": {
+        "summary": "WebSocket：订阅拍品实时事件",
+        "deprecated": false,
+        "description": "JWT 保护；可使用 Authorization: Bearer 或 query token。客户端消息用于出价/ACK/心跳，服务端推送拍品实时事件。",
+        "operationId": "getws_auctions_auction_id",
+        "tags": [
+          "公共基础/实时连接"
+        ],
+        "parameters": [
+          {
+            "name": "auction_id",
+            "in": "path",
+            "description": "拍品/拍卖 ID（uint64）",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+            }
+          },
+          {
+            "name": "lastSeq",
+            "in": "query",
+            "description": "WebSocket 断线补偿游标；非数字或小于 0 按 0 处理。",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "description": "JWT accessToken 备选传递方式；浏览器 WebSocket 无法设置 Authorization 时可使用。REST 也由 AuthMiddleware 支持，但生产建议使用 Authorization Header。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Bearer 访问令牌。格式：Bearer <accessToken>。对应 Apifox 鉴权组件 bearerAuth，可使用 Bearer {{bearerToken}}。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^Bearer\\s+.+$",
+              "example": "Bearer {{bearerToken}}"
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching Protocols：WebSocket 升级成功。",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {}
+          },
+          "200": {
+            "description": "WebSocket endpoint 描述占位；实际成功状态为 101 Switching Protocols。",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "请求参数不合法或 WebSocket Upgrade 头缺失。",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期。",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/ws/live-rooms/{room_id}": {
+      "get": {
+        "summary": "WebSocket：订阅直播间当前活跃拍品事件",
+        "deprecated": false,
+        "description": "JWT 保护；按直播间当前 activeAuctionId 路由到拍品 Hub 频道。",
+        "operationId": "getws_live_rooms_room_id",
+        "tags": [
+          "公共基础/实时连接"
+        ],
+        "parameters": [
+          {
+            "name": "room_id",
+            "in": "path",
+            "description": "直播间 ID（uint64）",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+            }
+          },
+          {
+            "name": "lastSeq",
+            "in": "query",
+            "description": "WebSocket 断线补偿游标；非数字或小于 0 按 0 处理。",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "description": "JWT accessToken 备选传递方式；浏览器 WebSocket 无法设置 Authorization 时可使用。REST 也由 AuthMiddleware 支持，但生产建议使用 Authorization Header。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Bearer 访问令牌。格式：Bearer <accessToken>。对应 Apifox 鉴权组件 bearerAuth，可使用 Bearer {{bearerToken}}。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^Bearer\\s+.+$",
+              "example": "Bearer {{bearerToken}}"
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching Protocols：WebSocket 升级成功。",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {}
+          },
+          "200": {
+            "description": "WebSocket endpoint 描述占位；实际成功状态为 101 Switching Protocols。",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "请求参数不合法或 WebSocket Upgrade 头缺失。",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期。",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/live-rooms": {
+      "get": {
+        "summary": "查询正在开播直播间列表",
+        "deprecated": false,
+        "description": "JWT 保护。用户端获取直播间列表时固定查询正在开播的直播间，即传 status=LIVE；也支持 merchantId、limit、offset 做筛选分页。后端路由本身还支持其他 status，但用户端列表场景只应使用 LIVE。",
+        "operationId": "getlive_rooms_live",
+        "tags": [
+          "用户端/直播间"
+        ],
+        "parameters": [
+          {
+            "name": "merchantId",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "用户端直播间列表固定传 LIVE，仅返回正在开播的直播间。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "LIVE"
+              ],
+              "default": "LIVE",
+              "example": "LIVE"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "默认 20",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "默认 0",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Bearer 访问令牌。格式：Bearer <accessToken>。对应 Apifox 鉴权组件 bearerAuth，可使用 Bearer {{bearerToken}}。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^Bearer\\s+.+$",
+              "example": "Bearer {{bearerToken}}"
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/LiveRoomList"
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "example": "req_..."
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "data",
+                    "trace_id"
+                  ],
+                  "description": "统一响应 envelope；trace_id 来自 X-Request-Id/X-Trace-Id 或服务端生成。"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/live-rooms/{id}": {
+      "get": {
+        "summary": "获取直播间详情",
+        "deprecated": false,
+        "description": "JWT 保护；buyer/merchant/admin 均可读取。",
+        "operationId": "getlive_rooms_id",
+        "tags": [
+          "用户端/直播间"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "正整数资源 ID（uint64）",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Bearer 访问令牌。格式：Bearer <accessToken>。对应 Apifox 鉴权组件 bearerAuth，可使用 Bearer {{bearerToken}}。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^Bearer\\s+.+$",
+              "example": "Bearer {{bearerToken}}"
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/LiveRoom"
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "example": "req_..."
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "data",
+                    "trace_id"
+                  ],
+                  "description": "统一响应 envelope；trace_id 来自 X-Request-Id/X-Trace-Id 或服务端生成。"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/live-rooms/{id}/lots": {
+      "get": {
+        "summary": "查询直播间拍品列表",
+        "deprecated": false,
+        "description": "JWT 保护；返回直播间挂载拍品。",
+        "operationId": "getlive_rooms_id_lots",
+        "tags": [
+          "用户端/直播间"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "正整数资源 ID（uint64）",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Bearer 访问令牌。格式：Bearer <accessToken>。对应 Apifox 鉴权组件 bearerAuth，可使用 Bearer {{bearerToken}}。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^Bearer\\s+.+$",
+              "example": "Bearer {{bearerToken}}"
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/LiveRoomLots"
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "example": "req_..."
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "data",
+                    "trace_id"
+                  ],
+                  "description": "统一响应 envelope；trace_id 来自 X-Request-Id/X-Trace-Id 或服务端生成。"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/live-rooms/{id}/stats": {
+      "get": {
+        "summary": "查询直播间实时统计",
+        "deprecated": false,
+        "description": "JWT 保护；返回在线人数、当前拍品价格与剩余秒数等实时统计。",
+        "operationId": "getlive_rooms_id_stats",
+        "tags": [
+          "用户端/直播间"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "正整数资源 ID（uint64）",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Bearer 访问令牌。格式：Bearer <accessToken>。对应 Apifox 鉴权组件 bearerAuth，可使用 Bearer {{bearerToken}}。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^Bearer\\s+.+$",
+              "example": "Bearer {{bearerToken}}"
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/LiveRoomStats"
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "example": "req_..."
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "data",
+                    "trace_id"
+                  ],
+                  "description": "统一响应 envelope；trace_id 来自 X-Request-Id/X-Trace-Id 或服务端生成。"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auctions/{id}/state": {
+      "get": {
+        "summary": "查询拍品实时状态",
+        "deprecated": false,
+        "description": "JWT 保护；buyer/merchant/admin 均可查询，用于断线恢复与页面快照。",
+        "operationId": "getauctions_id_state",
+        "tags": [
+          "用户端/拍品"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "正整数资源 ID（uint64）",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Bearer 访问令牌。格式：Bearer <accessToken>。对应 Apifox 鉴权组件 bearerAuth，可使用 Bearer {{bearerToken}}。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^Bearer\\s+.+$",
+              "example": "Bearer {{bearerToken}}"
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/AuctionState"
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "example": "req_..."
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "data",
+                    "trace_id"
+                  ],
+                  "description": "统一响应 envelope；trace_id 来自 X-Request-Id/X-Trace-Id 或服务端生成。"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auctions/{id}/enroll": {
+      "post": {
+        "summary": "买家报名并冻结保证金",
+        "deprecated": false,
+        "description": "JWT 保护；仅 buyer。重复报名返回已有保证金账本。",
+        "operationId": "postauctions_id_enroll",
+        "tags": [
+          "用户端/拍品"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "正整数资源 ID（uint64）",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Bearer 访问令牌。格式：Bearer <accessToken>。对应 Apifox 鉴权组件 bearerAuth，可使用 Bearer {{bearerToken}}。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^Bearer\\s+.+$",
+              "example": "Bearer {{bearerToken}}"
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/DepositLedger"
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "example": "req_..."
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "data",
+                    "trace_id"
+                  ],
+                  "description": "统一响应 envelope；trace_id 来自 X-Request-Id/X-Trace-Id 或服务端生成。"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/orders/mine": {
+      "get": {
+        "summary": "查询我的订单",
+        "deprecated": false,
+        "description": "JWT 保护；仅 buyer，返回当前买家订单。",
+        "operationId": "getorders_mine",
+        "tags": [
+          "用户端/订单"
+        ],
+        "parameters": [
+          {
+            "name": "winnerId",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sellerId",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "CREATED",
+                "PAID",
+                "TIMEOUT",
+                "CANCELLED"
+              ]
+            }
+          },
+          {
+            "name": "payStatus",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "UNPAID",
+                "PAID",
+                "REFUNDED"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "默认 20",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "默认 0",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Bearer 访问令牌。格式：Bearer <accessToken>。对应 Apifox 鉴权组件 bearerAuth，可使用 Bearer {{bearerToken}}。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^Bearer\\s+.+$",
+              "example": "Bearer {{bearerToken}}"
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/OrderList"
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "example": "req_..."
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "data",
+                    "trace_id"
+                  ],
+                  "description": "统一响应 envelope；trace_id 来自 X-Request-Id/X-Trace-Id 或服务端生成。"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/orders/{id}": {
+      "get": {
+        "summary": "获取订单详情",
+        "deprecated": false,
+        "description": "JWT 保护；buyer 仅可看自己的订单，merchant 仅可看自己的成交订单，admin 可看全部。",
+        "operationId": "getorders_id",
+        "tags": [
+          "用户端/订单"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "正整数资源 ID（uint64）",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Bearer 访问令牌。格式：Bearer <accessToken>。对应 Apifox 鉴权组件 bearerAuth，可使用 Bearer {{bearerToken}}。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^Bearer\\s+.+$",
+              "example": "Bearer {{bearerToken}}"
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/OrderDeal"
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "example": "req_..."
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "data",
+                    "trace_id"
+                  ],
+                  "description": "统一响应 envelope；trace_id 来自 X-Request-Id/X-Trace-Id 或服务端生成。"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/orders/{id}/pay": {
+      "post": {
+        "summary": "支付订单",
+        "deprecated": false,
+        "description": "JWT 保护；buyer 支付自己的 CREATED 订单，admin 也可操作；要求 Idempotency-Key。",
+        "operationId": "postorders_id_pay",
+        "tags": [
+          "用户端/订单"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "正整数资源 ID（uint64）",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT Bearer 访问令牌。格式：Bearer <accessToken>。对应 Apifox 鉴权组件 bearerAuth，可使用 Bearer {{bearerToken}}。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^Bearer\\s+.+$",
+              "example": "Bearer {{bearerToken}}"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "幂等键；实际 WithIdempotency 中间件要求。相同用户+方法+路径+key+body 重放成功响应，body 不同返回 409/20012。",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "description": "可选请求追踪 ID；未传时服务端生成，并在响应头与 trace_id 返回。兼容 X-Trace-Id。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/OrderDeal"
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "example": "req_..."
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "data",
+                    "trace_id"
+                  ],
+                  "description": "统一响应 envelope；trace_id 来自 X-Request-Id/X-Trace-Id 或服务端生成。"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "参数不合法 / 缺少幂等键等客户端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "401": {
+            "description": "缺少访问令牌或访问令牌无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "403": {
+            "description": "无访问权限或账号已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "409": {
+            "description": "资源冲突、状态不允许或幂等键请求内容冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "500": {
+            "description": "系统内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "LiveRoom": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "merchantId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "coverUrl": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "OFFLINE",
+              "LIVE",
+              "CLOSED"
+            ]
+          },
+          "activeAuctionId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "OrderDeal": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "auctionId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "liveSessionId": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "winnerId": {
+            "type": "string"
+          },
+          "sellerId": {
+            "type": "string"
+          },
+          "dealPrice": {
+            "type": "integer",
+            "format": "int64",
+            "description": "单位：分"
+          },
+          "depositAmount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "单位：分"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "CREATED",
+              "PAID",
+              "TIMEOUT",
+              "CANCELLED"
+            ]
+          },
+          "payStatus": {
+            "type": "string",
+            "enum": [
+              "UNPAID",
+              "PAID",
+              "REFUNDED"
+            ]
+          },
+          "payDeadline": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "paidAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "closedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "DepositLedger": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "auctionId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "userId": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "单位：分"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "READY",
+              "CAPTURED",
+              "RELEASED",
+              "FAILED"
+            ]
+          },
+          "relatedOrderId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "remark": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AuctionState": {
+        "type": "object",
+        "properties": {
+          "auctionId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "status": {
+            "type": "string"
+          },
+          "currentPrice": {
+            "type": "integer",
+            "format": "int64",
+            "description": "单位：分"
+          },
+          "leaderBidderId": {
+            "type": "string"
+          },
+          "startTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastBidTsMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "extendCount": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
+      "AuctionLot": {
+        "type": "object",
+        "properties": {
+          "auctionId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "itemId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "sellerId": {
+            "type": "string"
+          },
+          "liveRoomId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "liveSessionId": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "auctionType": {
+            "type": "string",
+            "enum": [
+              "ENGLISH"
+            ]
+          },
+          "startPrice": {
+            "type": "integer",
+            "format": "int64",
+            "description": "单位：分"
+          },
+          "reservePrice": {
+            "type": "integer",
+            "format": "int64",
+            "description": "单位：分"
+          },
+          "incrementRule": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "任意 JSON 对象。",
+            "properties": {}
+          },
+          "antiSnipingSec": {
+            "type": "integer"
+          },
+          "antiExtendSec": {
+            "type": "integer"
+          },
+          "depositAmount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "单位：分"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DRAFT",
+              "PENDING_AUDIT",
+              "READY",
+              "WARMING_UP",
+              "RUNNING",
+              "EXTENDED",
+              "HAMMER_PENDING",
+              "CLOSED_WON",
+              "CLOSED_FAILED",
+              "SETTLED"
+            ]
+          },
+          "startTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ruleSnapshot": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "任意 JSON 对象。",
+            "properties": {}
+          },
+          "winnerId": {
+            "type": "string"
+          },
+          "dealPrice": {
+            "type": "integer",
+            "format": "int64",
+            "description": "单位：分"
+          },
+          "closedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "closedBy": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SafeUser": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "buyer",
+              "merchant",
+              "admin"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "DISABLED"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "nickname",
+          "role"
+        ]
+      },
+      "RefreshResult": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string"
+          },
+          "expiresIn": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "accessToken",
+          "expiresIn"
+        ]
+      },
+      "LoginResult": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string"
+          },
+          "refreshToken": {
+            "type": "string"
+          },
+          "expiresIn": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "user": {
+            "$ref": "#/components/schemas/SafeUser"
+          }
+        },
+        "required": [
+          "accessToken",
+          "refreshToken",
+          "expiresIn",
+          "user"
+        ]
+      },
+      "LogoutRequest": {
+        "type": "object",
+        "properties": {
+          "refreshToken": {
+            "type": "string"
+          }
+        }
+      },
+      "RefreshRequest": {
+        "type": "object",
+        "properties": {
+          "refreshToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "refreshToken"
+        ]
+      },
+      "LoginRequest": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "buyer",
+              "merchant",
+              "admin"
+            ]
+          }
+        },
+        "required": [
+          "account",
+          "password",
+          "role"
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "example": 10001
+          },
+          "message": {
+            "type": "string",
+            "example": "缺少访问令牌"
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "错误响应数据；通常为 null。",
+            "properties": {},
+            "nullable": true
+          },
+          "trace_id": {
+            "type": "string",
+            "example": "req_..."
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data",
+          "trace_id"
+        ]
+      },
+      "LiveRoomStats": {
+        "type": "object",
+        "properties": {
+          "roomId": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "online": {
+            "type": "integer",
+            "description": "当前房间在线人数。"
+          },
+          "lotsTotal": {
+            "type": "integer",
+            "description": "直播间挂载拍品总数。"
+          },
+          "activeAuctionId": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "description": "后端 uint64 ID，OpenAPI 兼容格式按 int64 表达。"
+          },
+          "currentBidCount": {
+            "type": "integer",
+            "description": "当前活跃拍品出价次数。"
+          },
+          "currentRemainSeconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "当前活跃拍品剩余秒数。"
+          },
+          "currentPrice": {
+            "type": "integer",
+            "format": "int64",
+            "description": "当前价，单位：分。"
+          }
+        },
+        "description": "LiveRoomService.Stats 返回的实时统计结构。"
+      },
+      "LiveRoomList": {
+        "type": "object",
+        "properties": {
+          "rooms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LiveRoom"
+            }
+          }
+        }
+      },
+      "LiveRoomLots": {
+        "type": "object",
+        "properties": {
+          "lots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuctionLot"
+            }
+          }
+        }
+      },
+      "OrderList": {
+        "type": "object",
+        "properties": {
+          "orders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderDeal"
+            }
+          }
+        }
+      },
+      "PingResponse": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "pong"
+          }
+        },
+        "required": [
+          "message"
+        ]
+      },
+      "MetricsResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "ok"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      }
+    },
+    "responses": {},
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  },
+  "servers": [],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}
