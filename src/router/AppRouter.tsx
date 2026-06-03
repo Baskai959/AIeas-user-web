@@ -2847,28 +2847,22 @@ function LiveRoomPage({
       <LiveRoomVideoSurface room={room} initialMediaPosition={initialMediaPosition} />
       <div className="live-gradient" />
       <header className="live-header">
-        <button className="live-back" onClick={onBack} aria-label={t('common.back')} type="button">
-          <ArrowLeft size={20} />
-        </button>
         <div className="live-shop">
-          <img src={logoUrl} alt={room.merchantName} />
-          <div>
+          <img className="live-shop-logo" src={logoUrl} alt={room.merchantName} />
+          <div className="live-shop-copy">
             <strong>{room.merchantName}</strong>
-            <span>
-              <Star size={12} /> {t('live.shopScore')} 4.9
-            </span>
           </div>
         </div>
-        <Button size="mini" color={isFollowingRoom ? 'default' : 'primary'} onClick={toggleFollowRoom} aria-pressed={isFollowingRoom}>
+        <button className={isFollowingRoom ? 'live-follow-button is-followed' : 'live-follow-button'} type="button" onClick={toggleFollowRoom} aria-pressed={isFollowingRoom}>
           {isFollowingRoom ? t('live.followed') : t('live.follow')}
-        </Button>
-      </header>
-
-      <aside className="live-side-rail">
-        <span className="live-watcher-count">
-          <Users size={14} /> {liveStats.watcherCount}
+        </button>
+        <span className="live-header-watchers" aria-label={t('live.statsOnline', { count: liveStats.watcherCount })}>
+          {liveStats.watcherCount}
         </span>
-      </aside>
+        <button className="live-close" data-testid="live-room-close" onClick={onBack} aria-label={t('common.close')} type="button">
+          <X size={32} strokeWidth={2.6} />
+        </button>
+      </header>
 
       {activeLot && currentState ? <LiveRankingRail items={ranking} userId={userId} collapsed={rankingCollapsed} lastBid={lastRankingBidRef.current} onToggle={() => setRankingCollapsed((value) => !value)} /> : null}
 

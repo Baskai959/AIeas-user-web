@@ -472,11 +472,12 @@ describe('App flow', () => {
 
     await user.click(screen.getByRole('button', { name: getMessage('discover.enterLive') }));
     expect(await screen.findByText('云上珠宝')).toBeInTheDocument();
+    expect(screen.queryByText(getMessage('live.shopScore'))).not.toBeInTheDocument();
     expect(screen.getByTestId('live-room-video')).toHaveAttribute('src', '/media/live-room-demo.mp4');
     expect(window.location.pathname).toBe('/live/room_1001');
     expect(window.location.search).toBe('?from=home');
 
-    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
+    await user.click(screen.getByTestId('live-room-close'));
     expect(await screen.findByText('珠宝严选直播间')).toBeInTheDocument();
     expect(window.location.pathname).toBe('/');
     expect(window.location.search).toBe('?focusRoomId=room_1001');
@@ -824,7 +825,7 @@ describe('App flow', () => {
     expect(await screen.findByText('云上珠宝')).toBeInTheDocument();
     expect(await screen.findByRole('dialog', { name: getMessage('product.detail') })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
+    await user.click(screen.getByTestId('live-room-close'));
     expect(await screen.findByText(getMessage('discoverLots.title'))).toBeInTheDocument();
     expect(window.location.pathname).toBe('/discover');
   });
@@ -865,7 +866,7 @@ describe('App flow', () => {
     expect(await screen.findByRole('button', { name: getMessage('live.followed') })).toBeInTheDocument();
     expect(useLiveActivityStore.getState().followedRooms).toHaveLength(1);
 
-    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
+    await user.click(screen.getByTestId('live-room-close'));
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
     await user.click(screen.getByRole('button', { name: getMessage('profile.following') }));
 
@@ -888,7 +889,7 @@ describe('App flow', () => {
     await screen.findByText('云上珠宝');
     expect(useLiveActivityStore.getState().footprints).toHaveLength(1);
 
-    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
+    await user.click(screen.getByTestId('live-room-close'));
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
     await user.click(screen.getByRole('button', { name: getMessage('profile.footprints') }));
 
@@ -1033,8 +1034,9 @@ describe('App flow', () => {
     expect(screen.getByText('1208')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: getMessage('auction.lookAround') })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '18K 金钻石项链' }));
-    expect(await screen.findByRole('dialog', { name: getMessage('product.detail') })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: getMessage('common.close') }));
+    const firstDetailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    expect(firstDetailDialog).toBeInTheDocument();
+    await user.click(within(firstDetailDialog).getByRole('button', { name: getMessage('common.close') }));
     await user.click(await screen.findByRole('button', { name: getMessage('live.goodsEntry') }));
 
     const drawer = await screen.findByRole('dialog', { name: getMessage('live.goodsList') });
@@ -1047,7 +1049,7 @@ describe('App flow', () => {
     const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
     await user.click(within(detailDialog).getByRole('button', { name: getMessage('auction.enroll') }));
     expect(await within(detailDialog).findByRole('button', { name: getMessage('auction.enrolled') })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: getMessage('common.close') }));
+    await user.click(within(detailDialog).getByRole('button', { name: getMessage('common.close') }));
     await user.click(await screen.findByRole('button', { name: getMessage('auction.quickBid') }));
 
     const bidDialog = await screen.findByRole('dialog', { name: getMessage('bid.confirmTitle') });
@@ -1685,7 +1687,8 @@ describe('App flow', () => {
 
     vi.useFakeTimers();
     try {
-      fireEvent.click(screen.getByRole('button', { name: getMessage('common.close') }));
+      const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
+      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('common.close') }));
       expect(document.querySelector('.sheet-backdrop.is-closing')).toBeInTheDocument();
       expect(document.querySelector('.auction-float-card')).toBeInTheDocument();
       await act(async () => {
@@ -2000,7 +2003,8 @@ describe('App flow', () => {
 
     vi.useFakeTimers();
     try {
-      fireEvent.click(screen.getByRole('button', { name: getMessage('common.close') }));
+      const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
+      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('common.close') }));
       expect(screen.getByRole('dialog', { name: getMessage('product.detail') })).toBeInTheDocument();
       expect(document.querySelector('.sheet-backdrop.is-closing')).toBeInTheDocument();
       await act(async () => {

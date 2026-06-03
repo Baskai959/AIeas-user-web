@@ -73,11 +73,23 @@ describe('mobile layout CSS', () => {
     expect(rules('.discover-watcher-count')).not.toContain('border:');
   });
 
-  it('keeps live-room watcher and bottom controls compact', () => {
+  it('uses the compact top live-room header from the reference layout', () => {
     expect(css).toContain('--live-auction-action-width: clamp(112px, 30vw, 132px)');
-    expect(rule('.live-side-rail span')).toContain('background: transparent');
-    expect(rule('.live-side-rail span')).toContain('opacity: 0.7');
-    expect(rule('.live-side-rail span')).not.toContain('border:');
+    expect(rule('.live-header')).toContain('grid-template-columns: minmax(0, 1fr) auto auto 54px');
+    expect(rule('.live-header')).toContain('z-index: 82');
+    expect(rule('.live-shop')).toContain('background: transparent');
+    expect(rule('.live-shop')).toContain('border: 0');
+    expect(rule('.live-shop-logo')).toContain('width: 64px');
+    expect(rule('.live-shop strong')).toContain('font-size: 23px');
+    expect(rule('.live-follow-button')).toContain('background: linear-gradient(135deg, #ff2d65 0%, #ff3650 100%)');
+    expect(rule('.live-follow-button')).toContain('border-radius: 999px');
+    expect(rule('.live-header-watchers')).toContain('font-size: 20px');
+    expect(rule('.live-close')).toContain('background: rgba(48, 54, 64, 0.66)');
+    expect(rule('.live-close')).toContain('border-radius: 999px');
+  });
+
+  it('keeps live-room bottom controls compact', () => {
+    expect(css).toContain('--live-auction-action-width: clamp(112px, 30vw, 132px)');
     expect(rule('.live-comment-input-row')).toContain('grid-template-columns: 36px minmax(0, 1fr) 54px var(--live-auction-action-width)');
     expect(rule('.live-comment-input-row.is-collapsed')).toContain('grid-template-columns: 36px var(--live-auction-action-width)');
     expect(rule('.comment-toggle-button,\n.comment-send-button,\n.comment-list-button')).toContain('width: 36px');
@@ -92,7 +104,7 @@ describe('mobile layout CSS', () => {
   it('docks the live ranking rail under the follow button with a low-alpha background', () => {
     expect(rule('.live-ranking-rail')).toContain('position: absolute');
     expect(rule('.live-ranking-rail')).toContain('right: 0');
-    expect(rule('.live-ranking-rail')).toContain('top: 58px');
+    expect(rule('.live-ranking-rail')).toContain('top: 92px');
     expect(rule('.live-ranking-rail')).toContain('background: rgba(0, 0, 0, 0.2)');
     expect(rule('.live-ranking-rail')).toContain('--live-ranking-toggle-width: 20px');
     expect(rule('.live-ranking-rail')).toContain('--live-ranking-price-width: 64px');
