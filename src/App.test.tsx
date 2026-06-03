@@ -482,6 +482,34 @@ describe('App flow', () => {
     expect(window.location.search).toBe('?focusRoomId=room_1001');
   });
 
+  it('continues a recorded preview video from its current position after entering the live room', async () => {
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    const feed = await screen.findByTestId('discover-feed');
+    const previewVideo = feed.querySelector<HTMLVideoElement>('.discover-slide.is-active .discover-video');
+    expect(previewVideo).not.toBeNull();
+    previewVideo!.currentTime = 18.25;
+
+    await user.click(screen.getByTestId('discover-enter-live'));
+
+    const liveVideo = await screen.findByTestId('live-room-video') as HTMLVideoElement;
+    await waitFor(() => expect(liveVideo.currentTime).toBeCloseTo(18.25, 1));
+    expect(liveVideo).toHaveAttribute('src', '/media/live-room-demo.mp4');
+    expect(window.location.pathname).toBe('/live/room_1001');
+    expect(window.location.search).toBe('?from=home');
+  });
+
+  it('does not apply preview video progress when entering the live room from a non-preview route', async () => {
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+
+    const liveVideo = await screen.findByTestId('live-room-video') as HTMLVideoElement;
+    expect(liveVideo.currentTime).toBe(0);
+  });
+
   it('returns to the original deep link after logging in from an authenticated route', async () => {
     renderWithRouter('/orders?tab=pendingPay');
     const user = userEvent.setup();
@@ -733,6 +761,52 @@ describe('App flow', () => {
     expect(await screen.findByText('时计公社')).toBeInTheDocument();
     expect(screen.queryByTestId('discover-feed')).not.toBeInTheDocument();
     expect(window.location.pathname).toBe('/live/room_1004');
+  });
+
+  it('continues a digital-human idle preview video from its current position after entering the live room', async () => {
+    vi.mocked(api.searchLiveRooms).mockResolvedValueOnce({
+      items: [
+        {
+          id: 'room_1004',
+          title: '\u8155\u8868\u5feb\u95ea\u76f4\u64ad\u95f4',
+          merchantName: '\u65f6\u8ba1\u516c\u793e',
+          status: 'LIVE',
+          videoSource: 'digitalHuman',
+          onlineCount: 192,
+          watcherCount: 873,
+          digitalHuman: { idleVideoUrl: '/media/AI_Presenter_Silent.mp4', speakingVideoUrl: '/media/AI_Presenter_Speaking.mp4' }
+        }
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20
+    });
+    vi.mocked(api.getLiveRoom).mockResolvedValueOnce({
+      id: 'room_1004',
+      title: '\u8155\u8868\u5feb\u95ea\u76f4\u64ad\u95f4',
+      merchantName: '\u65f6\u8ba1\u516c\u793e',
+      status: 'LIVE',
+      videoSource: 'digitalHuman',
+      onlineCount: 192,
+      watcherCount: 873,
+      digitalHuman: { idleVideoUrl: '/media/AI_Presenter_Silent.mp4', speakingVideoUrl: '/media/AI_Presenter_Speaking.mp4' }
+    });
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    const feed = await screen.findByTestId('discover-feed');
+    const previewVideo = feed.querySelector<HTMLVideoElement>('.discover-slide.is-active .discover-video');
+    expect(previewVideo).not.toBeNull();
+    previewVideo!.currentTime = 9.5;
+
+    await user.click(screen.getByTestId('discover-enter-live'));
+
+    const stage = await screen.findByTestId('digital-human-stage');
+    const idleVideo = stage.querySelector<HTMLVideoElement>('.digital-human-video.idle');
+    expect(idleVideo).not.toBeNull();
+    await waitFor(() => expect(idleVideo!.currentTime).toBeCloseTo(9.5, 1));
+    expect(idleVideo).toHaveAttribute('src', '/media/AI_Presenter_Silent.mp4');
   });
 
   it('uses the discover tab as a lot list and opens a running lot directly in the live room', async () => {
@@ -990,6 +1064,85 @@ describe('App flow', () => {
 
     expect(await within(bidDialog).findByText(getMessage('bid.highestPriceNotice'))).toBeInTheDocument();
     expect((await screen.findAllByText(/1503\.00/)).length).toBeGreaterThan(0);
+  });
+
+  it('renders the lot list as a half-screen scroll sheet with the running lot pinned first and original sequence visible', async () => {
+    vi.mocked(api.getLiveRoom).mockResolvedValueOnce({
+      id: 'room_1001',
+      title: '鐝犲疂涓ラ€夌洿鎾棿',
+      merchantName: '浜戜笂鐝犲疂',
+      status: 'LIVE',
+      videoSource: 'recorded',
+      onlineCount: 328,
+      watcherCount: 1208,
+      activeAuctionId: 'auc_2002',
+      videoUrl: '/media/live-room-demo.mp4'
+    });
+    vi.mocked(api.listLiveRoomLots).mockResolvedValueOnce({
+      items: [
+        {
+          id: 'lot_3001',
+          auctionId: 'auc_2001',
+          roomId: 'room_1001',
+          merchantId: 'merchant_01',
+          categoryId: 'jewelry',
+          title: 'Upcoming first lot',
+          status: 'UPCOMING',
+          startPrice: 0,
+          currentPrice: 0,
+          endTsMs: now + 420_000,
+          ruleSnapshot: { minIncrement: 100 }
+        },
+        {
+          id: 'lot_3002',
+          auctionId: 'auc_2002',
+          roomId: 'room_1001',
+          merchantId: 'merchant_01',
+          categoryId: 'jewelry',
+          title: 'Running second lot',
+          status: 'RUNNING',
+          startPrice: 0,
+          currentPrice: 86000,
+          leaderBidderId: 'u2',
+          endTsMs: now + 120_000,
+          ruleSnapshot: { minIncrement: 100 }
+        },
+        {
+          id: 'lot_3003',
+          auctionId: 'auc_2003',
+          roomId: 'room_1001',
+          merchantId: 'merchant_01',
+          categoryId: 'jewelry',
+          title: 'Later third lot',
+          status: 'UPCOMING',
+          startPrice: 0,
+          currentPrice: 0,
+          endTsMs: now + 720_000,
+          ruleSnapshot: { minIncrement: 100 }
+        }
+      ],
+      total: 3,
+      page: 1,
+      page_size: 20
+    });
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: getMessage('live.goodsEntry') }));
+    const drawer = await screen.findByRole('dialog', { name: getMessage('live.goodsList') });
+    const rows = within(drawer).getAllByTestId('lot-row');
+
+    expect(drawer).toHaveClass('lot-list-sheet');
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveClass('is-active');
+    expect(rows[0]).toHaveAttribute('data-original-index', '2');
+    expect(within(rows[0]).getByText('#2')).toBeInTheDocument();
+    expect(within(rows[0]).getByText('Running second lot')).toBeInTheDocument();
+    expect(rows[1]).toHaveAttribute('data-original-index', '1');
+    expect(within(rows[1]).getByText('#1')).toBeInTheDocument();
+    expect(within(rows[1]).getByText('Upcoming first lot')).toBeInTheDocument();
   });
 
   it('shows a right-docked live ranking rail, appends the current user, and collapses it', async () => {

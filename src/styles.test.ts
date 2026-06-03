@@ -150,6 +150,13 @@ describe('mobile layout CSS', () => {
     expect(rule('.bottom-sheet')).toContain('animation: sheet-slide-up var(--sheet-duration-ms) cubic-bezier(0.22, 1, 0.36, 1)');
     expect(rule('.sheet-backdrop.is-closing .bottom-sheet')).toContain('animation: sheet-slide-down var(--sheet-duration-ms) cubic-bezier(0.22, 1, 0.36, 1) forwards');
     expect(rule('.lot-list-sheet')).toContain('--sheet-duration-ms: 340ms');
+    expect(rule('.lot-list-sheet')).toContain('height: min(50dvh, 420px)');
+    expect(rule('.lot-list-sheet')).toContain('max-height: min(50dvh, 420px)');
+    expect(rule('.lot-list')).toContain('height: calc(100% - 52px)');
+    expect(rule('.lot-list')).toContain('max-height: none');
+    expect(rule('.lot-list')).toContain('overflow-y: auto');
+    expect(rule('.lot-row')).toContain('grid-template-columns: 32px 64px minmax(0, 1fr) auto');
+    expect(rule('.lot-sequence')).toContain('place-items: center');
     expect(rule('.detail-sheet')).toContain('--sheet-duration-ms: 400ms');
     expect(rule('.quick-bid-sheet')).toContain('--sheet-duration-ms: 460ms');
     expect(css).toContain('@keyframes sheet-slide-up');

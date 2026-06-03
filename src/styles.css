@@ -1348,14 +1348,16 @@ button {
 .lot-list {
   display: grid;
   gap: 10px;
-  max-height: calc(76vh - 52px);
+  height: calc(100% - 52px);
+  max-height: none;
   padding: 12px 12px calc(16px + env(safe-area-inset-bottom));
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .lot-row {
   display: grid;
-  grid-template-columns: 72px 1fr auto;
+  grid-template-columns: 32px 64px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   min-width: 0;
@@ -1370,9 +1372,18 @@ button {
   box-shadow: 0 10px 24px rgba(239, 68, 68, 0.12);
 }
 
+.lot-sequence {
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  color: #475467;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .lot-row img {
-  width: 72px;
-  height: 72px;
+  width: 64px;
+  height: 64px;
   object-fit: contain;
   padding: 8px;
   background: #fff;
@@ -1421,6 +1432,8 @@ button {
 
 .lot-list-sheet {
   --sheet-duration-ms: 340ms;
+  height: min(50dvh, 420px);
+  max-height: min(50dvh, 420px);
 }
 
 .detail-sheet {
@@ -3462,8 +3475,8 @@ button {
 }
 
 .lot-row .visual-placeholder {
-  width: 72px;
-  height: 72px;
+  width: 64px;
+  height: 64px;
   border-radius: 8px;
 }
 

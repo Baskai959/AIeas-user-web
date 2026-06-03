@@ -90,8 +90,16 @@ const avatarScaleMax = 2.6;
 type PointerPoint = { x: number; y: number };
 type SearchTab = 'lots' | 'liveRooms' | 'merchants';
 
+type PreviewMediaSnapshot = {
+  roomId: string;
+  sourceUrl: string;
+  currentTime: number;
+  capturedAtMs: number;
+};
+
 type AppLocationState = {
   returnTo?: string;
+  previewMedia?: PreviewMediaSnapshot;
 };
 
 type ViewTransitionDocument = Document & {
@@ -111,6 +119,7 @@ type FeedDragState = {
 
 const feedTapMaxDurationMs = 250;
 const feedTapMaxMovePx = 8;
+const previewMediaSnapshotMaxAgeMs = 30_000;
 
 function feedTrackTransform(trackIndex: number, offsetPx = 0): string {
   const percent = trackIndex === 0 ? 0 : -trackIndex * 100;
@@ -295,9 +304,9 @@ function useAppNavigation() {
     navigateWithTransition(navigate, `/product/${lot.id}`);
   };
 
-  const openRoom = (roomId: string, lotId?: string) => {
+  const openRoom = (roomId: string, lotId?: string, previewMedia?: PreviewMediaSnapshot) => {
     const returnTo = liveReturnPath(location, roomId);
-    navigateWithTransition(navigate, livePath(roomId, lotId, liveSourceTabFromPath(returnTo)), { state: { returnTo } });
+    navigateWithTransition(navigate, livePath(roomId, lotId, liveSourceTabFromPath(returnTo)), { state: { returnTo, previewMedia } });
   };
 
   return { navigate, openLot, openRoom };
@@ -312,7 +321,7 @@ function MainRoutePage({ apiClient, tab }: { apiClient: ApiClient; tab: MainTab 
   return (
     <MainTabShell activeTab={tab} onTabChange={(nextTab) => navigateWithTransition(navigate, mainPath(nextTab))} t={t}>
       {tab === 'home' ? (
-        <DiscoverPage apiClient={apiClient} focusRoomId={searchParams.get('focusRoomId') ?? undefined} onOpenRoom={(roomId) => openRoom(roomId)} />
+        <DiscoverPage apiClient={apiClient} focusRoomId={searchParams.get('focusRoomId') ?? undefined} onOpenRoom={(roomId, previewMedia) => openRoom(roomId, undefined, previewMedia)} />
       ) : tab === 'discover' ? (
         <LotDiscoveryPage apiClient={apiClient} onOpenLot={openLot} onOpenMerchant={(merchantId) => navigateWithTransition(navigate, `/merchant/${merchantId}`)} />
       ) : (
@@ -380,6 +389,7 @@ function LiveRoutePage({ apiClient }: { apiClient: ApiClient }) {
       apiClient={apiClient}
       roomId={roomId}
       initialLotId={searchParams.get('lotId') ?? undefined}
+      initialPreviewMedia={location.state?.previewMedia}
       userId={user?.id ?? 'u1'}
       onBack={() => navigateWithTransition(navigate, returnTo)}
       onPay={(orderId) => navigateWithTransition(navigate, `/pay/${orderId}`)}
@@ -547,7 +557,7 @@ function CategoryDetailPage({ apiClient, categoryId, onBack, onOpenLot }: { apiC
   );
 }
 
-function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiClient; focusRoomId?: string; onOpenRoom: (roomId: string) => void }) {
+function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiClient; focusRoomId?: string; onOpenRoom: (roomId: string, previewMedia?: PreviewMediaSnapshot) => void }) {
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
   const trackRef = useRef<HTMLDivElement | null>(null);
   const feedDragRef = useRef<FeedDragState>();
@@ -683,8 +693,13 @@ function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiCl
 
   const openRoomFromPreview = useCallback(() => {
     if (!activeRoomId || feedTransitioningRef.current) return;
-    onOpenRoom(activeRoomId);
-  }, [activeRoomId, onOpenRoom]);
+    const activeSlide = feedSlides[trackIndex];
+    if (!activeSlide || activeSlide.room.id !== activeRoomId) {
+      onOpenRoom(activeRoomId);
+      return;
+    }
+    onOpenRoom(activeRoomId, buildPreviewMediaSnapshot(activeSlide.room, videoRefs.current[activeSlide.key]));
+  }, [activeRoomId, feedSlides, onOpenRoom, trackIndex]);
 
   const finishFeedDrag = (drag?: FeedDragState) => {
     if (!drag) return;
@@ -829,7 +844,7 @@ function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiCl
             <article className={isActive ? 'discover-slide is-active is-focused' : 'discover-slide'} aria-current={isActive ? 'true' : undefined} data-room-id={room.id} key={slide.key}>
               <video
                 className="discover-video"
-                src={liveRoomPreviewVideoUrl(room) ?? liveVideoFallback}
+                src={discoverPreviewVideoUrl(room)}
                 poster={room.coverUrl}
                 muted
                 loop
@@ -868,7 +883,7 @@ function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiCl
                 data-testid={isActive ? 'discover-enter-live' : undefined}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onOpenRoom(room.id);
+                  onOpenRoom(room.id, isActive ? buildPreviewMediaSnapshot(room, videoRefs.current[slide.key]) : undefined);
                 }}
               >
                 {t('discover.enterLive')}
@@ -884,6 +899,44 @@ function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiCl
 function liveRoomPreviewVideoUrl(room: LiveRoom): string | undefined {
   if (room.videoSource === 'digitalHuman') return room.digitalHuman?.idleVideoUrl;
   return room.videoUrl;
+}
+
+function discoverPreviewVideoUrl(room: LiveRoom): string {
+  return liveRoomPreviewVideoUrl(room) ?? liveVideoFallback;
+}
+
+function buildPreviewMediaSnapshot(room: LiveRoom, video?: HTMLVideoElement | null): PreviewMediaSnapshot | undefined {
+  const sourceUrl = discoverPreviewVideoUrl(room);
+  if (!sourceUrl || !video) return undefined;
+  const currentTime = Number(video.currentTime);
+  if (!Number.isFinite(currentTime) || currentTime < 0) return undefined;
+  return {
+    roomId: room.id,
+    sourceUrl,
+    currentTime,
+    capturedAtMs: Date.now()
+  };
+}
+
+function isPreviewMediaSnapshotApplicable(snapshot: PreviewMediaSnapshot | undefined, room: LiveRoom, sourceUrl?: string): snapshot is PreviewMediaSnapshot {
+  if (!snapshot || !sourceUrl) return false;
+  if (snapshot.roomId !== room.id || snapshot.sourceUrl !== sourceUrl) return false;
+  if (!Number.isFinite(snapshot.currentTime) || snapshot.currentTime < 0) return false;
+  return Date.now() - snapshot.capturedAtMs <= previewMediaSnapshotMaxAgeMs;
+}
+
+function applyInitialMediaPosition(video: HTMLVideoElement | null | undefined, snapshot?: PreviewMediaSnapshot): void {
+  if (!video || !snapshot) return;
+  const currentTime = Number(snapshot.currentTime);
+  if (!Number.isFinite(currentTime) || currentTime < 0) return;
+  const duration = Number(video.duration);
+  if (Number.isFinite(duration) && duration > 0 && currentTime > duration) return;
+  try {
+    video.currentTime = currentTime;
+  } catch {
+    return;
+  }
+  void playVideo(video);
 }
 
 function SearchPage({
@@ -1464,7 +1517,7 @@ function LiveRoomCard({ room, onOpen, compact = false }: { room: LiveRoom; onOpe
   return (
     <article className={compact ? 'room-card compact' : 'room-card'}>
       <button className="room-thumb" type="button" onClick={onOpen}>
-        <video muted loop playsInline preload="metadata" src={liveRoomPreviewVideoUrl(room) ?? liveVideoFallback} poster={room.coverUrl} />
+        <video muted loop playsInline preload="metadata" src={discoverPreviewVideoUrl(room)} poster={room.coverUrl} />
         <span className="live-pill">{statusLabel(room.status)}</span>
       </button>
       <div className="room-card-body">
@@ -2196,6 +2249,7 @@ function LiveRoomPage({
   apiClient,
   roomId,
   initialLotId,
+  initialPreviewMedia,
   userId,
   onBack,
   onPay
@@ -2203,6 +2257,7 @@ function LiveRoomPage({
   apiClient: ApiClient;
   roomId: string;
   initialLotId?: string;
+  initialPreviewMedia?: PreviewMediaSnapshot;
   userId: string;
   onBack: () => void;
   onPay: (orderId: string, auctionId: string) => void;
@@ -2257,6 +2312,8 @@ function LiveRoomPage({
 
   const room = roomQuery.data ?? findDemoLiveRoom(roomId);
   const lots = lotsQuery.data?.items.length ? lotsQuery.data.items : demoLotPage.items;
+  const roomPreviewMediaSource = liveRoomPreviewVideoUrl(room);
+  const initialMediaPosition = isPreviewMediaSnapshotApplicable(initialPreviewMedia, room, roomPreviewMediaSource) ? initialPreviewMedia : undefined;
   const activeLot = selectCurrentRunningLot(room, lots, lotStates);
   const selectedLot = lots.find((lot) => lot.id === selectedLotId) ?? activeLot ?? lots[0];
   const isFollowingRoom = followedRooms.some((item) => item.roomId === room.id);
@@ -2787,7 +2844,7 @@ function LiveRoomPage({
 
   return (
     <section className="live-page">
-      <LiveRoomVideoSurface room={room} />
+      <LiveRoomVideoSurface room={room} initialMediaPosition={initialMediaPosition} />
       <div className="live-gradient" />
       <header className="live-header">
         <button className="live-back" onClick={onBack} aria-label={t('common.back')} type="button">
@@ -2961,9 +3018,40 @@ function WinningCelebration({ message, onComplete }: { message: string; onComple
   );
 }
 
-function LiveRoomVideoSurface({ room }: { room: LiveRoom }) {
+function LiveRoomVideoSurface({ room, initialMediaPosition }: { room: LiveRoom; initialMediaPosition?: PreviewMediaSnapshot }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const syncRecordedVideoPosition = useCallback(() => {
+    const video = videoRef.current;
+    forceMutedVideo(video);
+    if (initialMediaPosition) {
+      applyInitialMediaPosition(video, initialMediaPosition);
+      return;
+    }
+    void playVideo(video);
+  }, [initialMediaPosition]);
+
+  useEffect(() => {
+    if (room.videoSource !== 'recorded') return;
+    syncRecordedVideoPosition();
+  }, [room.videoSource, room.videoUrl, syncRecordedVideoPosition]);
+
   if (room.videoSource === 'recorded' && room.videoUrl) {
-    return <video className="live-video" data-testid="live-room-video" src={room.videoUrl} poster={room.coverUrl} muted autoPlay loop playsInline />;
+    return (
+      <video
+        ref={videoRef}
+        className="live-video"
+        data-testid="live-room-video"
+        src={room.videoUrl}
+        poster={room.coverUrl}
+        muted
+        autoPlay
+        loop
+        playsInline
+        onLoadedMetadata={syncRecordedVideoPosition}
+        onCanPlay={syncRecordedVideoPosition}
+      />
+    );
   }
 
   if (room.videoSource === 'digitalHuman' && room.digitalHuman) {
@@ -2971,6 +3059,7 @@ function LiveRoomVideoSurface({ room }: { room: LiveRoom }) {
       <DigitalHumanLiveStage
         idleVideoUrl={room.digitalHuman.idleVideoUrl}
         talkVideoUrl={room.digitalHuman.speakingVideoUrl}
+        initialMediaPosition={initialMediaPosition}
       />
     );
   }
@@ -3812,16 +3901,24 @@ function LotListSheet({
   onClose: () => void;
   onOpenLot: (lot: LiveRoomLot) => void;
 }) {
+  const sortedLots = useMemo(() => sortLotListForSheet(lots, states, activeAuctionId), [activeAuctionId, lots, states]);
   return (
     <AnimatedSheetFrame variant="lotList" phase={phase} zIndex={zIndex} accessibilityHidden={accessibilityHidden} className="lot-list-sheet" label={t('live.goodsList')} onClose={onClose}>
       {(requestClose) => (
         <>
         <SheetHeader title={t('live.goodsList')} onClose={requestClose} />
         <div className="lot-list">
-          {lots.map((lot) => {
-            const state = states[lot.auctionId] ?? stateFromLot(lot);
+          {sortedLots.map(({ lot, state, originalIndex }) => {
             return (
-              <article className={lot.auctionId === activeAuctionId ? 'lot-row is-active' : 'lot-row'} key={lot.id}>
+              <article
+                className={lot.auctionId === activeAuctionId && isRunningAuctionStatus(state.status) ? 'lot-row is-active' : 'lot-row'}
+                data-original-index={originalIndex + 1}
+                data-testid="lot-row"
+                key={lot.id}
+              >
+                <span className="lot-sequence" aria-label={`#${originalIndex + 1}`}>
+                  #{originalIndex + 1}
+                </span>
                 <VisualPlaceholder title={lot.title} imageUrl={lot.imageUrl} tone="red" />
                 <div>
                   <span className="status-badge">{lotStatusLabel(state.status)}</span>
@@ -3843,6 +3940,21 @@ function LotListSheet({
       )}
     </AnimatedSheetFrame>
   );
+}
+
+function sortLotListForSheet(lots: LiveRoomLot[], states: Record<string, AuctionState>, activeAuctionId?: string): Array<{ lot: LiveRoomLot; state: AuctionState; originalIndex: number }> {
+  const indexedLots = lots.map((lot, originalIndex) => ({
+    lot,
+    state: states[lot.auctionId] ?? stateFromLot(lot),
+    originalIndex
+  }));
+  const activeLot = indexedLots.find((item) => item.lot.auctionId === activeAuctionId && isRunningAuctionStatus(item.state.status));
+  if (!activeLot) return indexedLots;
+  return [activeLot, ...indexedLots.filter((item) => item.lot.id !== activeLot.lot.id)];
+}
+
+function isRunningAuctionStatus(status: AuctionState['status'] | LiveRoomLot['status']): boolean {
+  return status === 'RUNNING' || status === 'EXTENDED';
 }
 
 function LotDetailSheet({
@@ -4090,19 +4202,27 @@ function BidSheet({
   );
 }
 
-function DigitalHumanLiveStage({ idleVideoUrl, talkVideoUrl }: { idleVideoUrl: string; talkVideoUrl: string }) {
+function DigitalHumanLiveStage({ idleVideoUrl, talkVideoUrl, initialMediaPosition }: { idleVideoUrl: string; talkVideoUrl: string; initialMediaPosition?: PreviewMediaSnapshot }) {
   const idleVideoRef = useRef<HTMLVideoElement>(null);
   const talkVideoRef = useRef<HTMLVideoElement>(null);
   const [mediaError, setMediaError] = useState(false);
 
-  useEffect(() => {
+  const syncIdleVideoPosition = useCallback(() => {
     const idleVideo = idleVideoRef.current;
-    const talkVideo = talkVideoRef.current;
     forceMutedVideo(idleVideo);
-    forceMutedVideo(talkVideo);
+    if (initialMediaPosition) {
+      applyInitialMediaPosition(idleVideo, initialMediaPosition);
+      return;
+    }
     void playVideo(idleVideo);
+  }, [initialMediaPosition]);
+
+  useEffect(() => {
+    const talkVideo = talkVideoRef.current;
+    forceMutedVideo(talkVideo);
+    syncIdleVideoPosition();
     resetVideoToStart(talkVideo);
-  }, [idleVideoUrl, talkVideoUrl]);
+  }, [idleVideoUrl, talkVideoUrl, syncIdleVideoPosition]);
 
   return (
     <div className="digital-human-stage" data-testid="digital-human-stage">
@@ -4115,6 +4235,8 @@ function DigitalHumanLiveStage({ idleVideoUrl, talkVideoUrl }: { idleVideoUrl: s
         loop
         playsInline
         preload="auto"
+        onLoadedMetadata={syncIdleVideoPosition}
+        onCanPlay={syncIdleVideoPosition}
         onError={() => setMediaError(true)}
       />
       <video
