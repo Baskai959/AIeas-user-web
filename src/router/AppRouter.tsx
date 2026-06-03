@@ -2102,6 +2102,7 @@ const LIVE_SHEET_DURATIONS_MS = {
 
 const AUCTION_ENDED_HOLD_MS = 5000;
 const AUCTION_CARD_ANIMATION_MS = 380;
+const WIN_CELEBRATION_DURATION_MS = 4200;
 
 type LiveSheetVariant = keyof typeof LIVE_SHEET_DURATIONS_MS;
 type LiveSheetType = 'lotList' | 'detail' | 'quickBid';
@@ -2180,6 +2181,17 @@ type RankingAnimationLayout = {
   exitToY: number;
 };
 
+const winningConfettiPieces = [
+  { x: 46, y: -244, rotate: -36, delay: 40, color: '#ff3d5a', shape: 'ribbon' },
+  { x: 82, y: -218, rotate: 74, delay: 90, color: '#ffd15c', shape: 'dot' },
+  { x: 118, y: -274, rotate: -112, delay: 120, color: '#41d6b5', shape: 'ribbon' },
+  { x: 154, y: -226, rotate: 138, delay: 150, color: '#5b8cff', shape: 'square' },
+  { x: 188, y: -292, rotate: -168, delay: 185, color: '#ff8a35', shape: 'ribbon' },
+  { x: 224, y: -238, rotate: 204, delay: 230, color: '#ff72b6', shape: 'dot' },
+  { x: 258, y: -306, rotate: -236, delay: 260, color: '#ffe36e', shape: 'square' },
+  { x: 298, y: -254, rotate: 280, delay: 300, color: '#56d07f', shape: 'ribbon' }
+] as const;
+
 function LiveRoomPage({
   apiClient,
   roomId,
@@ -2210,6 +2222,7 @@ function LiveRoomPage({
   const [enrolledAuctions, setEnrolledAuctions] = useState<Set<string>>(() => new Set());
   const [lotStates, setLotStates] = useState<Record<string, AuctionState>>({});
   const [liveStats, setLiveStats] = useState<LiveRoomStats>(demoLiveRoomStats);
+  const [winningCelebrationId, setWinningCelebrationId] = useState<string>();
   const [now, setNow] = useState(Date.now());
   const realtimeRef = useRef<RealtimeClient>();
   const lastSeqRef = useRef(0);
@@ -2644,6 +2657,10 @@ function LiveRoomPage({
         const payload = message.payload as Record<string, unknown>;
         const context = latestContext.current;
         const closingAuctionId = String(payload.auctionId ?? context.activeLot?.auctionId ?? '');
+        const winnerBidderId = String(payload.winnerBidderId ?? '');
+        if (String(payload.status ?? 'CLOSED_WON') === 'CLOSED_WON' && winnerBidderId === userId) {
+          setWinningCelebrationId(`${closingAuctionId || 'auction'}-${Date.now()}`);
+        }
         const visibleCard = floatingAuctionCardRef.current;
         if (
           context.activeLot &&
@@ -2829,7 +2846,7 @@ function LiveRoomPage({
       ) : null}
 
       {liveSheets.map((sheet, index) => {
-        const zIndex = 80 + index;
+        const zIndex = 90 + index;
         const accessibilityHidden = sheet.phase === 'closing' && liveSheets.some((otherSheet, otherIndex) => otherIndex > index && otherSheet.phase !== 'closing');
         if (sheet.type === 'lotList') {
           return (
@@ -2890,7 +2907,57 @@ function LiveRoomPage({
           />
         );
       })}
+      {winningCelebrationId ? <WinningCelebration key={winningCelebrationId} message={t('celebration.win')} onComplete={() => setWinningCelebrationId(undefined)} /> : null}
     </section>
+  );
+}
+
+function WinningCelebration({ message, onComplete }: { message: string; onComplete?: () => void }) {
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setVisible(false);
+      onComplete?.();
+    }, WIN_CELEBRATION_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [onComplete]);
+
+  if (!visible) return null;
+
+  return (
+    <div className="winning-celebration" role="status" aria-live="polite">
+      <div className="winning-celebration-message">{message}</div>
+      <div className="winning-cannon is-left" aria-hidden="true">
+        <span className="winning-cannon-rim" />
+        <span className="winning-cannon-body" />
+        <span className="winning-cannon-spark" />
+      </div>
+      <div className="winning-cannon is-right" aria-hidden="true">
+        <span className="winning-cannon-rim" />
+        <span className="winning-cannon-body" />
+        <span className="winning-cannon-spark" />
+      </div>
+      <div className="winning-confetti" aria-hidden="true">
+        {(['left', 'right'] as const).flatMap((side) =>
+          winningConfettiPieces.map((piece, index) => (
+            <span
+              key={`${side}-${index}`}
+              className={`winning-confetti-piece is-${side} is-${piece.shape}`}
+              style={
+                {
+                  '--confetti-x': `${piece.x}px`,
+                  '--confetti-y': `${piece.y}px`,
+                  '--confetti-rotate': `${piece.rotate}deg`,
+                  '--confetti-delay': `${piece.delay + (side === 'right' ? 70 : 0)}ms`,
+                  '--confetti-color': piece.color
+                } as CSSProperties
+              }
+            />
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -3896,8 +3963,15 @@ function BidSheet({
   const intervalRemainingMs = getQuickBidIntervalRemainingMs(lastBidAtMs, nowMs, minBidIntervalMs);
   const outdated = isQuickBidOutdated(selectedPrice, rule);
   const validation = validateBidPrice(selectedPrice, rule);
-  const leader = state.leaderBidderId ? (ranking[0]?.nicknameMask ?? defaultRanking(state)[0]?.nicknameMask) : t('bid.startPriceBidder');
-  const myBid = state.leaderBidderId === userId ? formatMoney(state.currentPrice) : t('bid.noMyBid');
+  const hasLeader = Boolean(state.leaderBidderId);
+  const leader = hasLeader ? (ranking[0]?.nicknameMask ?? defaultRanking(state)[0]?.nicknameMask ?? t('bid.startPriceBidder')) : t('bid.startPriceBidder');
+  const isUserLeader = state.leaderBidderId === userId;
+  const currentBidPrice = priceValue(lot, state);
+  const myBid = isUserLeader ? formatMoney(state.currentPrice) : t('bid.noMyBid');
+  const quickBidNotice = isUserLeader
+    ? t('bid.highestPriceNotice')
+    : t('bid.aboveCurrentPriceNotice', { amount: formatQuickBidDeltaAmount(selectedPrice - currentBidPrice) });
+  const countdownParts = formatCountdownParts(remainMs);
   const closedCountdown = isClosed ? Math.max(0, Math.ceil(((closedAtMs ?? nowMs) + AUCTION_ENDED_HOLD_MS - nowMs) / 1000)) : 5;
 
   useEffect(() => {
@@ -3947,9 +4021,15 @@ function BidSheet({
           {isClosed ? (
             <h2>{t('bid.currentAuctionEnded')}</h2>
           ) : (
-            <h2>
-              {t('bid.countdownPrefix')}
-              <span>{formatCountdown(remainMs)}</span>
+            <h2 className="quick-bid-countdown">
+              <span className="quick-bid-countdown-label">{t('bid.countdownPrefix')}</span>
+              <span className="quick-bid-countdown-display" aria-label={`${countdownParts.hours}:${countdownParts.minutes}:${countdownParts.seconds}`}>
+                <span className="quick-bid-countdown-unit">{countdownParts.hours}</span>
+                <span className="quick-bid-countdown-separator">:</span>
+                <span className="quick-bid-countdown-unit">{countdownParts.minutes}</span>
+                <span className="quick-bid-countdown-separator">:</span>
+                <span className="quick-bid-countdown-unit">{countdownParts.seconds}</span>
+              </span>
             </h2>
           )}
         </div>
@@ -3958,19 +4038,31 @@ function BidSheet({
           <div className="quick-bid-title">
             <h3>{lot.title}</h3>
             <div className="quick-bid-price-grid">
-              <span>
-                {t('auction.currentPriceLabel')}
+              <div className="quick-bid-price-cell">
+                <div className="quick-bid-price-meta">
+                  <span>{t('bid.currentPriceShort')}</span>
+                  {hasLeader ? (
+                    <small className="quick-bid-leader-badge">
+                      <span className="quick-bid-leader-avatar" aria-hidden="true">{leaderAvatarText(leader)}</span>
+                      <b>{t('bid.leadingBadge', { name: leader })}</b>
+                    </small>
+                  ) : (
+                    <small className="quick-bid-leader-badge is-start-price">{leader}</small>
+                  )}
+                </div>
                 <strong>{formatMoney(priceValue(lot, state))}</strong>
-                <small>{leader}</small>
-              </span>
-              <span>
-                {t('bid.myBid')}
+              </div>
+              <div className="quick-bid-price-cell">
+                <div className="quick-bid-price-meta">
+                  <span>{t('bid.myBid')}</span>
+                </div>
                 <strong>{myBid}</strong>
-              </span>
+              </div>
             </div>
           </div>
         </div>
         <div className="quick-bid-selector">
+          <span className="quick-bid-status-badge">{quickBidNotice}</span>
           <button type="button" aria-label={t('bid.decrease')} disabled={!canDecrease} onClick={() => setPriceBySteps(stepCount - 1)}>
             <Minus size={18} />
           </button>
@@ -3984,7 +4076,7 @@ function BidSheet({
             <Plus size={18} />
           </button>
         </div>
-        {feedback.status === 'success' || feedback.status === 'error' ? <p className={feedback.status === 'success' ? 'quick-bid-feedback is-success' : 'quick-bid-feedback is-error'}>{feedback.message}</p> : null}
+        {feedback.status === 'error' ? <p className="quick-bid-feedback is-error">{feedback.message}</p> : null}
         {disabledReason && !isClosed ? <p className="quick-bid-feedback is-error">{disabledReason}</p> : null}
         <button className="quick-bid-submit" type="button" disabled={!canSubmit} onClick={() => onSubmit(selectedPrice)}>
           {submitText}
@@ -4082,6 +4174,7 @@ function ResultPage({ apiClient, auctionId, onBack, onPay }: { apiClient: ApiCli
       <h1>{t('result.title')}</h1>
       <h2>{order ? t('result.won') : t('result.lost')}</h2>
       <p>{auctionId}</p>
+      {order ? <WinningCelebration message={t('celebration.win')} /> : null}
       {order ? (
         <Button block color="primary" onClick={() => onPay(order.id)}>
           {t('auction.pay')}
@@ -4220,6 +4313,31 @@ function formatBidRejectedMessage(payload: Record<string, unknown>): string {
   if (reason === 'AUCTION_CLOSED' || reason === 'INVALID_STATE') return t('auction.closed');
   if (typeof payload.message === 'string' && payload.message.trim()) return payload.message;
   return t('auction.bidRejected');
+}
+
+function formatQuickBidDeltaAmount(cents: number): string {
+  const normalized = Math.max(0, Number.isFinite(cents) ? cents : 0);
+  if (activeLocale !== 'zh-CN') return formatMoney(normalized);
+  const yuan = normalized / 100;
+  const text = Number.isInteger(yuan) ? yuan.toFixed(0) : yuan.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+  return `${text}元`;
+}
+
+function formatCountdownParts(ms: number): { hours: string; minutes: string; seconds: string } {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return {
+    hours: String(hours).padStart(2, '0'),
+    minutes: String(minutes).padStart(2, '0'),
+    seconds: String(seconds).padStart(2, '0')
+  };
+}
+
+function leaderAvatarText(name: string): string {
+  const trimmed = name.trim();
+  return trimmed ? Array.from(trimmed)[0] : '-';
 }
 
 function priceLabel(lot: LiveRoomLot, state: AuctionState): string {

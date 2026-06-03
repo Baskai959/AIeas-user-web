@@ -157,6 +157,16 @@ describe('mobile layout CSS', () => {
     expect(css).toContain('@media (prefers-reduced-motion: reduce)');
   });
 
+  it('styles quick bid countdown segments and the filled leader badge', () => {
+    expect(rule('.quick-bid-countdown-display')).toContain('display: inline-flex');
+    expect(rule('.quick-bid-countdown-unit')).toContain('background: #ff8a00');
+    expect(rule('.quick-bid-countdown-unit')).toContain('min-width: 34px');
+    expect(rule('.quick-bid-countdown-separator')).toContain('color: #f97316');
+    expect(rule('.quick-bid-leader-badge')).toContain('background: #ffe3ec');
+    expect(rule('.quick-bid-leader-badge')).toContain('border-radius: 999px');
+    expect(rule('.quick-bid-leader-avatar')).toContain('background: linear-gradient(135deg, #7da4ff 0%, #6d5dfc 100%)');
+  });
+
   it('shows and sinks auction floating cards into the goods button', () => {
     expect(rule('.auction-float-card.is-entering')).toContain('animation: auction-card-rise 380ms cubic-bezier(0.22, 1, 0.36, 1) forwards');
     expect(rule('.auction-float-card.is-ended .float-card-action')).toContain('background: #98a2b3');
@@ -166,5 +176,20 @@ describe('mobile layout CSS', () => {
     expect(rule('.auction-float-dismiss')).toContain('border: 0');
     expect(css).toContain('@keyframes auction-card-rise');
     expect(css).toContain('@keyframes auction-card-sink');
+  });
+
+  it('animates the winning celebration cannons and confetti above live room UI', () => {
+    expect(rule('.winning-celebration')).toContain('position: fixed');
+    expect(rule('.winning-celebration')).toContain('z-index: 130');
+    expect(rule('.winning-celebration')).toContain('pointer-events: none');
+    expect(rule('.winning-cannon.is-left')).toContain('animation: winning-cannon-left');
+    expect(rule('.winning-cannon.is-right')).toContain('animation: winning-cannon-right');
+    expect(rule('.winning-confetti-piece')).toContain('animation: winning-confetti-left');
+    expect(rule('.winning-confetti-piece.is-right')).toContain('animation-name: winning-confetti-right');
+    expect(css).toContain('@keyframes winning-message-pop');
+    expect(css).toContain('@keyframes winning-cannon-left');
+    expect(css).toContain('@keyframes winning-cannon-right');
+    expect(css).toContain('@keyframes winning-confetti-left');
+    expect(css).toContain('@keyframes winning-confetti-right');
   });
 });

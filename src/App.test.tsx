@@ -981,11 +981,14 @@ describe('App flow', () => {
     expect(within(bidDialog).getByText(getMessage('bid.myBid'))).toBeInTheDocument();
     expect(within(bidDialog).getByText(getMessage('auction.ceilingPrice'))).toBeInTheDocument();
     expect(within(bidDialog).queryByLabelText(getMessage('auction.manualBidPrice'))).not.toBeInTheDocument();
+    expect(document.querySelectorAll('.quick-bid-countdown-unit')).toHaveLength(3);
+    expect(within(bidDialog).getByText(getMessage('bid.leadingBadge', 'zh-CN', { name: '用户**02' }))).toBeInTheDocument();
     await user.click(within(bidDialog).getByRole('button', { name: getMessage('bid.increase') }));
     expect(within(bidDialog).getByText(/1503\.00/)).toBeInTheDocument();
+    expect(within(bidDialog).getByText(getMessage('bid.aboveCurrentPriceNotice', 'zh-CN', { amount: '2元' }))).toBeInTheDocument();
     await user.click(within(bidDialog).getByRole('button', { name: getMessage('bid.submitNow') }));
 
-    expect((await screen.findAllByText(getMessage('auction.bidAccepted'))).length).toBeGreaterThan(0);
+    expect(await within(bidDialog).findByText(getMessage('bid.highestPriceNotice'))).toBeInTheDocument();
     expect((await screen.findAllByText(/1503\.00/)).length).toBeGreaterThan(0);
   });
 
@@ -1661,6 +1664,45 @@ describe('App flow', () => {
         vi.advanceTimersByTime(380);
       });
       expect(document.querySelector('.auction-float-card')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('plays side-cannon celebration when the current user wins the lot', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      expect(screen.queryByText(getMessage('celebration.win'))).not.toBeInTheDocument();
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'auction.closed',
+          payload: {
+            auctionId: 'auc_2001',
+            status: 'CLOSED_WON',
+            winnerBidderId: 'u1',
+            finalPrice: 150200,
+            closedTsMs: Date.now()
+          }
+        });
+      });
+
+      expect(screen.getByRole('status')).toHaveTextContent(getMessage('celebration.win'));
+      expect(document.querySelector('.winning-cannon.is-left')).toBeInTheDocument();
+      expect(document.querySelector('.winning-cannon.is-right')).toBeInTheDocument();
+      expect(document.querySelectorAll('.winning-confetti-piece')).toHaveLength(16);
+
+      await act(async () => {
+        vi.advanceTimersByTime(4200);
+      });
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
