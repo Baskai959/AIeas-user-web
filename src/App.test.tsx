@@ -64,7 +64,7 @@ const api = {
         currentPrice: 150100,
         leaderBidderId: 'u2',
         endTsMs: now + 120_000,
-        ruleSnapshot: { minIncrement: 100, antiSnipeSec: 15, extendSec: 10, ceilingPrice: 188800 },
+        ruleSnapshot: { incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 }, antiSnipingSec: 15, antiExtendSec: 10, capPrice: 188800 },
         depositAmount: 5000,
         participantCount: 128,
         bidCount: 36
@@ -76,11 +76,11 @@ const api = {
         merchantId: 'merchant_01',
         categoryId: 'jewelry',
         title: '翡翠冰种吊坠',
-        status: 'UPCOMING',
+        status: 'READY',
         startPrice: 0,
         currentPrice: 0,
         endTsMs: now + 420_000,
-        ruleSnapshot: { minIncrement: 200 }
+        ruleSnapshot: { incrementRule: { type: 'fixed', amount: 200, maxBidSteps: 10 } }
       }
     ],
     total: 2,
@@ -124,7 +124,7 @@ const api = {
         startPrice: 0,
         currentPrice: 150100,
         endTsMs: now + 120_000,
-        ruleSnapshot: { minIncrement: 100 },
+        ruleSnapshot: { incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 } },
         participantCount: 128,
         bidCount: 36
       }
@@ -153,11 +153,11 @@ const api = {
     merchantId: 'merchant_01',
     categoryId: 'jewelry',
     title: '翡翠冰种吊坠',
-    status: 'UPCOMING',
+    status: 'READY',
     startPrice: 0,
     currentPrice: 0,
     endTsMs: now + 420_000,
-    ruleSnapshot: { minIncrement: 200 }
+    ruleSnapshot: { incrementRule: { type: 'fixed', amount: 200, maxBidSteps: 10 } }
   })),
   getMyProfile: vi.fn(async () => ({
     userId: 'u1',
@@ -189,7 +189,7 @@ const api = {
           auctionId: 'auc_2002',
           roomId: 'room_1001',
           title: 'Upcoming Jade Lot',
-          status: 'UPCOMING',
+          status: 'READY',
           startPrice: 0,
           currentPrice: 0,
           endTsMs: now + 420_000
@@ -574,11 +574,11 @@ describe('App flow', () => {
           merchantId: 'merchant_01',
           categoryId: 'jewelry',
           title: '翡翠冰种吊坠',
-          status: 'UPCOMING',
+          status: 'READY',
           startPrice: 0,
           currentPrice: 0,
           endTsMs: now + 420_000,
-          ruleSnapshot: { minIncrement: 200 }
+          ruleSnapshot: { incrementRule: { type: 'fixed', amount: 200, maxBidSteps: 10 } }
         }
       ],
       total: 1,
@@ -1089,11 +1089,11 @@ describe('App flow', () => {
           merchantId: 'merchant_01',
           categoryId: 'jewelry',
           title: 'Upcoming first lot',
-          status: 'UPCOMING',
+          status: 'READY',
           startPrice: 0,
           currentPrice: 0,
           endTsMs: now + 420_000,
-          ruleSnapshot: { minIncrement: 100 }
+          ruleSnapshot: { incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 } }
         },
         {
           id: 'lot_3002',
@@ -1107,7 +1107,7 @@ describe('App flow', () => {
           currentPrice: 86000,
           leaderBidderId: 'u2',
           endTsMs: now + 120_000,
-          ruleSnapshot: { minIncrement: 100 }
+          ruleSnapshot: { incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 } }
         },
         {
           id: 'lot_3003',
@@ -1116,11 +1116,11 @@ describe('App flow', () => {
           merchantId: 'merchant_01',
           categoryId: 'jewelry',
           title: 'Later third lot',
-          status: 'UPCOMING',
+          status: 'READY',
           startPrice: 0,
           currentPrice: 0,
           endTsMs: now + 720_000,
-          ruleSnapshot: { minIncrement: 100 }
+          ruleSnapshot: { incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 } }
         }
       ],
       total: 3,
@@ -1579,11 +1579,11 @@ describe('App flow', () => {
           merchantId: 'merchant_01',
           categoryId: 'jewelry',
           title: '翡翠冰种吊坠',
-          status: 'UPCOMING',
+          status: 'READY',
           startPrice: 0,
           currentPrice: 0,
           endTsMs: now + 420_000,
-          ruleSnapshot: { minIncrement: 200 }
+          ruleSnapshot: { incrementRule: { type: 'fixed', amount: 200, maxBidSteps: 10 } }
         }
       ],
       total: 1,
@@ -1609,11 +1609,11 @@ describe('App flow', () => {
           merchantId: 'merchant_01',
           categoryId: 'jewelry',
           title: '缈＄繝鍐扮鍚婂潬',
-          status: 'UPCOMING',
+          status: 'READY',
           startPrice: 0,
           currentPrice: 0,
           endTsMs: now + 420_000,
-          ruleSnapshot: { minIncrement: 200 }
+          ruleSnapshot: { incrementRule: { type: 'fixed', amount: 200, maxBidSteps: 10 } }
         }
       ],
       total: 1,
@@ -1639,11 +1639,11 @@ describe('App flow', () => {
           merchantId: 'merchant_01',
           categoryId: 'jewelry',
           title: '缈＄繝鍐扮鍚婂潬',
-          status: 'UPCOMING',
+          status: 'READY',
           startPrice: 0,
           currentPrice: 0,
           endTsMs: now + 420_000,
-          ruleSnapshot: { minIncrement: 200 }
+          ruleSnapshot: { incrementRule: { type: 'fixed', amount: 200, maxBidSteps: 10 } }
         }
       ],
       total: 1,

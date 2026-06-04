@@ -13,6 +13,7 @@ export interface RealtimeMessage<TPayload = unknown> {
 export interface BidInput {
   auctionId: string;
   price: number;
+  expectedCurrentPrice: number;
   requestId?: string;
 }
 
@@ -41,7 +42,7 @@ interface MockOptions {
   userId: string;
   participantCount?: number;
   onlineCount?: number;
-  ceilingPrice?: number;
+  capPrice?: number;
 }
 
 interface NativeOptions {
@@ -55,10 +56,10 @@ interface MockControlOptions {
   roomId: string;
 }
 
-export function buildLiveRoomWsUrl(baseUrl: string, roomId: string, lastSeq?: number): string {
+export function buildLiveSessionWsUrl(baseUrl: string, roomId: string, lastSeq?: number): string {
   const base = baseUrl.replace(/\/$/, '');
   const query = lastSeq === undefined ? '' : `?lastSeq=${encodeURIComponent(String(lastSeq))}`;
-  return `${base}/ws/live-rooms/${encodeURIComponent(roomId)}${query}`;
+  return `${base}/ws/live-sessions/${encodeURIComponent(roomId)}${query}`;
 }
 
 export function isFreshRealtimeMessage(message: Pick<RealtimeMessage, 'seq'>, lastSeq: number): boolean {
@@ -204,7 +205,7 @@ export class MockRealtimeClient implements RealtimeClient {
     const validation = validateBidPrice(Number(bid.price), {
       currentPrice: this.currentPrice,
       minIncrement: this.options.minIncrement,
-      ceilingPrice: this.options.ceilingPrice
+      capPrice: this.options.capPrice
     });
 
     if (this.closed || bid.auctionId !== this.options.auctionId || !validation.valid) {
@@ -264,7 +265,7 @@ export class MockRealtimeClient implements RealtimeClient {
         }
       });
       this.emitRanking();
-      if (this.options.ceilingPrice !== undefined && this.currentPrice >= this.options.ceilingPrice) {
+      if (this.options.capPrice !== undefined && this.currentPrice >= this.options.capPrice) {
         this.schedule(200, () => this.closeAuction());
       }
     });
@@ -437,7 +438,7 @@ export class NativeWebSocketClient implements RealtimeClient {
   constructor(private readonly options: NativeOptions) {}
 
   connect(): void {
-    this.socket = new WebSocket(buildLiveRoomWsUrl(this.options.baseUrl, this.options.roomId, this.options.lastSeq));
+    this.socket = new WebSocket(buildLiveSessionWsUrl(this.options.baseUrl, this.options.roomId, this.options.lastSeq));
     this.socket.addEventListener('message', (event) => {
       const data = JSON.parse(String(event.data)) as RealtimeMessage;
       this.handlers.forEach((handler) => handler(data));

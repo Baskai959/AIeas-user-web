@@ -20,20 +20,21 @@ describe('bidding helpers', () => {
     expect(parseBidAmountToCents('abc')).toBeUndefined();
   });
 
-  it('validates manual bids against minimum price, increment step, and ceiling price', () => {
-    const rule = { currentPrice: 5600, minIncrement: 100, startPrice: 0, ceilingPrice: 8800 };
+  it('validates manual bids against minimum price, increment step, and cap price', () => {
+    const rule = { currentPrice: 5600, minIncrement: 100, startPrice: 0, capPrice: 8800 };
 
     expect(getNextBidPrice(rule)).toBe(5700);
     expect(validateBidPrice(5650, rule)).toEqual({ valid: false, reason: 'belowMinimum', minPrice: 5700 });
     expect(validateBidPrice(5750, rule)).toEqual({ valid: false, reason: 'invalidStep', step: 100 });
-    expect(validateBidPrice(8900, rule)).toEqual({ valid: false, reason: 'aboveCeiling', ceilingPrice: 8800 });
+    expect(validateBidPrice(8900, rule)).toEqual({ valid: false, reason: 'aboveCap', capPrice: 8800 });
     expect(validateBidPrice(5800, rule)).toEqual({ valid: true, price: 5800 });
   });
 
-  it('builds bid.place payload with price only', () => {
-    expect(buildBidPlacePayload({ auctionId: '1001', price: 5800, requestId: 'req-1' })).toEqual({
+  it('builds bid.place payload with expected current price', () => {
+    expect(buildBidPlacePayload({ auctionId: '1001', price: 5800, expectedCurrentPrice: 5600, requestId: 'req-1' })).toEqual({
       auctionId: '1001',
       price: 5800,
+      expectedCurrentPrice: 5600,
       requestId: 'req-1'
     });
   });
@@ -42,8 +43,8 @@ describe('bidding helpers', () => {
     expect(formatBidAmountInput(5700)).toBe('57.00');
   });
 
-  it('calculates quick bid steps with a three-step cap and ceiling-price clamp', () => {
-    const rule = { currentPrice: 85000, minIncrement: 5000, ceilingPrice: 93000 };
+  it('calculates quick bid steps with a three-step cap and cap-price clamp', () => {
+    const rule = { currentPrice: 85000, minIncrement: 5000, capPrice: 93000 };
 
     expect(QUICK_BID_MAX_STEPS).toBe(3);
     expect(getQuickBidPrice(rule, 1)).toBe(90000);

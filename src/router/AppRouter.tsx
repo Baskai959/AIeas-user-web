@@ -572,7 +572,7 @@ function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiCl
   const [trackTransitionEnabled, setTrackTransitionEnabled] = useState(true);
   const rooms = useQuery({
     queryKey: ['discover-live-rooms'],
-    queryFn: () => apiClient.searchLiveRooms({ status: 'live', sort: 'watchers' })
+    queryFn: () => apiClient.searchLiveRooms({ status: 'live', sort: 'viewerDesc' })
   });
   const roomItems = useMemo(() => rooms.data?.items ?? [], [rooms.data?.items]);
   const roomLotQueries = useQueries({
@@ -1149,7 +1149,7 @@ function ProductPage({ apiClient, lotId, onBack, onOpenRoom }: { apiClient: ApiC
             <div className="price-grid compact">
               <Metric label={t('auction.participants')} value={String(item.participantCount ?? 0)} icon={<Users size={16} />} />
               <Metric label={t('auction.bidCount')} value={String(item.bidCount ?? 0)} icon={<Gavel size={16} />} />
-              <Metric label={t('auction.increment')} value={formatMoney(Number(item.ruleSnapshot?.minIncrement ?? 100))} icon={<Plus size={16} />} />
+              <Metric label={t('auction.increment')} value={formatMoney(minIncrementForLot(item, state))} icon={<Plus size={16} />} />
               <Metric label={t('auction.deposit')} value={formatMoney(item.depositAmount ?? 0)} icon={<WalletCards size={16} />} />
             </div>
             <Button block color="danger" disabled={state.status !== 'RUNNING' && state.status !== 'EXTENDED'} onClick={() => onOpenRoom(item.roomId, item.id)}>
@@ -1582,7 +1582,7 @@ function LotResultCard({ lot, onOpen, onOpenMerchant }: { lot: LiveRoomLot; onOp
           </button>
         ) : null}
       </div>
-      <Button size="small" color={state.status === 'RUNNING' || state.status === 'EXTENDED' ? 'danger' : 'primary'} fill={state.status === 'UPCOMING' ? 'outline' : 'solid'} onClick={onOpen}>
+      <Button size="small" color={state.status === 'RUNNING' || state.status === 'EXTENDED' ? 'danger' : 'primary'} fill={isUpcomingAuctionStatus(state.status) ? 'outline' : 'solid'} onClick={onOpen}>
         {lotActionText(state.status)}
       </Button>
     </article>
@@ -2107,19 +2107,27 @@ function lotSortOptions() {
 function lotStatusOptions() {
   return [
     { value: 'all', label: t('status.all') },
-    { value: 'running', label: t('status.running') },
-    { value: 'ended', label: t('status.ended') },
-    { value: 'failed', label: t('status.failed') },
-    { value: 'upcoming', label: t('status.upcoming') }
+    { value: 'READY', label: t('auction.ready') },
+    { value: 'WARMING_UP', label: t('auction.warmingUp') },
+    { value: 'RUNNING', label: t('auction.running') },
+    { value: 'EXTENDED', label: t('auction.extended') },
+    { value: 'HAMMER_PENDING', label: t('auction.hammerPending') },
+    { value: 'CLOSED_WON', label: t('auction.closedWon') },
+    { value: 'CLOSED_FAILED', label: t('auction.closedFailed') },
+    { value: 'SETTLED', label: t('auction.settled') }
   ];
 }
 
 function roomSortOptions() {
   return [
     { value: 'default', label: t('filter.default') },
-    { value: 'lotCount', label: t('filter.lotCount') },
-    { value: 'gmv', label: t('filter.gmv') },
-    { value: 'watchers', label: t('filter.watchers') }
+    { value: 'latest', label: t('filter.latest') },
+    { value: 'oldest', label: t('filter.oldest') },
+    { value: 'startTimeAsc', label: t('filter.startTimeAsc') },
+    { value: 'startTimeDesc', label: t('filter.startTimeDesc') },
+    { value: 'openedAtDesc', label: t('filter.openedAtDesc') },
+    { value: 'gmvDesc', label: t('filter.gmv') },
+    { value: 'viewerDesc', label: t('filter.watchers') }
   ];
 }
 
@@ -2623,7 +2631,7 @@ function LiveRoomPage({
   useEffect(() => {
     const context = latestContext.current;
     const hasActiveAuction = Boolean(context.activeLot && context.currentState);
-    const minIncrement = Number(context.activeLot?.ruleSnapshot?.minIncrement ?? 100);
+    const minIncrement = context.activeLot && context.currentState ? minIncrementForLot(context.activeLot, context.currentState) : 100;
     const client: RealtimeClient | undefined =
       import.meta.env.VITE_REALTIME_MODE === 'websocket' && import.meta.env.VITE_WS_URL
         ? new NativeWebSocketClient({ baseUrl: import.meta.env.VITE_WS_URL, roomId, lastSeq: lastSeqRef.current })
@@ -2638,7 +2646,7 @@ function LiveRoomPage({
               userId,
               participantCount: context.currentState.participantCount ?? context.activeLot.participantCount,
               onlineCount: context.liveStats.onlineCount,
-              ceilingPrice: context.activeLot.ruleSnapshot?.ceilingPrice
+              capPrice: capPriceForLot(context.activeLot)
             })
           : undefined;
     realtimeRef.current = client;
@@ -2810,6 +2818,7 @@ function LiveRoomPage({
       payload: buildBidPlacePayload({
         auctionId: lot.auctionId,
         price: validation.price,
+        expectedCurrentPrice: state.currentPrice,
         requestId
       })
     });
@@ -2838,7 +2847,7 @@ function LiveRoomPage({
     return <RoomStatePage room={room} lots={lots} status="ended" onBack={onBack} onPay={(auctionId) => onPay('ord_2001', auctionId)} />;
   }
 
-  if (room.status === 'UPCOMING') {
+  if (room.status === 'DRAFT' || room.status === 'SCHEDULED') {
     return <RoomStatePage room={room} lots={lots} status="upcoming" onBack={onBack} />;
   }
 
@@ -3586,7 +3595,7 @@ function upsertChatMessage(messages: LiveChatMessage[], message: LiveChatMessage
 function RoomStatePage({ room, lots, status, onBack, onPay }: { room: LiveRoom; lots: LiveRoomLot[]; status: 'ended' | 'upcoming'; onBack: () => void; onPay?: (auctionId: string) => void }) {
   const soldLots = lots.filter((lot) => lot.status === 'CLOSED_WON' || lot.status === 'SETTLED' || lot.status === 'HAMMER_PENDING');
   const gmv = soldLots.reduce((sum, lot) => sum + (lot.finalPrice ?? lot.currentPrice), 0);
-  const visibleLots = status === 'ended' ? lots : lots.filter((lot) => lot.status === 'UPCOMING' || lot.status === 'READY' || lot.status === 'WARMING_UP');
+  const visibleLots = status === 'ended' ? lots : lots.filter((lot) => lot.status === 'READY' || lot.status === 'WARMING_UP');
   return (
     <section className="room-state-page">
       <button className="back-button" type="button" onClick={onBack}>
@@ -3923,7 +3932,7 @@ function LotListSheet({
                     <strong>{formatMoney(priceValue(lot, state))}</strong>
                   </div>
                 </div>
-                <Button size="small" color={state.status === 'RUNNING' || state.status === 'EXTENDED' ? 'danger' : 'primary'} fill={state.status === 'UPCOMING' ? 'outline' : 'solid'} onClick={() => onOpenLot(lot)}>
+                <Button size="small" color={state.status === 'RUNNING' || state.status === 'EXTENDED' ? 'danger' : 'primary'} fill={isUpcomingAuctionStatus(state.status) ? 'outline' : 'solid'} onClick={() => onOpenLot(lot)}>
                   {lotActionText(state.status)}
                 </Button>
               </article>
@@ -3999,7 +4008,7 @@ function LotDetailSheet({
           <div className="price-grid compact">
             <Metric label={t('auction.participants')} value={String(state.participantCount ?? lot.participantCount ?? 0)} icon={<Users size={16} />} />
             <Metric label={t('auction.bidCount')} value={String(state.bidCount ?? lot.bidCount ?? 0)} icon={<Gavel size={16} />} />
-            <Metric label={t('auction.increment')} value={formatMoney(Number(lot.ruleSnapshot?.minIncrement ?? 100))} icon={<Plus size={16} />} />
+            <Metric label={t('auction.increment')} value={formatMoney(minIncrementForLot(lot, state))} icon={<Plus size={16} />} />
             <Metric label={t('auction.deposit')} value={formatMoney(lot.depositAmount ?? 0)} icon={<WalletCards size={16} />} />
           </div>
           <article className="ranking-panel">
@@ -4105,7 +4114,7 @@ function BidSheet({
   };
 
   const canDecrease = stepCount > 1 && !isClosed && feedback.status !== 'submitting';
-  const canIncrease = stepCount < QUICK_BID_MAX_STEPS && selectedPrice < (rule.ceilingPrice ?? Number.MAX_SAFE_INTEGER) && !isClosed && feedback.status !== 'submitting';
+  const canIncrease = stepCount < QUICK_BID_MAX_STEPS && selectedPrice < (rule.capPrice ?? Number.MAX_SAFE_INTEGER) && !isClosed && feedback.status !== 'submitting';
   const disabledReason =
     isClosed
       ? t('bid.currentAuctionEnded')
@@ -4188,7 +4197,7 @@ function BidSheet({
           {submitText}
         </button>
         <p className="quick-bid-ceiling">
-          <span>{t('auction.ceilingPrice')}</span> {rule.ceilingPrice === undefined ? t('common.none') : formatMoney(rule.ceilingPrice)}
+          <span>{t('auction.ceilingPrice')}</span> {rule.capPrice === undefined ? t('common.none') : formatMoney(rule.capPrice)}
         </p>
         </>
       )}
@@ -4407,18 +4416,41 @@ function parseRealtimeTimestampMs(value: unknown, fallback: number): number {
 function bidRuleFromLot(lot: LiveRoomLot, state: AuctionState): BidRuleInput {
   return {
     currentPrice: state.currentPrice,
-    minIncrement: Number(lot.ruleSnapshot?.minIncrement ?? 100),
+    minIncrement: minIncrementForLot(lot, state),
     startPrice: lot.startPrice,
-    ceilingPrice: lot.ruleSnapshot?.ceilingPrice,
-    minBidIntervalMs: typeof lot.ruleSnapshot?.minBidIntervalMs === 'number' ? lot.ruleSnapshot.minBidIntervalMs : undefined
+    capPrice: capPriceForLot(lot)
   };
+}
+
+function minIncrementForLot(lot: LiveRoomLot, state: AuctionState): number {
+  const rule = lot.ruleSnapshot?.incrementRule;
+  if (!rule) return 100;
+  if (rule.type === 'fixed' && typeof rule.amount === 'number' && rule.amount > 0) return rule.amount;
+  if (rule.type === 'ladder' && Array.isArray(rule.steps)) {
+    const step = rule.steps.find((item) => {
+      const min = Number(item.min);
+      const max = item.max === undefined ? undefined : Number(item.max);
+      return state.currentPrice >= min && (max === undefined || state.currentPrice < max);
+    });
+    if (step && Number(step.amount) > 0) return Number(step.amount);
+  }
+  return 100;
+}
+
+function capPriceForLot(lot: LiveRoomLot): number | undefined {
+  const capPrice = lot.ruleSnapshot?.capPrice;
+  return typeof capPrice === 'number' && capPrice > 0 ? capPrice : undefined;
+}
+
+function isUpcomingAuctionStatus(status: AuctionState['status']): boolean {
+  return status === 'DRAFT' || status === 'PENDING_AUDIT' || status === 'READY' || status === 'WARMING_UP';
 }
 
 function formatBidValidationNotice(validation: BidValidationResult): string {
   if (validation.valid) return '';
   if (validation.reason === 'belowMinimum') return t('auction.bidBelowMinimum', { min: formatMoney(validation.minPrice) });
   if (validation.reason === 'invalidStep') return t('auction.bidInvalidStep', { step: formatMoney(validation.step) });
-  if (validation.reason === 'aboveCeiling') return t('auction.bidAboveCeiling', { ceiling: formatMoney(validation.ceilingPrice) });
+  if (validation.reason === 'aboveCap') return t('auction.bidAboveCeiling', { ceiling: formatMoney(validation.capPrice) });
   return t('auction.bidInvalidAmount');
 }
 
@@ -4471,13 +4503,15 @@ function priceValue(lot: LiveRoomLot, state: AuctionState): number {
 
 function statusLabel(status: LiveRoom['status']): string {
   if (status === 'LIVE') return t('home.liveNow');
-  if (status === 'UPCOMING') return t('auction.upcoming');
+  if (status === 'DRAFT' || status === 'SCHEDULED') return t('auction.upcoming');
   return t('auction.closed');
 }
 
 function lotStatusLabel(status: AuctionState['status']): string {
   const keys: Record<AuctionState['status'], MessageKey> = {
-    UPCOMING: 'auction.upcoming',
+    DRAFT: 'auction.upcoming',
+    PENDING_AUDIT: 'auction.upcoming',
+    AUDIT_REJECTED: 'auction.closedFailed',
     READY: 'auction.upcoming',
     WARMING_UP: 'auction.upcoming',
     RUNNING: 'auction.running',
@@ -4485,15 +4519,14 @@ function lotStatusLabel(status: AuctionState['status']): string {
     HAMMER_PENDING: 'auction.hammerPending',
     CLOSED_WON: 'auction.closedWon',
     CLOSED_FAILED: 'auction.closedFailed',
-    SETTLED: 'auction.settled',
-    CANCELED: 'auction.closedFailed'
+    SETTLED: 'auction.settled'
   };
   return t(keys[status]);
 }
 
 function lotActionText(status: AuctionState['status']): string {
   if (status === 'RUNNING' || status === 'EXTENDED') return t('product.bidNow');
-  if (status === 'UPCOMING' || status === 'READY' || status === 'WARMING_UP') return t('product.openDetail');
+  if (isUpcomingAuctionStatus(status)) return t('product.openDetail');
   return t('product.viewResult');
 }
 

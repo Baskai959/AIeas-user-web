@@ -27,7 +27,6 @@ import type {
   ListOrderOptions,
   LiveRoom,
   LiveRoomLot,
-  OrderFulfillmentStatus,
   LiveRoomStats,
   LoginRequest,
   LoginResult,
@@ -67,7 +66,6 @@ function joinUrl(baseUrl: string, path: string): string {
 }
 
 function toMs(value: unknown, fallback = Date.now() + 180_000): number {
-  if (typeof value === 'number') return value;
   if (typeof value === 'string') {
     const parsed = Date.parse(value);
     return Number.isNaN(parsed) ? fallback : parsed;
@@ -75,115 +73,150 @@ function toMs(value: unknown, fallback = Date.now() + 180_000): number {
   return fallback;
 }
 
-function normalizeVideoSource(value: unknown): LiveRoom['videoSource'] {
-  if (value === 'recorded' || value === 'digitalHuman') return value;
-  return undefined;
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value !== '' ? value : undefined;
 }
 
-function normalizeDigitalHumanConfig(raw: unknown): LiveRoom['digitalHuman'] {
-  if (!raw || typeof raw !== 'object') return undefined;
-  const source = raw as Record<string, unknown>;
-  const idleVideoUrl = typeof source.idleVideoUrl === 'string' ? source.idleVideoUrl : undefined;
-  const speakingVideoUrl = typeof source.speakingVideoUrl === 'string' ? source.speakingVideoUrl : undefined;
+function optionalNumberString(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === 0) return undefined;
+  return String(value);
+}
+
+function normalizeDigitalHuman(value: unknown): LiveRoom['digitalHuman'] | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const idleVideoUrl = optionalString(raw.idleVideoUrl);
+  const speakingVideoUrl = optionalString(raw.speakingVideoUrl);
   if (!idleVideoUrl || !speakingVideoUrl) return undefined;
   return {
     idleVideoUrl,
     speakingVideoUrl,
-    ttsWsUrl: typeof source.ttsWsUrl === 'string' ? source.ttsWsUrl : undefined
+    ttsWsUrl: optionalString(raw.ttsWsUrl)
   };
 }
 
-function normalizePage<T>(data: unknown, itemKeys: string[], normalizer: (raw: Record<string, unknown>) => T): PageResult<T> {
+function normalizeVideoSource(value: unknown): LiveRoom['videoSource'] | undefined {
+  return value === 'recorded' || value === 'digitalHuman' ? value : undefined;
+}
+
+function normalizePage<T>(data: unknown, itemKey: string, normalizer: (raw: Record<string, unknown>) => T): PageResult<T> {
   const source = (data ?? {}) as Record<string, unknown>;
-  const list = itemKeys.map((key) => source[key]).find(Array.isArray) as Record<string, unknown>[] | undefined;
-  const items = list ?? [];
+  const items = Array.isArray(source[itemKey]) ? (source[itemKey] as Record<string, unknown>[]) : [];
   return {
     items: items.map(normalizer),
     total: Number(source.total ?? items.length),
     page: Number(source.page ?? 1),
-    page_size: Number(source.page_size ?? source.limit ?? items.length ?? 20)
+    page_size: Number(source.page_size ?? items.length ?? 20)
   };
 }
 
 function normalizeLiveRoom(raw: Record<string, unknown>): LiveRoom {
-  const id = String(raw.id ?? raw.roomId ?? raw.liveRoomId ?? '0');
+  const id = String(raw.id);
+  const merchantId = String(raw.merchantId ?? '');
   return {
     id,
-    title: String(raw.title ?? raw.name ?? `Live Room ${id}`),
-    merchantId: raw.merchantId === undefined ? undefined : String(raw.merchantId),
-    merchantName: String(raw.merchantName ?? raw.shopName ?? 'Live Store'),
-    status: String(raw.status ?? 'LIVE') as LiveRoom['status'],
+    title: String(raw.title),
+    description: optionalString(raw.description),
+    merchantId,
+    merchantName: optionalString(raw.merchantName) ?? merchantId,
+    status: String(raw.status) as LiveRoom['status'],
     videoSource: normalizeVideoSource(raw.videoSource),
-    coverUrl: typeof raw.coverUrl === 'string' ? raw.coverUrl : undefined,
-    videoUrl: typeof raw.videoUrl === 'string' ? raw.videoUrl : undefined,
-    digitalHuman: normalizeDigitalHumanConfig(raw.digitalHuman),
-    onlineCount: Number(raw.onlineCount ?? raw.online ?? 0),
-    watcherCount: Number(raw.watcherCount ?? raw.watchers ?? raw.viewCount ?? 0),
-    activeAuctionId: raw.activeAuctionId === undefined ? undefined : String(raw.activeAuctionId),
-    liveSessionId: raw.liveSessionId === undefined ? undefined : Number(raw.liveSessionId),
-    startedAt: typeof raw.startedAt === 'string' ? raw.startedAt : undefined,
-    endedAt: typeof raw.endedAt === 'string' ? raw.endedAt : undefined
+    coverUrl: optionalString(raw.coverUrl),
+    videoUrl: optionalString(raw.videoUrl),
+    digitalHuman: normalizeDigitalHuman(raw.digitalHuman),
+    onlineCount: Number(raw.onlineCount ?? 0),
+    watcherCount: Number(raw.viewerTotal ?? 0),
+    activeAuctionId: optionalNumberString(raw.activeAuctionId),
+    liveSessionId: Number(raw.id),
+    startedAt: optionalString(raw.openedAt) ?? optionalString(raw.scheduledStartTime),
+    endedAt: optionalString(raw.closedAt)
   };
 }
 
 function normalizeLot(raw: Record<string, unknown>): LiveRoomLot {
-  const auctionId = String(raw.auctionId ?? raw.auctionID ?? raw.id ?? '0');
-  const currentPrice = Number(raw.currentPrice ?? raw.finalPrice ?? raw.dealPrice ?? raw.startPrice ?? 0);
-  const rawRuleSnapshot = (raw.ruleSnapshot ?? {}) as NonNullable<LiveRoomLot['ruleSnapshot']>;
+  const auctionId = String(raw.auctionId);
+  const startPrice = Number(raw.startPrice ?? 0);
+  const currentPrice = Number(raw.currentPrice ?? raw.dealPrice ?? startPrice);
+  const imageUrls = Array.isArray(raw.imageUrls) ? raw.imageUrls : [];
+  const ruleSnapshot = normalizeRuleSnapshot(raw);
   return {
-    id: String(raw.id ?? raw.lotId ?? auctionId),
+    id: auctionId,
     auctionId,
-    roomId: String(raw.roomId ?? raw.liveRoomId ?? ''),
-    merchantId: raw.merchantId === undefined ? undefined : String(raw.merchantId),
+    roomId: raw.liveSessionId === undefined ? '' : String(raw.liveSessionId),
+    merchantId: raw.sellerId === undefined ? undefined : String(raw.sellerId),
     categoryId: raw.categoryId === undefined ? undefined : String(raw.categoryId),
-    title: String(raw.title ?? raw.name ?? `Lot ${auctionId}`),
-    subtitle: typeof raw.subtitle === 'string' ? raw.subtitle : undefined,
-    description: typeof raw.description === 'string' ? raw.description : undefined,
-    imageUrl: typeof raw.imageUrl === 'string' ? raw.imageUrl : typeof raw.coverUrl === 'string' ? raw.coverUrl : undefined,
-    status: String(raw.status ?? 'UPCOMING') as LiveRoomLot['status'],
-    startPrice: Number(raw.startPrice ?? rawRuleSnapshot.startPrice ?? 0),
+    title: String(raw.title),
+    subtitle: optionalString(raw.brand),
+    description: optionalString(raw.description),
+    imageUrl: optionalString(raw.imageUrl) ?? optionalString(raw.coverUrl) ?? imageUrls.find((item): item is string => typeof item === 'string'),
+    status: String(raw.status) as LiveRoomLot['status'],
+    startPrice,
     currentPrice,
-    finalPrice: raw.finalPrice === undefined ? undefined : Number(raw.finalPrice),
-    leaderBidderId: raw.leaderBidderId === undefined ? undefined : String(raw.leaderBidderId),
-    startTsMs: raw.startTsMs === undefined && raw.startTime === undefined ? undefined : toMs(raw.startTsMs ?? raw.startTime),
-    endTsMs: toMs(raw.endTsMs ?? raw.endTime),
-    ruleSnapshot: rawRuleSnapshot,
+    finalPrice: raw.dealPrice === undefined ? undefined : Number(raw.dealPrice),
+    leaderBidderId: optionalString(raw.leaderBidderId),
+    startTsMs: raw.startTime === undefined ? undefined : toMs(raw.startTime),
+    endTsMs: toMs(raw.endTime),
+    ruleSnapshot,
     depositAmount: raw.depositAmount === undefined ? undefined : Number(raw.depositAmount),
     participantCount: raw.participantCount === undefined ? undefined : Number(raw.participantCount),
     bidCount: raw.bidCount === undefined ? undefined : Number(raw.bidCount),
-    sortOrder: raw.sortOrder === undefined ? undefined : Number(raw.sortOrder),
-    publishedAt: typeof raw.publishedAt === 'string' ? raw.publishedAt : undefined
+    publishedAt: optionalString(raw.createdAt)
+  };
+}
+
+function normalizeRuleSnapshot(raw: Record<string, unknown>): NonNullable<LiveRoomLot['ruleSnapshot']> {
+  const snapshot = raw.ruleSnapshot && typeof raw.ruleSnapshot === 'object' ? (raw.ruleSnapshot as Record<string, unknown>) : {};
+  const incrementRule =
+    snapshot.incrementRule && typeof snapshot.incrementRule === 'object'
+      ? (snapshot.incrementRule as NonNullable<LiveRoomLot['ruleSnapshot']>['incrementRule'])
+      : raw.incrementRule && typeof raw.incrementRule === 'object'
+        ? (raw.incrementRule as NonNullable<LiveRoomLot['ruleSnapshot']>['incrementRule'])
+        : undefined;
+  return {
+    ...snapshot,
+    startPrice: Number(snapshot.startPrice ?? raw.startPrice ?? 0),
+    reservePrice: Number(snapshot.reservePrice ?? raw.reservePrice ?? 0),
+    capPrice: Number(snapshot.capPrice ?? raw.capPrice ?? 0) || undefined,
+    incrementRule,
+    antiSnipingSec: Number(snapshot.antiSnipingSec ?? raw.antiSnipingSec ?? 0) || undefined,
+    antiExtendSec: Number(snapshot.antiExtendSec ?? raw.antiExtendSec ?? 0) || undefined,
+    depositPolicy:
+      snapshot.depositPolicy && typeof snapshot.depositPolicy === 'object'
+        ? (snapshot.depositPolicy as NonNullable<LiveRoomLot['ruleSnapshot']>['depositPolicy'])
+        : raw.depositAmount === undefined
+          ? undefined
+          : { amount: Number(raw.depositAmount) }
   };
 }
 
 function normalizeCategory(raw: Record<string, unknown>): Category {
   return {
-    id: String(raw.id ?? raw.categoryId ?? '0'),
-    name: String(raw.name ?? raw.title ?? 'Category'),
-    iconName: typeof raw.iconName === 'string' ? raw.iconName : undefined
+    id: String(raw.id),
+    name: String(raw.name),
+    iconName: optionalString(raw.iconName)
   };
 }
 
 function normalizeMerchant(raw: Record<string, unknown>): Merchant {
-  const id = String(raw.id ?? raw.merchantId ?? raw.sellerId ?? '0');
+  const id = String(raw.id);
   return {
     id,
-    name: String(raw.name ?? raw.merchantName ?? raw.shopName ?? `Merchant ${id}`),
-    avatarUrl: typeof raw.avatarUrl === 'string' ? raw.avatarUrl : typeof raw.logoUrl === 'string' ? raw.logoUrl : undefined,
-    description: typeof raw.description === 'string' ? raw.description : undefined,
-    followerCount: Number(raw.followerCount ?? raw.fansCount ?? 0),
+    name: String(raw.name),
+    avatarUrl: optionalString(raw.avatarUrl),
+    description: optionalString(raw.description),
+    followerCount: Number(raw.followerCount ?? 0),
     fansCount: raw.fansCount === undefined ? undefined : Number(raw.fansCount),
     rating: raw.rating === undefined ? undefined : Number(raw.rating),
     liveRoomId: raw.liveRoomId === undefined ? undefined : String(raw.liveRoomId),
-    location: typeof raw.location === 'string' ? raw.location : undefined
+    location: optionalString(raw.location)
   };
 }
 
 function normalizeStats(raw: Record<string, unknown>): LiveRoomStats {
   return {
-    roomId: String(raw.roomId ?? raw.id ?? '0'),
-    onlineCount: Number(raw.onlineCount ?? raw.online ?? 0),
-    watcherCount: Number(raw.watcherCount ?? raw.watchers ?? raw.viewCount ?? 0),
+    roomId: String(raw.liveSessionId),
+    onlineCount: Number(raw.online ?? 0),
+    watcherCount: Number(raw.viewerTotal ?? 0),
     bidCount: Number(raw.bidCount ?? 0),
     gmvCent: raw.gmvCent === undefined ? undefined : Number(raw.gmvCent)
   };
@@ -191,65 +224,59 @@ function normalizeStats(raw: Record<string, unknown>): LiveRoomStats {
 
 function normalizeState(raw: Record<string, unknown>): AuctionState {
   return {
-    auctionId: String(raw.auctionId ?? raw.id ?? '0'),
-    status: String(raw.status ?? 'RUNNING') as AuctionState['status'],
+    auctionId: String(raw.auctionId),
+    status: String(raw.status) as AuctionState['status'],
     currentPrice: Number(raw.currentPrice ?? 0),
     leaderBidderId: raw.leaderBidderId === undefined ? undefined : String(raw.leaderBidderId),
     bidCount: raw.bidCount === undefined ? undefined : Number(raw.bidCount),
-    participantCount: raw.participantCount === undefined ? undefined : Number(raw.participantCount),
-    endTsMs: toMs(raw.endTsMs ?? raw.endTime),
-    serverTsMs: Number(raw.serverTsMs ?? Date.now())
+    endTsMs: toMs(raw.endTime),
+    serverTsMs: Date.now()
   };
 }
 
 function normalizeOrder(raw: Record<string, unknown>): Order {
   return {
-    id: String(raw.id ?? raw.orderId ?? '0'),
-    auctionId: String(raw.auctionId ?? '0'),
-    buyerId: String(raw.buyerId ?? raw.winnerId ?? ''),
-    merchantId: raw.merchantId === undefined ? undefined : String(raw.merchantId ?? raw.sellerId),
-    amount: Number(raw.amount ?? raw.dealPrice ?? raw.price ?? 0),
-    status: String(raw.status ?? raw.payStatus ?? 'PENDING_PAY'),
+    id: String(raw.id),
+    auctionId: String(raw.auctionId),
+    buyerId: String(raw.winnerId),
+    merchantId: raw.sellerId === undefined ? undefined : String(raw.sellerId),
+    amount: Number(raw.dealPrice ?? 0),
+    status: String(raw.status),
     payStatus: raw.payStatus === undefined ? undefined : String(raw.payStatus),
-    fulfillmentStatus: normalizeFulfillmentStatus(raw.fulfillmentStatus),
-    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : undefined,
-    paidAt: typeof raw.paidAt === 'string' ? raw.paidAt : undefined,
-    shippedAt: typeof raw.shippedAt === 'string' ? raw.shippedAt : undefined,
-    receivedAt: typeof raw.receivedAt === 'string' ? raw.receivedAt : undefined
+    fulfillmentStatus: raw.fulfillmentStatus === undefined ? undefined : (String(raw.fulfillmentStatus) as Order['fulfillmentStatus']),
+    createdAt: optionalString(raw.createdAt),
+    paidAt: optionalString(raw.paidAt),
+    shippedAt: optionalString(raw.shippedAt),
+    receivedAt: optionalString(raw.receivedAt)
   };
-}
-
-function normalizeFulfillmentStatus(value: unknown): OrderFulfillmentStatus | undefined {
-  if (value === 'UNSHIPPED' || value === 'SHIPPED' || value === 'RECEIVED') return value;
-  return undefined;
 }
 
 function normalizeProfile(raw: Record<string, unknown>): UserProfile {
   return {
-    userId: String(raw.userId ?? raw.id ?? '0'),
-    nickname: String(raw.nickname ?? raw.name ?? 'User'),
-    avatarUrl: typeof raw.avatarUrl === 'string' ? raw.avatarUrl : undefined,
-    reminderCount: Number(raw.reminderCount ?? 0),
-    favoriteCount: Number(raw.favoriteCount ?? 0),
-    followingCount: Number(raw.followingCount ?? 0),
-    footprintCount: Number(raw.footprintCount ?? 0)
+    userId: String(raw.id),
+    nickname: String(raw.nickname),
+    avatarUrl: optionalString(raw.avatarUrl),
+    reminderCount: 0,
+    favoriteCount: 0,
+    followingCount: 0,
+    footprintCount: 0
   };
 }
 
 function normalizeAuctionRecord(raw: Record<string, unknown>): UserAuctionRecord {
-  const rawLot = (raw.lot ?? raw.auction ?? {}) as Record<string, unknown>;
+  const rawLot = (raw.lot ?? {}) as Record<string, unknown>;
   const rawRoom = raw.room === undefined ? undefined : (raw.room as Record<string, unknown>);
   const rawOrder = raw.order === undefined ? undefined : (raw.order as Record<string, unknown>);
   const lot = normalizeLot(rawLot);
   return {
-    id: String(raw.id ?? raw.recordId ?? lot.auctionId),
-    userId: String(raw.userId ?? raw.buyerId ?? ''),
+    id: String(raw.id),
+    userId: String(raw.userId),
     lot,
     room: rawRoom ? normalizeLiveRoom(rawRoom) : undefined,
     order: rawOrder ? normalizeOrder(rawOrder) : undefined,
-    depositAmount: Number(raw.depositAmount ?? lot.depositAmount ?? 0),
-    depositStatus: String(raw.depositStatus ?? ''),
-    enrolledAt: typeof raw.enrolledAt === 'string' ? raw.enrolledAt : undefined
+    depositAmount: Number(raw.depositAmount ?? 0),
+    depositStatus: String(raw.depositStatus),
+    enrolledAt: optionalString(raw.enrolledAt)
   };
 }
 
@@ -268,11 +295,19 @@ function lotSearchQuery(options: SearchLotsOptions = {}): string {
   params.set('limit', '20');
   params.set('offset', '0');
   if (options.keyword) params.set('keyword', options.keyword);
-  if (options.sort) params.set('sort', options.sort);
+  const sort = lotSortParam(options.sort);
+  if (sort) params.set('sort', sort);
   if (options.status && options.status !== 'all') params.set('status', options.status);
   if (options.categoryId && options.categoryId !== 'all') params.set('categoryId', options.categoryId);
   if (options.merchantId) params.set('merchantId', options.merchantId);
   return params.toString();
+}
+
+function lotSortParam(sort: SearchLotsOptions['sort']): string | undefined {
+  if (sort === 'priceAsc' || sort === 'priceDesc') return sort;
+  if (sort === 'auctionTime') return 'startTimeAsc';
+  if (sort === 'publishedAt') return 'newest';
+  return undefined;
 }
 
 function liveRoomSearchQuery(options: SearchLiveRoomsOptions = {}): string {
@@ -280,9 +315,17 @@ function liveRoomSearchQuery(options: SearchLiveRoomsOptions = {}): string {
   params.set('limit', '20');
   params.set('offset', '0');
   if (options.keyword) params.set('keyword', options.keyword);
-  if (options.sort) params.set('sort', options.sort);
-  if (options.status && options.status !== 'all') params.set('status', options.status);
+  if (options.sort && options.sort !== 'default') params.set('sort', options.sort);
+  const status = liveSessionStatusParam(options.status);
+  if (status) params.set('status', status);
   return params.toString();
+}
+
+function liveSessionStatusParam(status: SearchLiveRoomsOptions['status']): string | undefined {
+  if (status === 'live') return 'LIVE';
+  if (status === 'ended') return 'ENDED';
+  if (status === 'upcoming') return 'SCHEDULED';
+  return undefined;
 }
 
 function merchantSearchQuery(options: SearchMerchantsOptions = {}): string {
@@ -314,53 +357,53 @@ export class ApiClient {
   }
 
   async getMyProfile(): Promise<UserProfile> {
-    const data = await this.request('/api/v1/users/me/profile');
+    const data = await this.request('/api/v1/auth/me');
     return normalizeProfile(data as Record<string, unknown>);
   }
 
   async updateMyProfile(profile: Partial<UserProfile>): Promise<UserProfile> {
-    const data = await this.request('/api/v1/users/me/profile', { method: 'PATCH', body: profile });
+    const data = await this.request('/api/v1/auth/me', { method: 'PATCH', body: { nickname: profile.nickname } });
     return normalizeProfile(data as Record<string, unknown>);
   }
 
   async listLiveRooms(): Promise<PageResult<LiveRoom>> {
-    const data = await this.request('/api/v1/live-rooms?limit=20&offset=0');
-    return normalizePage(data, ['items', 'rooms', 'liveRooms'], normalizeLiveRoom);
+    const data = await this.request('/api/v1/live-sessions?limit=20&offset=0');
+    return normalizePage(data, 'sessions', normalizeLiveRoom);
   }
 
   async getLiveRoom(id: string): Promise<LiveRoom> {
-    const data = await this.request(`/api/v1/live-rooms/${id}`);
+    const data = await this.request(`/api/v1/live-sessions/${id}`);
     return normalizeLiveRoom(data as Record<string, unknown>);
   }
 
   async listLiveRoomLots(roomId: string): Promise<PageResult<LiveRoomLot>> {
-    const data = await this.request(`/api/v1/live-rooms/${roomId}/lots`);
-    return normalizePage(data, ['items', 'lots', 'auctions'], normalizeLot);
+    const data = await this.request(`/api/v1/live-sessions/${roomId}/lots`);
+    return normalizePage(data, 'lots', normalizeLot);
   }
 
   async getLiveRoomStats(roomId: string): Promise<LiveRoomStats> {
-    const data = await this.request(`/api/v1/live-rooms/${roomId}/stats`);
+    const data = await this.request(`/api/v1/live-sessions/${roomId}/stats`);
     return normalizeStats(data as Record<string, unknown>);
   }
 
   async listCategories(): Promise<PageResult<Category>> {
     const data = await this.request('/api/v1/categories?limit=20&offset=0');
-    return normalizePage(data, ['items', 'categories'], normalizeCategory);
+    return normalizePage(data, 'categories', normalizeCategory);
   }
 
   async searchLots(options: SearchLotsOptions = {}): Promise<PageResult<LiveRoomLot>> {
     const data = await this.request(`/api/v1/search/lots?${lotSearchQuery(options)}`);
-    return normalizePage(data, ['items', 'lots'], normalizeLot);
+    return normalizePage(data, 'lots', normalizeLot);
   }
 
   async searchLiveRooms(options: SearchLiveRoomsOptions = {}): Promise<PageResult<LiveRoom>> {
-    const data = await this.request(`/api/v1/search/live-rooms?${liveRoomSearchQuery(options)}`);
-    return normalizePage(data, ['items', 'rooms', 'liveRooms'], normalizeLiveRoom);
+    const data = await this.request(`/api/v1/live-sessions?${liveRoomSearchQuery(options)}`);
+    return normalizePage(data, 'sessions', normalizeLiveRoom);
   }
 
   async searchMerchants(options: SearchMerchantsOptions = {}): Promise<PageResult<Merchant>> {
     const data = await this.request(`/api/v1/search/merchants?${merchantSearchQuery(options)}`);
-    return normalizePage(data, ['items', 'merchants'], normalizeMerchant);
+    return normalizePage(data, 'merchants', normalizeMerchant);
   }
 
   async getMerchant(id: string): Promise<Merchant> {
@@ -375,7 +418,7 @@ export class ApiClient {
 
   async listMyAuctionRecords(): Promise<PageResult<UserAuctionRecord>> {
     const data = await this.request('/api/v1/auction-participations/mine?limit=20&offset=0');
-    return normalizePage(data, ['items', 'records'], normalizeAuctionRecord);
+    return normalizePage(data, 'records', normalizeAuctionRecord);
   }
 
   async getAuctionState(id: string): Promise<AuctionState> {
@@ -385,15 +428,13 @@ export class ApiClient {
 
   async enrollAuction(id: string): Promise<EnrollResult> {
     return this.request(`/api/v1/auctions/${id}/enroll`, {
-      method: 'POST',
-      idempotencyKey: `enroll-${id}-${Date.now()}`,
-      body: { depositPayChannel: 'MOCK_PAY' }
+      method: 'POST'
     });
   }
 
   async listMyOrders(options: ListOrderOptions = {}): Promise<PageResult<Order>> {
     const data = await this.request(`/api/v1/orders/mine?${orderQuery(options)}`);
-    return normalizePage(data, ['items', 'orders'], normalizeOrder);
+    return normalizePage(data, 'orders', normalizeOrder);
   }
 
   async getOrder(id: string): Promise<Order> {
@@ -404,8 +445,7 @@ export class ApiClient {
   async payOrder(id: string): Promise<Order> {
     const data = await this.request(`/api/v1/orders/${id}/pay`, {
       method: 'POST',
-      idempotencyKey: `pay-${id}-${Date.now()}`,
-      body: { payChannel: 'MOCK_PAY' }
+      idempotencyKey: `pay-${id}-${Date.now()}`
     });
     return normalizeOrder(data as Record<string, unknown>);
   }
@@ -554,7 +594,7 @@ export class DemoApiClient extends ApiClient {
 }
 
 const remoteApiClient = new ApiClient(
-  import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:4523/m1/8317345-8081123-default'
+  import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8888'
 );
 
 export const defaultApiClient =

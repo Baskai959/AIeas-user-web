@@ -7,7 +7,7 @@ const baseLot: LiveRoomLot = {
   auctionId: 'auction_base',
   roomId: 'room_1',
   title: 'Base Lot',
-  status: 'UPCOMING',
+  status: 'READY',
   startPrice: 1000,
   currentPrice: 1000,
   endTsMs: 1
@@ -25,7 +25,7 @@ function lot(id: string, status: LiveRoomLot['status']): LiveRoomLot {
 describe('auction view helpers', () => {
   it('groups my auction records by deposit, auction, payment, and fulfillment state', () => {
     const records = [
-      record('pending_bid_upcoming', 'UPCOMING'),
+      record('pending_bid_ready', 'READY'),
       record('pending_bid_running', 'RUNNING'),
       record('lost_only_all', 'CLOSED_FAILED', { depositStatus: 'RELEASED' }),
       record('pending_pay', 'CLOSED_WON', { order: order('pending_pay', 'PENDING_PAY', 'UNPAID') }),
@@ -38,7 +38,7 @@ describe('auction view helpers', () => {
     const grouped = groupAuctionRecords(records);
 
     expect(grouped.all.map((item) => item.id)).toEqual([
-      'pending_bid_upcoming',
+      'pending_bid_ready',
       'pending_bid_running',
       'lost_only_all',
       'pending_pay',
@@ -46,7 +46,7 @@ describe('auction view helpers', () => {
       'pending_receipt',
       'completed'
     ]);
-    expect(grouped.pendingBid.map((item) => item.id)).toEqual(['pending_bid_upcoming', 'pending_bid_running']);
+    expect(grouped.pendingBid.map((item) => item.id)).toEqual(['pending_bid_ready', 'pending_bid_running']);
     expect(grouped.pendingPay.map((item) => item.id)).toEqual(['pending_pay']);
     expect(grouped.pendingShipment.map((item) => item.id)).toEqual(['pending_shipment']);
     expect(grouped.pendingReceipt.map((item) => item.id)).toEqual(['pending_receipt']);
@@ -63,7 +63,7 @@ describe('auction view helpers', () => {
       watcherCount: 99,
       activeAuctionId: 'auction_preferred'
     };
-    const lots = [lot('fallback', 'RUNNING'), lot('preferred', 'UPCOMING'), lot('other_room', 'RUNNING')].map((item) =>
+    const lots = [lot('fallback', 'RUNNING'), lot('preferred', 'READY'), lot('other_room', 'RUNNING')].map((item) =>
       item.id === 'lot_other_room' ? { ...item, roomId: 'room_2' } : item
     );
 
@@ -78,7 +78,7 @@ describe('auction view helpers', () => {
 
   it('selects preview lots with running first, upcoming fallback, and no ended fallback', () => {
     const running = lot('running', 'RUNNING');
-    const upcoming = lot('upcoming', 'UPCOMING');
+    const upcoming = lot('upcoming', 'READY');
     const ended = lot('ended', 'CLOSED_WON');
 
     expect(selectPreviewLot('room_1', [upcoming, running])?.id).toBe('running');

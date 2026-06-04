@@ -27,28 +27,30 @@ describe('ApiClient', () => {
     expect(fetcher).toHaveBeenCalledWith('http://mock.local/api/v1/auth/login', expect.objectContaining({ method: 'POST' }));
   });
 
-  it('uses the new live-room REST resources', async () => {
+  it('uses the live-session REST resources registered by the backend', async () => {
     const fetcher = vi
       .fn()
-      .mockImplementationOnce(() => ok({ items: [{ id: 1001, title: '珠宝严选直播间', status: 'LIVE', onlineCount: 328 }], total: 1 }))
-      .mockImplementationOnce(() => ok({ id: 1001, title: '珠宝严选直播间', status: 'LIVE', activeAuctionId: 2001 }))
+      .mockImplementationOnce(() => ok({ sessions: [{ id: 1001, merchantId: 'merchant_01', title: '珠宝严选直播间', status: 'LIVE', viewerTotal: 1208 }] }))
+      .mockImplementationOnce(() => ok({ id: 1001, merchantId: 'merchant_01', title: '珠宝严选直播间', status: 'LIVE', activeAuctionId: 2001 }))
       .mockImplementationOnce(() =>
         ok({
-          items: [
+          lots: [
             {
-              id: 3001,
               auctionId: 2001,
-              roomId: 1001,
+              liveSessionId: 1001,
+              sellerId: 'merchant_01',
+              category: 'jewelry',
               title: '18K 金钻石项链',
               status: 'RUNNING',
               startPrice: 0,
-              currentPrice: 150100
+              currentPrice: 150100,
+              endTime: '2026-06-04T12:00:00+08:00',
+              incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 }
             }
-          ],
-          total: 1
+          ]
         })
       )
-      .mockImplementationOnce(() => ok({ roomId: 1001, onlineCount: 328, watcherCount: 1208, bidCount: 36 }));
+      .mockImplementationOnce(() => ok({ liveSessionId: 1001, online: 328, viewerTotal: 1208, bidCount: 36 }));
     const api = new ApiClient('http://mock.local', fetcher);
 
     const rooms = await api.listLiveRooms();
@@ -56,28 +58,28 @@ describe('ApiClient', () => {
     const lots = await api.listLiveRoomLots('1001');
     const stats = await api.getLiveRoomStats('1001');
 
-    expect(rooms.items[0]).toMatchObject({ id: '1001', title: '珠宝严选直播间', status: 'LIVE', onlineCount: 328 });
+    expect(rooms.items[0]).toMatchObject({ id: '1001', title: '珠宝严选直播间', merchantId: 'merchant_01', status: 'LIVE', watcherCount: 1208 });
     expect(room.activeAuctionId).toBe('2001');
     expect(lots.items[0]).toMatchObject({ auctionId: '2001', currentPrice: 150100 });
     expect(stats).toMatchObject({ roomId: '1001', onlineCount: 328, watcherCount: 1208, bidCount: 36 });
-    expect(fetcher).toHaveBeenNthCalledWith(1, 'http://mock.local/api/v1/live-rooms?limit=20&offset=0', expect.any(Object));
-    expect(fetcher).toHaveBeenNthCalledWith(3, 'http://mock.local/api/v1/live-rooms/1001/lots', expect.any(Object));
+    expect(fetcher).toHaveBeenNthCalledWith(1, 'http://mock.local/api/v1/live-sessions?limit=20&offset=0', expect.any(Object));
+    expect(fetcher).toHaveBeenNthCalledWith(3, 'http://mock.local/api/v1/live-sessions/1001/lots', expect.any(Object));
   });
 
   it('queries orders by auctionId and fetches order detail without old auction history endpoints', async () => {
     const fetcher = vi
       .fn()
-      .mockImplementationOnce(() => ok({ items: [{ id: 'ord_2001', auctionId: 2001, winnerId: 'u1', amount: 150100, status: 'PENDING_PAY' }], total: 1 }))
-      .mockImplementationOnce(() => ok({ id: 'ord_2001', auctionId: 2001, winnerId: 'u1', amount: 150100, status: 'PENDING_PAY' }));
+      .mockImplementationOnce(() => ok({ orders: [{ id: 2001, auctionId: 2001, winnerId: 'u1', sellerId: 'merchant_01', dealPrice: 150100, status: 'CREATED', payStatus: 'UNPAID' }] }))
+      .mockImplementationOnce(() => ok({ id: 2001, auctionId: 2001, winnerId: 'u1', sellerId: 'merchant_01', dealPrice: 150100, status: 'CREATED', payStatus: 'UNPAID' }));
     const api = new ApiClient('http://mock.local', fetcher);
 
     const orders = await api.listMyOrders({ auctionId: '2001' });
-    const order = await api.getOrder('ord_2001');
+    const order = await api.getOrder('2001');
 
     expect(orders.items[0].auctionId).toBe('2001');
     expect(order.amount).toBe(150100);
     expect(fetcher).toHaveBeenNthCalledWith(1, 'http://mock.local/api/v1/orders/mine?limit=20&offset=0&auctionId=2001', expect.any(Object));
-    expect(fetcher).toHaveBeenNthCalledWith(2, 'http://mock.local/api/v1/orders/ord_2001', expect.any(Object));
+    expect(fetcher).toHaveBeenNthCalledWith(2, 'http://mock.local/api/v1/orders/2001', expect.any(Object));
   });
 
   it('throws ApiError when business code is non-zero', async () => {
@@ -97,66 +99,67 @@ describe('ApiClient', () => {
   it('normalizes the new search, merchant, and category REST resources', async () => {
     const fetcher = vi
       .fn()
-      .mockImplementationOnce(() => ok({ items: [{ id: 'jewelry', name: '珠宝玉石', iconName: 'gem' }], total: 1 }))
-      .mockImplementationOnce(() => ok({ items: [{ id: 'lot_1', auctionId: 'auc_1', roomId: 'room_1', merchantId: 'merchant_1', categoryId: 'jewelry', title: '钻石项链', status: 'RUNNING', currentPrice: 1000 }], total: 1 }))
-      .mockImplementationOnce(() => ok({ items: [{ id: 'room_1', title: '珠宝直播间', status: 'LIVE', watcherCount: 99 }], total: 1 }))
-      .mockImplementationOnce(() => ok({ items: [{ id: 'merchant_1', name: '云上珠宝', followerCount: 1200 }], total: 1 }))
+      .mockImplementationOnce(() => ok({ categories: [{ id: 'jewelry', name: '珠宝玉石', iconName: 'gem' }] }))
+      .mockImplementationOnce(() => ok({ lots: [{ auctionId: 1001, liveSessionId: 9001, sellerId: 'merchant_1', category: '珠宝玉石', categoryId: 'jewelry', title: '钻石项链', imageUrl: 'https://cdn.example.com/lot.jpg', status: 'RUNNING', startPrice: 0, currentPrice: 1000, participantCount: 12, endTime: '2026-06-04T12:00:00+08:00' }] }))
+      .mockImplementationOnce(() => ok({ sessions: [{ id: 9001, merchantId: 'merchant_1', merchantName: '云上珠宝', title: '珠宝直播间', status: 'LIVE', onlineCount: 12, viewerTotal: 99 }] }))
+      .mockImplementationOnce(() => ok({ merchants: [{ id: 'merchant_1', name: '云上珠宝', followerCount: 1200 }] }))
       .mockImplementationOnce(() => ok({ id: 'merchant_1', name: '云上珠宝', followerCount: 1200, liveRoomId: 'room_1' }))
-      .mockImplementationOnce(() => ok({ id: 'lot_1', auctionId: 'auc_1', roomId: 'room_1', title: '钻石项链', status: 'RUNNING', currentPrice: 1000 }));
+      .mockImplementationOnce(() => ok({ auctionId: 1001, liveSessionId: 9001, sellerId: 'merchant_1', category: 'jewelry', title: '钻石项链', status: 'RUNNING', startPrice: 0, currentPrice: 1000, endTime: '2026-06-04T12:00:00+08:00' }));
     const api = new ApiClient('http://mock.local', fetcher);
 
     const categories = await api.listCategories();
-    const lots = await api.searchLots({ keyword: '钻石', sort: 'priceDesc', status: 'running', categoryId: 'jewelry' });
-    const rooms = await api.searchLiveRooms({ keyword: '珠宝', sort: 'watchers', status: 'live' });
+    const lots = await api.searchLots({ keyword: '钻石', sort: 'priceDesc', status: 'RUNNING', categoryId: 'jewelry' });
+    const rooms = await api.searchLiveRooms({ keyword: '珠宝', sort: 'viewerDesc', status: 'live' });
     const merchants = await api.searchMerchants({ keyword: '云上' });
     const merchant = await api.getMerchant('merchant_1');
     const lot = await api.getLot('lot_1');
 
     expect(categories.items[0].name).toBe('珠宝玉石');
-    expect(lots.items[0]).toMatchObject({ id: 'lot_1', merchantId: 'merchant_1', categoryId: 'jewelry' });
-    expect(rooms.items[0].watcherCount).toBe(99);
+    expect(lots.items[0]).toMatchObject({ id: '1001', merchantId: 'merchant_1', categoryId: 'jewelry', imageUrl: 'https://cdn.example.com/lot.jpg', participantCount: 12 });
+    expect(rooms.items[0]).toMatchObject({ merchantName: '云上珠宝', onlineCount: 12, watcherCount: 99 });
     expect(merchants.items[0].name).toBe('云上珠宝');
     expect(merchant.liveRoomId).toBe('room_1');
     expect(lot.title).toBe('钻石项链');
-    expect(fetcher).toHaveBeenNthCalledWith(2, 'http://mock.local/api/v1/search/lots?limit=20&offset=0&keyword=%E9%92%BB%E7%9F%B3&sort=priceDesc&status=running&categoryId=jewelry', expect.any(Object));
-    expect(fetcher).toHaveBeenNthCalledWith(3, 'http://mock.local/api/v1/search/live-rooms?limit=20&offset=0&keyword=%E7%8F%A0%E5%AE%9D&sort=watchers&status=live', expect.any(Object));
+    expect(fetcher).toHaveBeenNthCalledWith(2, 'http://mock.local/api/v1/search/lots?limit=20&offset=0&keyword=%E9%92%BB%E7%9F%B3&sort=priceDesc&status=RUNNING&categoryId=jewelry', expect.any(Object));
+    expect(fetcher).toHaveBeenNthCalledWith(3, 'http://mock.local/api/v1/live-sessions?limit=20&offset=0&keyword=%E7%8F%A0%E5%AE%9D&sort=viewerDesc&status=LIVE', expect.any(Object));
   });
 
   it('normalizes profile and my auction participation resources', async () => {
     const fetcher = vi
       .fn()
-      .mockImplementationOnce(() => ok({ id: 'u1', nickname: 'Buyer One', avatarUrl: 'data:image/jpeg;base64,old', reminderCount: 2, favoriteCount: 3, followingCount: 4, footprintCount: 5 }))
-      .mockImplementationOnce(() => ok({ userId: 'u1', nickname: 'Buyer Two', avatarUrl: 'data:image/jpeg;base64,new', reminderCount: 2, favoriteCount: 3, followingCount: 4, footprintCount: 5 }))
+      .mockImplementationOnce(() => ok({ id: 'u1', nickname: 'Buyer One', avatarUrl: 'data:image/jpeg;base64,old', role: 'buyer', status: 'ACTIVE' }))
+      .mockImplementationOnce(() => ok({ id: 'u1', nickname: 'Buyer Two', avatarUrl: 'data:image/jpeg;base64,old', role: 'buyer', status: 'ACTIVE' }))
       .mockImplementationOnce(() =>
         ok({
           records: [
             {
-              recordId: 'part_1',
+              id: 'part_1',
               userId: 'u1',
               depositAmount: 5000,
+              depositStatus: 'READY',
               lot: {
-                id: 'lot_1',
-                auctionId: 'auc_1',
-                roomId: 'room_1',
+                auctionId: 1001,
+                liveSessionId: 9001,
+                sellerId: 'merchant_1',
+                category: 'jewelry',
                 title: 'Diamond Lot',
                 status: 'RUNNING',
                 currentPrice: 120000,
-                endTsMs: 1
+                endTime: '2026-06-04T12:00:00+08:00'
               },
-              room: { id: 'room_1', title: 'Jewelry Live', status: 'LIVE', merchantName: 'Cloud Jewelry' },
+              room: { id: 9001, merchantId: 'merchant_1', title: 'Jewelry Live', status: 'LIVE' },
               order: {
-                id: 'ord_1',
-                auctionId: 'auc_1',
+                id: 3001,
+                auctionId: 1001,
                 winnerId: 'u1',
-                amount: 120000,
+                sellerId: 'merchant_1',
+                dealPrice: 120000,
                 status: 'PAID',
                 payStatus: 'PAID',
-                fulfillmentStatus: 'SHIPPED',
-                shippedAt: '2026-05-31T10:00:00+08:00'
+                fulfillmentStatus: 'UNSHIPPED'
               }
             }
-          ],
-          total: 1
+          ]
         })
       );
     const api = new ApiClient('http://mock.local', fetcher);
@@ -165,17 +168,17 @@ describe('ApiClient', () => {
     const saved = await api.updateMyProfile({ userId: 'u1', nickname: 'Buyer Two', avatarUrl: 'data:image/jpeg;base64,new' });
     const records = await api.listMyAuctionRecords();
 
-    expect(profile).toMatchObject({ userId: 'u1', nickname: 'Buyer One', favoriteCount: 3 });
-    expect(saved).toMatchObject({ userId: 'u1', nickname: 'Buyer Two', avatarUrl: 'data:image/jpeg;base64,new' });
+    expect(profile).toMatchObject({ userId: 'u1', nickname: 'Buyer One', favoriteCount: 0 });
+    expect(saved).toMatchObject({ userId: 'u1', nickname: 'Buyer Two', avatarUrl: 'data:image/jpeg;base64,old' });
     expect(records.items[0]).toMatchObject({
       id: 'part_1',
       depositAmount: 5000,
-      lot: { id: 'lot_1', auctionId: 'auc_1', status: 'RUNNING' },
-      room: { id: 'room_1', title: 'Jewelry Live' },
-      order: { id: 'ord_1', fulfillmentStatus: 'SHIPPED', shippedAt: '2026-05-31T10:00:00+08:00' }
+      lot: { id: '1001', auctionId: '1001', status: 'RUNNING' },
+      room: { id: '9001', title: 'Jewelry Live' },
+      order: { id: '3001', amount: 120000, fulfillmentStatus: 'UNSHIPPED' }
     });
-    expect(fetcher).toHaveBeenNthCalledWith(1, 'http://mock.local/api/v1/users/me/profile', expect.any(Object));
-    expect(fetcher).toHaveBeenNthCalledWith(2, 'http://mock.local/api/v1/users/me/profile', expect.objectContaining({ method: 'PATCH' }));
+    expect(fetcher).toHaveBeenNthCalledWith(1, 'http://mock.local/api/v1/auth/me', expect.any(Object));
+    expect(fetcher).toHaveBeenNthCalledWith(2, 'http://mock.local/api/v1/auth/me', expect.objectContaining({ method: 'PATCH' }));
     expect(fetcher).toHaveBeenNthCalledWith(3, 'http://mock.local/api/v1/auction-participations/mine?limit=20&offset=0', expect.any(Object));
   });
 
@@ -194,9 +197,9 @@ describe('ApiClient', () => {
   it('filters and sorts local demo search data for the redesigned H5 UI', async () => {
     const api = new DemoApiClient(vi.fn());
 
-    const runningJewelry = await api.searchLots({ keyword: '钻石', status: 'running', categoryId: 'jewelry' });
+    const runningJewelry = await api.searchLots({ keyword: '钻石', status: 'RUNNING', categoryId: 'jewelry' });
     const merchants = await api.searchMerchants({ keyword: '云上' });
-    const liveRooms = await api.searchLiveRooms({ sort: 'watchers', status: 'live' });
+    const liveRooms = await api.searchLiveRooms({ sort: 'viewerDesc', status: 'live' });
     const merchant = await api.getMerchant(merchants.items[0].id);
     const profile = await api.updateMyProfile({ nickname: 'Demo Buyer' });
     const records = await api.listMyAuctionRecords();

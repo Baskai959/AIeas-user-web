@@ -125,7 +125,7 @@ export const demoLiveRoomPage: PageResult<LiveRoom> = {
       title: '潮奢腕表夜场',
       merchantId: 'merchant_02',
       merchantName: '时计公社',
-      status: 'UPCOMING',
+      status: 'SCHEDULED',
       videoSource: 'recorded',
       coverUrl: '/logo.png',
       videoUrl: '/media/live-room-demo.mp4',
@@ -195,10 +195,10 @@ export const demoLots: LiveRoomLot[] = [
     publishedAt: new Date(now - 2 * 60 * 60_000).toISOString(),
     ruleSnapshot: {
       startPrice: 0,
-      minIncrement: 100,
-      ceilingPrice: 188_800,
-      antiSnipeSec: 15,
-      extendSec: 10
+      incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 },
+      capPrice: 188_800,
+      antiSnipingSec: 15,
+      antiExtendSec: 10
     },
     depositAmount: 5000,
     participantCount: 128,
@@ -215,7 +215,7 @@ export const demoLots: LiveRoomLot[] = [
     subtitle: '老坑料 直播间专拍',
     description: '冰种翡翠吊坠，未开始前可查看规则和报名。',
     imageUrl: '',
-    status: 'UPCOMING',
+    status: 'READY',
     startPrice: 0,
     currentPrice: 0,
     startTsMs: now + 10 * 60_000,
@@ -223,10 +223,10 @@ export const demoLots: LiveRoomLot[] = [
     publishedAt: new Date(now - 90 * 60_000).toISOString(),
     ruleSnapshot: {
       startPrice: 0,
-      minIncrement: 200,
-      ceilingPrice: 92_000,
-      antiSnipeSec: 15,
-      extendSec: 10
+      incrementRule: { type: 'fixed', amount: 200, maxBidSteps: 10 },
+      capPrice: 92_000,
+      antiSnipingSec: 15,
+      antiExtendSec: 10
     },
     depositAmount: 5000,
     participantCount: 46,
@@ -253,10 +253,10 @@ export const demoLots: LiveRoomLot[] = [
     publishedAt: new Date(now - 6 * 60 * 60_000).toISOString(),
     ruleSnapshot: {
       startPrice: 0,
-      minIncrement: 100,
-      ceilingPrice: 80_000,
-      antiSnipeSec: 15,
-      extendSec: 10
+      incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 },
+      capPrice: 80_000,
+      antiSnipingSec: 15,
+      antiExtendSec: 10
     },
     depositAmount: 3000,
     participantCount: 72,
@@ -281,9 +281,9 @@ export const demoLots: LiveRoomLot[] = [
     publishedAt: new Date(now - 8 * 60 * 60_000).toISOString(),
     ruleSnapshot: {
       startPrice: 0,
-      minIncrement: 100,
-      antiSnipeSec: 15,
-      extendSec: 10
+      incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 },
+      antiSnipingSec: 15,
+      antiExtendSec: 10
     },
     depositAmount: 2000,
     participantCount: 18,
@@ -300,7 +300,7 @@ export const demoLots: LiveRoomLot[] = [
     subtitle: '夜场重点拍品',
     description: '计时码表待开拍，展示待开播直播间的商品列表。',
     imageUrl: '',
-    status: 'UPCOMING',
+    status: 'READY',
     startPrice: 88_000,
     currentPrice: 88_000,
     startTsMs: now + 50 * 60_000,
@@ -308,10 +308,10 @@ export const demoLots: LiveRoomLot[] = [
     publishedAt: new Date(now - 3 * 60 * 60_000).toISOString(),
     ruleSnapshot: {
       startPrice: 88_000,
-      minIncrement: 1000,
-      ceilingPrice: 168_000,
-      antiSnipeSec: 20,
-      extendSec: 15
+      incrementRule: { type: 'fixed', amount: 1000, maxBidSteps: 10 },
+      capPrice: 168_000,
+      antiSnipingSec: 20,
+      antiExtendSec: 15
     },
     depositAmount: 10_000,
     participantCount: 29,
@@ -328,7 +328,7 @@ export const demoLots: LiveRoomLot[] = [
     subtitle: '待开播场次',
     description: '古董怀表与原盒证书套装，适合收藏用户。',
     imageUrl: '',
-    status: 'UPCOMING',
+    status: 'READY',
     startPrice: 42_000,
     currentPrice: 42_000,
     startTsMs: now + 72 * 60_000,
@@ -336,9 +336,9 @@ export const demoLots: LiveRoomLot[] = [
     publishedAt: new Date(now - 2.5 * 60 * 60_000).toISOString(),
     ruleSnapshot: {
       startPrice: 42_000,
-      minIncrement: 500,
-      antiSnipeSec: 20,
-      extendSec: 15
+      incrementRule: { type: 'fixed', amount: 500, maxBidSteps: 10 },
+      antiSnipingSec: 20,
+      antiExtendSec: 15
     },
     depositAmount: 5000,
     participantCount: 18,
@@ -364,10 +364,10 @@ export const demoLots: LiveRoomLot[] = [
     publishedAt: new Date(now - 90 * 60_000).toISOString(),
     ruleSnapshot: {
       startPrice: 50_000,
-      minIncrement: 500,
-      ceilingPrice: 98_000,
-      antiSnipeSec: 20,
-      extendSec: 15
+      incrementRule: { type: 'fixed', amount: 500, maxBidSteps: 10 },
+      capPrice: 98_000,
+      antiSnipingSec: 20,
+      antiExtendSec: 15
     },
     depositAmount: 5000,
     participantCount: 42,
@@ -394,9 +394,9 @@ export const demoLots: LiveRoomLot[] = [
     publishedAt: new Date(now - 10 * 60 * 60_000).toISOString(),
     ruleSnapshot: {
       startPrice: 0,
-      minIncrement: 200,
-      antiSnipeSec: 15,
-      extendSec: 10
+      incrementRule: { type: 'fixed', amount: 200, maxBidSteps: 10 },
+      antiSnipingSec: 15,
+      antiExtendSec: 10
     },
     depositAmount: 3000,
     participantCount: 56,
@@ -421,9 +421,9 @@ export const demoLots: LiveRoomLot[] = [
     publishedAt: new Date(now - 9 * 60 * 60_000).toISOString(),
     ruleSnapshot: {
       startPrice: 12_000,
-      minIncrement: 200,
-      antiSnipeSec: 15,
-      extendSec: 10
+      incrementRule: { type: 'fixed', amount: 200, maxBidSteps: 10 },
+      antiSnipingSec: 15,
+      antiExtendSec: 10
     },
     depositAmount: 2000,
     participantCount: 23,
@@ -702,7 +702,7 @@ export function searchDemoLots(options: SearchLotsOptions = {}): PageResult<Live
 export function searchDemoLiveRooms(options: SearchLiveRoomsOptions = {}): PageResult<LiveRoom> {
   const keyword = normalizeKeyword(options.keyword);
   const items = demoLiveRoomPage.items
-    .filter((room) => !keyword || normalizeKeyword(room.title).includes(keyword))
+    .filter((room) => !keyword || liveRoomMatchesKeyword(room, keyword))
     .filter((room) => matchLiveRoomStatus(room.status, options.status ?? 'all'))
     .sort(liveRoomSorter(options.sort ?? 'default'));
   return toPage(items);
@@ -718,6 +718,10 @@ function normalizeKeyword(value?: string): string {
   return (value ?? '').trim().toLocaleLowerCase();
 }
 
+function liveRoomMatchesKeyword(room: LiveRoom, keyword: string): boolean {
+  return [room.title, room.description, room.merchantId].some((value) => normalizeKeyword(value).includes(keyword));
+}
+
 function toPage<T>(items: T[]): PageResult<T> {
   return {
     items,
@@ -729,16 +733,13 @@ function toPage<T>(items: T[]): PageResult<T> {
 
 function matchLotStatus(status: AuctionStatus, filter: LotStatusFilter): boolean {
   if (filter === 'all') return true;
-  if (filter === 'running') return status === 'RUNNING' || status === 'EXTENDED';
-  if (filter === 'ended') return status === 'CLOSED_WON' || status === 'SETTLED' || status === 'HAMMER_PENDING';
-  if (filter === 'failed') return status === 'CLOSED_FAILED' || status === 'CANCELED';
-  return status === 'UPCOMING' || status === 'READY' || status === 'WARMING_UP';
+  return status === filter;
 }
 
 function matchLiveRoomStatus(status: LiveRoomStatus, filter: LiveRoomStatusFilter): boolean {
   if (filter === 'all') return true;
   if (filter === 'live') return status === 'LIVE';
-  if (filter === 'upcoming') return status === 'UPCOMING';
+  if (filter === 'upcoming') return status === 'SCHEDULED' || status === 'DRAFT';
   return status === 'ENDED';
 }
 
@@ -754,14 +755,26 @@ function lotSorter(sort: LotSortKey) {
 
 function liveRoomSorter(sort: LiveRoomSortKey) {
   return (a: LiveRoom, b: LiveRoom) => {
-    if (sort === 'lotCount') return listDemoLots(b.id).total - listDemoLots(a.id).total;
-    if (sort === 'gmv') return (findDemoLiveRoomStats(b.id).gmvCent ?? 0) - (findDemoLiveRoomStats(a.id).gmvCent ?? 0);
-    if (sort === 'watchers') return b.watcherCount - a.watcherCount;
-    const order: Record<LiveRoomStatus, number> = { LIVE: 0, UPCOMING: 1, ENDED: 2 };
-    return order[a.status] - order[b.status];
+    if (sort === 'oldest' || sort === 'createdAtAsc') return liveRoomSortId(a) - liveRoomSortId(b);
+    if (sort === 'startTimeAsc') return liveRoomTime(a.startedAt) - liveRoomTime(b.startedAt);
+    if (sort === 'startTimeDesc') return liveRoomTime(b.startedAt) - liveRoomTime(a.startedAt);
+    if (sort === 'openedAtAsc') return liveRoomTime(a.startedAt) - liveRoomTime(b.startedAt);
+    if (sort === 'openedAtDesc') return liveRoomTime(b.startedAt) - liveRoomTime(a.startedAt);
+    if (sort === 'gmvDesc') return (findDemoLiveRoomStats(b.id).gmvCent ?? 0) - (findDemoLiveRoomStats(a.id).gmvCent ?? 0);
+    if (sort === 'viewerDesc' || sort === 'viewerPeakDesc') return b.watcherCount - a.watcherCount;
+    return liveRoomSortId(b) - liveRoomSortId(a);
   };
 }
 
 function lotPrice(lot: LiveRoomLot): number {
   return lot.finalPrice ?? lot.currentPrice ?? lot.startPrice;
+}
+
+function liveRoomSortId(room: LiveRoom): number {
+  return room.liveSessionId ?? (Number(room.id.replace(/\D/g, '')) || 0);
+}
+
+function liveRoomTime(value?: string): number {
+  const parsed = Date.parse(value ?? '');
+  return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
 }

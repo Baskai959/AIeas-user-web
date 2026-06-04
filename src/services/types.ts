@@ -1,11 +1,13 @@
 export type UserRole = 'buyer' | 'merchant' | 'admin';
 
-export type LiveRoomStatus = 'LIVE' | 'UPCOMING' | 'ENDED';
+export type LiveRoomStatus = 'DRAFT' | 'SCHEDULED' | 'LIVE' | 'ENDED' | 'CANCELLED';
 
 export type LiveRoomVideoSource = 'recorded' | 'digitalHuman';
 
 export type AuctionStatus =
-  | 'UPCOMING'
+  | 'DRAFT'
+  | 'PENDING_AUDIT'
+  | 'AUDIT_REJECTED'
   | 'READY'
   | 'WARMING_UP'
   | 'RUNNING'
@@ -13,8 +15,18 @@ export type AuctionStatus =
   | 'HAMMER_PENDING'
   | 'CLOSED_WON'
   | 'CLOSED_FAILED'
-  | 'SETTLED'
-  | 'CANCELED';
+  | 'SETTLED';
+
+export interface IncrementRule {
+  type: 'fixed' | 'ladder' | string;
+  amount?: number;
+  maxBidSteps: number;
+  steps?: Array<{
+    min: number;
+    max?: number;
+    amount: number;
+  }>;
+}
 
 export interface User {
   id: string;
@@ -39,17 +51,21 @@ export interface LoginResult {
 
 export interface AuctionRuleSnapshot {
   startPrice?: number;
-  minIncrement?: number;
-  ceilingPrice?: number;
-  minBidIntervalMs?: number;
-  antiSnipeSec?: number;
-  extendSec?: number;
+  reservePrice?: number;
+  capPrice?: number;
+  incrementRule?: IncrementRule;
+  antiSnipingSec?: number;
+  antiExtendSec?: number;
+  depositPolicy?: {
+    amount?: number;
+  };
   [key: string]: unknown;
 }
 
 export interface LiveRoom {
   id: string;
   title: string;
+  description?: string;
   merchantId?: string;
   merchantName: string;
   status: LiveRoomStatus;
@@ -132,7 +148,16 @@ export interface LiveRoomLot {
 
 export type LotSortKey = 'default' | 'auctionTime' | 'publishedAt' | 'priceAsc' | 'priceDesc';
 
-export type LotStatusFilter = 'all' | 'running' | 'ended' | 'failed' | 'upcoming';
+export type LotStatusFilter =
+  | 'all'
+  | 'READY'
+  | 'WARMING_UP'
+  | 'RUNNING'
+  | 'EXTENDED'
+  | 'HAMMER_PENDING'
+  | 'CLOSED_WON'
+  | 'CLOSED_FAILED'
+  | 'SETTLED';
 
 export interface SearchLotsOptions {
   keyword?: string;
@@ -142,7 +167,20 @@ export interface SearchLotsOptions {
   merchantId?: string;
 }
 
-export type LiveRoomSortKey = 'default' | 'lotCount' | 'gmv' | 'watchers';
+export type LiveRoomSortKey =
+  | 'default'
+  | 'latest'
+  | 'newest'
+  | 'createdAtDesc'
+  | 'oldest'
+  | 'createdAtAsc'
+  | 'startTimeAsc'
+  | 'startTimeDesc'
+  | 'openedAtAsc'
+  | 'openedAtDesc'
+  | 'gmvDesc'
+  | 'viewerDesc'
+  | 'viewerPeakDesc';
 
 export type LiveRoomStatusFilter = 'all' | 'ended' | 'live' | 'upcoming';
 
@@ -234,7 +272,7 @@ export interface Order {
   buyerId: string;
   merchantId?: string;
   amount: number;
-  status: 'PENDING_PAY' | 'PAID' | 'CANCELED' | 'REFUNDED' | string;
+  status: 'CREATED' | 'PAID' | 'TIMEOUT' | 'CANCELLED' | string;
   payStatus?: string;
   fulfillmentStatus?: OrderFulfillmentStatus;
   createdAt?: string;

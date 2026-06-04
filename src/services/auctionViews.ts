@@ -3,9 +3,9 @@ import type { AuctionState, AuctionStatus, LiveRoom, LiveRoomLot, MyAuctionTabKe
 export const myAuctionTabKeys: MyAuctionTabKey[] = ['all', 'pendingBid', 'pendingPay', 'pendingShipment', 'pendingReceipt', 'completed'];
 
 const paidDepositStatuses = new Set(['PAID', 'FROZEN', 'APPLIED', 'RELEASED', 'REFUNDED']);
-const pendingBidStatuses = new Set<AuctionStatus>(['UPCOMING', 'READY', 'WARMING_UP', 'RUNNING', 'EXTENDED']);
+const pendingBidStatuses = new Set<AuctionStatus>(['READY', 'WARMING_UP', 'RUNNING', 'EXTENDED']);
 const runningLotStatuses = new Set<AuctionStatus>(['RUNNING', 'EXTENDED']);
-const upcomingLotStatuses = new Set<AuctionStatus>(['UPCOMING', 'READY', 'WARMING_UP']);
+const upcomingLotStatuses = new Set<AuctionStatus>(['READY', 'WARMING_UP']);
 
 export type PreviewLotStatusKind = 'running' | 'upcoming';
 

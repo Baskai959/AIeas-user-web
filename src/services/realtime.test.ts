@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildLiveRoomWsUrl, isFreshRealtimeMessage, MockRealtimeClient, MockRealtimeControlClient } from './realtime';
+import { buildLiveSessionWsUrl, isFreshRealtimeMessage, MockRealtimeClient, MockRealtimeControlClient } from './realtime';
 
 describe('realtime', () => {
-  it('builds the live-room WebSocket URL with lastSeq recovery', () => {
-    expect(buildLiveRoomWsUrl('ws://127.0.0.1:8080', 'room_1001', 18)).toBe(
-      'ws://127.0.0.1:8080/ws/live-rooms/room_1001?lastSeq=18'
+  it('builds the live-session WebSocket URL with lastSeq recovery', () => {
+    expect(buildLiveSessionWsUrl('ws://127.0.0.1:8888', '9001', 18)).toBe(
+      'ws://127.0.0.1:8888/ws/live-sessions/9001?lastSeq=18'
     );
   });
 
