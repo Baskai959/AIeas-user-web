@@ -304,6 +304,17 @@ describe('mobile layout CSS', () => {
     expect(css).toContain('@keyframes auction-card-sink');
   });
 
+  it('styles payment animation and receipt confirmation as mobile-first controls', () => {
+    expect(rule('.payment-animation')).toContain('place-items: center');
+    expect(rule('.payment-spinner')).toContain('animation: payment-spinner');
+    expect(rule('.payment-flow')).toContain('animation: payment-flow');
+    expect(rule('.payment-animation.is-paid .payment-check')).toContain('animation: payment-check-draw');
+    expect(rule('.logout-choice-backdrop,\n.receipt-confirm-backdrop')).toContain('align-items: end');
+    expect(rule('.logout-choice-panel,\n.receipt-confirm-panel')).toContain('border-radius: 18px 18px 0 0');
+    expect(rule('.receipt-confirm-lot span')).toContain('text-overflow: ellipsis');
+    expect(rule('.logout-choice-actions .adm-button,\n.receipt-confirm-actions .adm-button')).toContain('min-height: 44px');
+  });
+
   it('animates the winning celebration cannons and confetti above live room UI', () => {
     expect(rule('.winning-celebration')).toContain('position: fixed');
     expect(rule('.winning-celebration')).toContain('z-index: 130');

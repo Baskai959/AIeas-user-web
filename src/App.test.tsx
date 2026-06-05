@@ -133,6 +133,16 @@ const api = {
   listMyOrders: vi.fn(async () => ({ items: [{ id: 'ord_2001', auctionId: 'auc_2001', buyerId: 'u1', amount: 150100, status: 'PENDING_PAY' }], total: 1, page: 1, page_size: 20 })),
   getOrder: vi.fn(async () => ({ id: 'ord_2001', auctionId: 'auc_2001', buyerId: 'u1', amount: 150100, status: 'PENDING_PAY' })),
   payOrder: vi.fn(async () => ({ id: 'ord_2001', auctionId: 'auc_2001', buyerId: 'u1', amount: 150100, status: 'PAID', paidAt: '2026-05-24T20:00:00+08:00' })),
+  confirmReceipt: vi.fn(async (orderId: string) => ({
+    id: orderId,
+    auctionId: 'auc_pending_receipt',
+    buyerId: 'u1',
+    amount: 68000,
+    status: 'PAID',
+    payStatus: 'PAID',
+    fulfillmentStatus: 'RECEIVED',
+    receivedAt: '2026-06-05T12:00:00+08:00'
+  })),
   listCategories: vi.fn(async () => ({ items: [{ id: 'jewelry', name: '珠宝玉石', iconName: 'gem' }], total: 1, page: 1, page_size: 20 })),
   searchLots: vi.fn(async () => ({
     items: [
@@ -1243,6 +1253,62 @@ describe('App flow', () => {
 
     expect(await screen.findByText(getMessage('pay.title'))).toBeInTheDocument();
     expect(window.location.pathname).toBe('/pay/ord_pending_pay');
+  });
+
+  it('shows payment SVG states during mock payment', async () => {
+    let resolvePayment: (order: Awaited<ReturnType<ApiClient['payOrder']>>) => void = () => undefined;
+    vi.mocked(api.payOrder).mockImplementationOnce(() =>
+      new Promise((resolve) => {
+        resolvePayment = resolve;
+      })
+    );
+    seedSession();
+    renderWithRouter('/pay/ord_pending_pay');
+    const user = userEvent.setup();
+
+    expect(await screen.findByRole('img', { name: getMessage('pay.idleStatus') })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: getMessage('pay.submit') }));
+    expect(screen.getByRole('img', { name: getMessage('pay.processingStatus') })).toBeInTheDocument();
+
+    await act(async () => {
+      resolvePayment({
+        id: 'ord_pending_pay',
+        auctionId: 'auc_pending_pay',
+        buyerId: 'u1',
+        amount: 46600,
+        status: 'PAID',
+        payStatus: 'PAID',
+        fulfillmentStatus: 'UNSHIPPED',
+        paidAt: '2026-06-05T12:00:00+08:00'
+      });
+    });
+
+    expect(await screen.findByRole('img', { name: getMessage('pay.successStatus') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: getMessage('pay.paid') })).toBeDisabled();
+  });
+
+  it('confirms receipt and moves the order from pending receipt to completed', async () => {
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
+    const orders = within(screen.getByLabelText(getMessage('profile.myOrders')));
+    await user.click(orders.getByText(getMessage('profile.pendingReceipt')).closest('button') as HTMLElement);
+
+    expect(await screen.findByText('Pending Receipt Lot')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: getMessage('orders.confirmReceipt') }));
+
+    const dialog = await screen.findByRole('dialog', { name: getMessage('orders.confirmReceiptTitle') });
+    expect(within(dialog).getByText(getMessage('orders.confirmReceiptMessage'))).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: getMessage('orders.confirmReceipt') }));
+
+    await waitFor(() => expect(api.confirmReceipt).toHaveBeenCalledWith('ord_pending_receipt'));
+    await waitFor(() => expect(screen.queryByText('Pending Receipt Lot')).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: getMessage('profile.completed') }));
+    expect(await screen.findByText('Pending Receipt Lot')).toBeInTheDocument();
   });
 
   it('supports avatar crop drag, mobile pinch zoom, and PC wheel zoom', async () => {

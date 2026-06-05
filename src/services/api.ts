@@ -453,6 +453,14 @@ export class ApiClient {
     return normalizeOrder(data as Record<string, unknown>);
   }
 
+  async confirmReceipt(id: string): Promise<Order> {
+    const data = await this.request(`/api/v1/orders/${id}/receive`, {
+      method: 'POST',
+      idempotencyKey: `receive-${id}-${Date.now()}`
+    });
+    return normalizeOrder(data as Record<string, unknown>);
+  }
+
   private async request<T = unknown>(
     path: string,
     options: { method?: string; body?: unknown; idempotencyKey?: string } = {}
@@ -592,6 +600,17 @@ export class DemoApiClient extends ApiClient {
     return {
       ...demoPaidOrder,
       id
+    };
+  }
+
+  override async confirmReceipt(id: string): Promise<Order> {
+    const order = findDemoOrder(id);
+    return {
+      ...order,
+      status: 'PAID',
+      payStatus: 'PAID',
+      fulfillmentStatus: 'RECEIVED',
+      receivedAt: new Date().toISOString()
     };
   }
 }

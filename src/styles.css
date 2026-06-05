@@ -2801,6 +2801,102 @@ button {
   color: #1677ff;
 }
 
+.payment-animation {
+  display: grid;
+  gap: 8px;
+  place-items: center;
+  width: min(72vw, 240px);
+  padding: 12px;
+}
+
+.payment-animation svg {
+  width: 142px;
+  height: 142px;
+  overflow: visible;
+}
+
+.payment-animation p {
+  margin: 0;
+  color: #667085;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.payment-halo {
+  fill: rgba(255, 45, 85, 0.08);
+  stroke: rgba(255, 45, 85, 0.18);
+  stroke-width: 2;
+}
+
+.payment-wallet rect,
+.payment-wallet path,
+.payment-wallet circle,
+.payment-check,
+.payment-error-mark path {
+  fill: none;
+  stroke: url("#payment-gradient-idle");
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 7;
+}
+
+.payment-animation.is-paying .payment-wallet rect,
+.payment-animation.is-paying .payment-wallet path,
+.payment-animation.is-paying .payment-wallet circle {
+  stroke: url("#payment-gradient-paying");
+}
+
+.payment-animation.is-paid .payment-check {
+  stroke: url("#payment-gradient-paid");
+  stroke-dasharray: 92;
+  stroke-dashoffset: 92;
+  animation: payment-check-draw 520ms ease-out forwards;
+}
+
+.payment-animation.is-error .payment-error-mark path {
+  stroke: #ef4444;
+  stroke-dasharray: 64;
+  stroke-dashoffset: 64;
+  animation: payment-check-draw 320ms ease-out forwards;
+}
+
+.payment-animation.is-error .payment-error-mark path + path {
+  animation-delay: 80ms;
+}
+
+.payment-flow {
+  stroke-dasharray: 18 12;
+  animation: payment-flow 1200ms linear infinite;
+}
+
+.payment-spinner {
+  fill: none;
+  stroke: rgba(255, 45, 85, 0.32);
+  stroke-width: 5;
+  stroke-dasharray: 64 160;
+  transform-origin: 80px 80px;
+  animation: payment-spinner 860ms linear infinite;
+}
+
+@keyframes payment-flow {
+  to {
+    stroke-dashoffset: -60;
+  }
+}
+
+@keyframes payment-spinner {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes payment-check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
 .history-row {
   padding: 12px;
 }
@@ -4173,7 +4269,8 @@ button {
   gap: 8px;
 }
 
-.logout-choice-backdrop {
+.logout-choice-backdrop,
+.receipt-confirm-backdrop {
   position: fixed;
   inset: 0;
   z-index: 1300;
@@ -4185,7 +4282,8 @@ button {
   backdrop-filter: blur(8px);
 }
 
-.logout-choice-panel {
+.logout-choice-panel,
+.receipt-confirm-panel {
   width: min(100vw, var(--app-shell-max-width));
   padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
   background: #fff;
@@ -4196,31 +4294,62 @@ button {
 }
 
 .logout-choice-panel h2,
-.logout-choice-panel p {
+.logout-choice-panel p,
+.receipt-confirm-panel h2,
+.receipt-confirm-panel p {
   margin: 0;
 }
 
-.logout-choice-panel h2 {
+.logout-choice-panel h2,
+.receipt-confirm-panel h2 {
   color: #111827;
   font-size: 18px;
   line-height: 1.35;
   letter-spacing: 0;
 }
 
-.logout-choice-panel p {
+.logout-choice-panel p,
+.receipt-confirm-panel p {
   margin-top: 8px;
   color: #667085;
   font-size: 13px;
   line-height: 1.65;
 }
 
-.logout-choice-actions {
+.receipt-confirm-lot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  color: #111827;
+  background: #f6f7fb;
+  border-radius: 14px;
+  font-size: 14px;
+}
+
+.receipt-confirm-lot span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.receipt-confirm-lot strong {
+  flex: 0 0 auto;
+  color: #ff2d55;
+}
+
+.logout-choice-actions,
+.receipt-confirm-actions {
   display: grid;
   gap: 10px;
   margin-top: 16px;
 }
 
-.logout-choice-actions .adm-button {
+.logout-choice-actions .adm-button,
+.receipt-confirm-actions .adm-button {
   min-height: 44px;
   font-weight: 900;
 }

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type TouchEvent as ReactTouchEvent, type TransitionEvent as ReactTransitionEvent, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams, type Location, type NavigateFunction } from 'react-router-dom';
-import { Button, DotLoading, SafeArea, Tabs } from 'antd-mobile';
+import { Button, DotLoading, SafeArea, Tabs, Toast } from 'antd-mobile';
 import {
   ArrowLeft,
   Camera,
@@ -73,6 +73,7 @@ import type {
   LotStatusFilter,
   Merchant,
   Order,
+  PageResult,
   RankingItem,
   AvatarCropState,
   MyAuctionTabKey,
@@ -1532,7 +1533,27 @@ function OrdersPage({
   onOpenLot: (lot: LiveRoomLot) => void;
   onOpenPay: (orderId: string, auctionId: string) => void;
 }) {
+  const queryClient = useQueryClient();
+  const [receiptTarget, setReceiptTarget] = useState<UserAuctionRecord | null>(null);
   const recordsQuery = useQuery({ queryKey: ['my-auction-records'], queryFn: () => apiClient.listMyAuctionRecords(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 } });
+  const confirmReceipt = useMutation({
+    mutationFn: (orderId: string) => apiClient.confirmReceipt(orderId),
+    onSuccess: (updatedOrder) => {
+      queryClient.setQueryData<PageResult<UserAuctionRecord>>(['my-auction-records'], (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          items: current.items.map((record) => (record.order?.id === updatedOrder.id ? { ...record, order: updatedOrder } : record))
+        };
+      });
+      queryClient.setQueryData<Order>(['order', updatedOrder.id], updatedOrder);
+      setReceiptTarget(null);
+      Toast.show({ content: t('orders.receiptSuccess') });
+    },
+    onError: () => {
+      Toast.show({ content: t('orders.receiptError') });
+    }
+  });
   const groupedRecords = groupAuctionRecords(recordsQuery.data?.items ?? []);
 
   useEffect(() => {
@@ -1570,10 +1591,32 @@ function OrdersPage({
               highlighted={Boolean(record.order?.id && record.order.id === highlightedOrderId)}
               onOpen={() => onOpenLot(record.lot)}
               onPay={record.order ? () => onOpenPay(record.order?.id ?? '', record.lot.auctionId) : undefined}
+              onConfirmReceipt={record.order ? () => setReceiptTarget(record) : undefined}
+              confirmingReceipt={confirmReceipt.isPending && confirmReceipt.variables === record.order?.id}
             />
           ))}
         </ResultList>
       </section>
+      {receiptTarget?.order ? (
+        <div className="receipt-confirm-backdrop" role="dialog" aria-modal="true" aria-label={t('orders.confirmReceiptTitle')}>
+          <div className="receipt-confirm-panel">
+            <h2>{t('orders.confirmReceiptTitle')}</h2>
+            <p>{t('orders.confirmReceiptMessage')}</p>
+            <div className="receipt-confirm-lot">
+              <span>{receiptTarget.lot.title}</span>
+              <strong>{formatMoney(receiptTarget.order.amount)}</strong>
+            </div>
+            <div className="receipt-confirm-actions">
+              <Button block color="danger" loading={confirmReceipt.isPending} onClick={() => confirmReceipt.mutate(receiptTarget.order?.id ?? '')}>
+                {t('orders.confirmReceipt')}
+              </Button>
+              <Button block className="logout-cancel-button" disabled={confirmReceipt.isPending} onClick={() => setReceiptTarget(null)}>
+                {t('common.cancel')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -2272,10 +2315,25 @@ function ProfileStat({ value, label, onClick }: { value: number; label: string; 
   );
 }
 
-function AuctionRecordCard({ record, highlighted, onOpen, onPay }: { record: UserAuctionRecord; highlighted?: boolean; onOpen: () => void; onPay?: () => void }) {
+function AuctionRecordCard({
+  record,
+  highlighted,
+  onOpen,
+  onPay,
+  onConfirmReceipt,
+  confirmingReceipt
+}: {
+  record: UserAuctionRecord;
+  highlighted?: boolean;
+  onOpen: () => void;
+  onPay?: () => void;
+  onConfirmReceipt?: () => void;
+  confirmingReceipt?: boolean;
+}) {
   const state = stateFromLot(record.lot);
   const recordTab = classifyAuctionRecord(record) ?? 'all';
   const canPay = recordTab === 'pendingPay' && onPay;
+  const canConfirmReceipt = recordTab === 'pendingReceipt' && record.order?.fulfillmentStatus === 'SHIPPED' && onConfirmReceipt;
   return (
     <article className={highlighted ? 'search-result-card record-card is-highlighted' : 'search-result-card record-card'} data-testid={record.order ? `order-record-${record.order.id}` : undefined} data-order-id={record.order?.id}>
       <button className="result-media" type="button" onClick={onOpen}>
@@ -2296,6 +2354,10 @@ function AuctionRecordCard({ record, highlighted, onOpen, onPay }: { record: Use
       {canPay ? (
         <Button size="small" color="danger" onClick={onPay}>
           {t('profile.payNow')}
+        </Button>
+      ) : canConfirmReceipt ? (
+        <Button size="small" color="danger" loading={confirmingReceipt} onClick={onConfirmReceipt}>
+          {t('orders.confirmReceipt')}
         </Button>
       ) : (
         <button className="open-arrow" type="button" onClick={onOpen} aria-label={t('common.view')}>
@@ -5302,6 +5364,48 @@ function ResultPage({ apiClient, auctionId, onBack, onPay }: { apiClient: ApiCli
   );
 }
 
+type PaymentVisualStatus = 'idle' | 'paying' | 'paid' | 'error';
+
+function PaymentStatusAnimation({ status }: { status: PaymentVisualStatus }) {
+  const labelKey: Record<PaymentVisualStatus, MessageKey> = {
+    idle: 'pay.idleStatus',
+    paying: 'pay.processingStatus',
+    paid: 'pay.successStatus',
+    error: 'pay.errorStatus'
+  };
+  const label = t(labelKey[status]);
+  return (
+    <div className={`payment-animation is-${status}`}>
+      <svg role="img" aria-label={label} viewBox="0 0 160 160">
+        <defs>
+          <linearGradient id={`payment-gradient-${status}`} x1="22" y1="20" x2="138" y2="140" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor="#ff8aa6" />
+            <stop offset="1" stopColor="#ff2d55" />
+          </linearGradient>
+        </defs>
+        <circle className="payment-halo" cx="80" cy="80" r="58" />
+        {status === 'paid' ? (
+          <path className="payment-check" d="M48 82l21 22 45-50" />
+        ) : status === 'error' ? (
+          <g className="payment-error-mark">
+            <path d="M58 58l44 44" />
+            <path d="M102 58L58 102" />
+          </g>
+        ) : (
+          <g className="payment-wallet">
+            <rect x="40" y="52" width="80" height="58" rx="14" />
+            <path d="M40 70h80" />
+            <circle cx="104" cy="91" r="5" />
+            <path className="payment-flow" d="M50 42c19-13 42-13 62 0" />
+            {status === 'paying' ? <circle className="payment-spinner" cx="80" cy="80" r="62" /> : null}
+          </g>
+        )}
+      </svg>
+      <p>{label}</p>
+    </div>
+  );
+}
+
 function PayPage({ apiClient, orderId, auctionId, onBack }: { apiClient: ApiClient; orderId: string; auctionId?: string; onBack: (auctionId: string) => void }) {
   const [paid, setPaid] = useState(false);
   const order = useQuery({
@@ -5313,15 +5417,16 @@ function PayPage({ apiClient, orderId, auctionId, onBack }: { apiClient: ApiClie
     onSuccess: () => setPaid(true)
   });
   const targetAuctionId = auctionId ?? order.data?.auctionId ?? 'auc_2001';
+  const status: PaymentVisualStatus = paid ? 'paid' : pay.isPending ? 'paying' : pay.isError ? 'error' : 'idle';
   return (
     <section className="page-content result-page">
       <button className="back-button" onClick={() => onBack(targetAuctionId)} type="button">
         <ArrowLeft size={18} /> {t('common.back')}
       </button>
-      <WalletCards size={48} />
+      <PaymentStatusAnimation status={status} />
       <h1>{t('pay.title')}</h1>
-      <p>{paid ? t('pay.paid') : orderId}</p>
-      <Button block color="primary" loading={pay.isPending} onClick={() => pay.mutate()}>
+      <p>{paid ? t('pay.paid') : pay.isError ? t('pay.errorStatus') : orderId}</p>
+      <Button block color="primary" loading={pay.isPending} disabled={paid} onClick={() => pay.mutate()}>
         {paid ? t('pay.paid') : t('pay.submit')}
       </Button>
     </section>

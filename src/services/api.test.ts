@@ -82,6 +82,31 @@ describe('ApiClient', () => {
     expect(fetcher).toHaveBeenNthCalledWith(2, 'http://mock.local/api/v1/orders/2001', expect.any(Object));
   });
 
+  it('confirms receipt through the order receive endpoint', async () => {
+    const fetcher = vi.fn(() =>
+      ok({
+        id: 'ord_1',
+        auctionId: 'auc_1',
+        buyerId: 'u1',
+        amount: 120000,
+        status: 'PAID',
+        payStatus: 'PAID',
+        fulfillmentStatus: 'RECEIVED',
+        receivedAt: '2026-06-05T12:00:00+08:00'
+      })
+    );
+    const api = new ApiClient('http://mock.local', fetcher);
+
+    const order = await api.confirmReceipt('ord_1');
+
+    expect(order.fulfillmentStatus).toBe('RECEIVED');
+    expect(order.receivedAt).toBe('2026-06-05T12:00:00+08:00');
+    expect(fetcher).toHaveBeenCalledWith('http://mock.local/api/v1/orders/ord_1/receive', expect.objectContaining({ method: 'POST' }));
+    expect((fetcher.mock.calls[0][1] as RequestInit).headers).toMatchObject({
+      'Idempotency-Key': expect.stringMatching(/^receive-ord_1-/)
+    });
+  });
+
   it('throws ApiError when business code is non-zero', async () => {
     const fetcher = vi.fn(() =>
       Promise.resolve(
