@@ -170,19 +170,38 @@ const api = {
     page_size: 20
   })),
   getMerchant: vi.fn(async () => ({ id: 'merchant_01', name: '云上珠宝', description: '珠宝直播拍卖商家', followerCount: 128000, rating: 4.9, liveRoomId: 'room_1001' })),
-  getLot: vi.fn(async () => ({
-    id: 'lot_3002',
-    auctionId: 'auc_2002',
-    roomId: 'room_1001',
-    merchantId: 'merchant_01',
-    categoryId: 'jewelry',
-    title: '翡翠冰种吊坠',
-    status: 'READY',
-    startPrice: 0,
-    currentPrice: 0,
-    endTsMs: now + 420_000,
-    ruleSnapshot: { incrementRule: { type: 'fixed', amount: 200, maxBidSteps: 10 } }
-  })),
+  getLot: vi.fn(async (lotId: string) => {
+    if (lotId === 'lot_3001') {
+      return {
+        id: 'lot_3001',
+        auctionId: 'auc_2001',
+        roomId: 'room_1001',
+        merchantId: 'merchant_01',
+        categoryId: 'jewelry',
+        title: '18K 金钻石项链',
+        status: 'RUNNING',
+        startPrice: 0,
+        currentPrice: 150100,
+        endTsMs: now + 120_000,
+        ruleSnapshot: { incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 } },
+        participantCount: 128,
+        bidCount: 36
+      };
+    }
+    return {
+      id: 'lot_3002',
+      auctionId: 'auc_2002',
+      roomId: 'room_1001',
+      merchantId: 'merchant_01',
+      categoryId: 'jewelry',
+      title: '翡翠冰种吊坠',
+      status: 'READY',
+      startPrice: 0,
+      currentPrice: 0,
+      endTsMs: now + 420_000,
+      ruleSnapshot: { incrementRule: { type: 'fixed', amount: 200, maxBidSteps: 10 } }
+    };
+  }),
   getMyProfile: vi.fn(async () => ({
     userId: 'u1',
     nickname: 'Buyer One',
@@ -361,13 +380,16 @@ const api = {
   }))
 } as unknown as ApiClient;
 
-function renderWithRouter(initialPath = currentTestPath()) {
+function renderWithRouter(initialPath = currentTestPath(), options: { strict?: boolean } = {}) {
   window.history.pushState(null, '', initialPath);
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const tree = (
     <QueryClientProvider client={queryClient}>
       <App apiClient={api} />
     </QueryClientProvider>
+  );
+  return render(
+    options.strict ? <React.StrictMode>{tree}</React.StrictMode> : tree
   );
 }
 
@@ -867,7 +889,7 @@ describe('App flow', () => {
     expect(idleVideo!.currentTime).toBeCloseTo(15, 1);
   });
 
-  it('uses the discover tab as a lot list and opens a running lot directly in the live room', async () => {
+  it('uses the discover tab as a lot list and opens a running lot through the product page first', async () => {
     renderApp();
     const user = userEvent.setup();
 
@@ -875,16 +897,91 @@ describe('App flow', () => {
     await user.click(await screen.findByRole('button', { name: getMessage('nav.discover') }));
 
     expect(await screen.findByText(getMessage('discoverLots.title'))).toBeInTheDocument();
+    expect(document.querySelector('.discover-lots-header .eyebrow')).not.toBeInTheDocument();
     expect(await screen.findByText('18K 金钻石项链')).toBeInTheDocument();
     await waitFor(() => expect(api.searchLots).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'default', status: 'all', categoryId: 'all' })));
 
     await user.click(screen.getByRole('button', { name: getMessage('product.bidNow') }));
-    expect(await screen.findByText('云上珠宝')).toBeInTheDocument();
+    await waitFor(() => expect(window.location.pathname).toBe('/product/lot_3001'));
+    expect(await screen.findByRole('button', { name: getMessage('product.goLive') })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: getMessage('product.goLive') }));
+    await waitFor(() => expect(window.location.pathname).toBe('/live/room_1001'));
+    expect(window.location.search).toBe('?lotId=lot_3001&from=discover');
     expect(await screen.findByRole('dialog', { name: getMessage('product.detail') })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
+    await waitFor(() => expect(window.location.pathname).toBe('/product/lot_3001'));
+    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
     expect(await screen.findByText(getMessage('discoverLots.title'))).toBeInTheDocument();
     expect(window.location.pathname).toBe('/discover');
+  });
+
+  it('keeps discover filters in the URL and restores them after returning from a product page', async () => {
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await user.click(await screen.findByRole('button', { name: getMessage('nav.discover') }));
+
+    await user.selectOptions(screen.getByLabelText(getMessage('filter.sort')), 'priceDesc');
+    await user.selectOptions(screen.getByLabelText(getMessage('filter.status')), 'READY');
+    await user.selectOptions(screen.getByLabelText(getMessage('filter.category')), 'jewelry');
+
+    await waitFor(() => expect(window.location.pathname).toBe('/discover'));
+    expect(window.location.search).toBe('?sort=priceDesc&status=READY&categoryId=jewelry');
+    await waitFor(() => expect(api.searchLots).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'priceDesc', status: 'READY', categoryId: 'jewelry' })));
+
+    await user.click(screen.getByRole('button', { name: getMessage('product.bidNow') }));
+    await waitFor(() => expect(window.location.pathname).toMatch(/^\/product\//));
+
+    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
+    await waitFor(() => expect(window.location.pathname).toBe('/discover'));
+    expect(window.location.search).toBe('?sort=priceDesc&status=READY&categoryId=jewelry');
+    expect(screen.getByLabelText(getMessage('filter.sort'))).toHaveValue('priceDesc');
+    expect(screen.getByLabelText(getMessage('filter.status'))).toHaveValue('READY');
+    expect(screen.getByLabelText(getMessage('filter.category'))).toHaveValue('jewelry');
+  });
+
+  it('derives discover lot action buttons from deposit and order state', async () => {
+    const baseLot = {
+      roomId: 'room_1001',
+      merchantId: 'merchant_01',
+      categoryId: 'jewelry',
+      startPrice: 0,
+      currentPrice: 0,
+      endTsMs: now + 120_000,
+      ruleSnapshot: { incrementRule: { type: 'fixed' as const, amount: 100, maxBidSteps: 10 } }
+    };
+    vi.mocked(api.searchLots).mockResolvedValueOnce({
+      items: [
+        { ...baseLot, id: 'lot_3001', auctionId: 'auc_2001', title: 'Enrolled Running Lot', status: 'RUNNING' as const, currentPrice: 150100 },
+        { ...baseLot, id: 'lot_hammer_pending', auctionId: 'auc_hammer_pending', title: 'Hammer Pending Lot', status: 'HAMMER_PENDING' as const },
+        { ...baseLot, id: 'lot_pending_pay', auctionId: 'auc_pending_pay', title: 'Won Pending Pay Lot', status: 'CLOSED_WON' as const, currentPrice: 46600 },
+        { ...baseLot, id: 'lot_lost', auctionId: 'auc_lost', title: 'Closed Failed Lot', status: 'CLOSED_FAILED' as const }
+      ],
+      total: 4,
+      page: 1,
+      page_size: 20
+    });
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await user.click(await screen.findByRole('button', { name: getMessage('nav.discover') }));
+
+    const rowByTitle = (title: string) => {
+      const row = screen.getByText(title).closest('.lot-result-card');
+      expect(row).not.toBeNull();
+      return row as HTMLElement;
+    };
+
+    expect(within(rowByTitle('Enrolled Running Lot')).getByRole('button', { name: getMessage('product.bidNow') })).toHaveClass('lot-action-button', 'is-primary-action');
+    expect(within(rowByTitle('Hammer Pending Lot')).getByRole('button', { name: getMessage('auction.hammerInProgress') })).toBeDisabled();
+    expect(within(rowByTitle('Hammer Pending Lot')).getByRole('button', { name: getMessage('auction.hammerInProgress') })).toHaveClass('is-disabled');
+    expect(within(rowByTitle('Won Pending Pay Lot')).getByRole('button', { name: getMessage('auction.pay') })).toHaveClass('lot-action-button', 'is-primary-action');
+    expect(within(rowByTitle('Closed Failed Lot')).getByRole('button', { name: getMessage('status.ended') })).toBeDisabled();
+    expect(within(rowByTitle('Closed Failed Lot')).getByRole('button', { name: getMessage('status.ended') })).toHaveClass('is-disabled');
   });
 
   it('sends, drafts, likes, and toggles live-room comments', async () => {
@@ -949,7 +1046,9 @@ describe('App flow', () => {
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
     await user.click(screen.getByRole('button', { name: getMessage('profile.following') }));
 
-    expect(await screen.findByText(getMessage('profile.followingTitle'))).toBeInTheDocument();
+    const followingHeading = await screen.findByRole('heading', { name: getMessage('profile.followingTitle') });
+    expect(followingHeading).toBeInTheDocument();
+    expect(followingHeading.closest('.simple-page-header')?.querySelector('.eyebrow')).not.toBeInTheDocument();
     expect(await screen.findByText('珠宝严选直播间')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: getMessage('profile.cancelFollow') }));
@@ -972,7 +1071,9 @@ describe('App flow', () => {
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
     await user.click(screen.getByRole('button', { name: getMessage('profile.footprints') }));
 
-    expect(await screen.findByText(getMessage('profile.footprintTitle'))).toBeInTheDocument();
+    const footprintHeading = await screen.findByRole('heading', { name: getMessage('profile.footprintTitle') });
+    expect(footprintHeading).toBeInTheDocument();
+    expect(footprintHeading.closest('.simple-page-header')?.querySelector('.eyebrow')).not.toBeInTheDocument();
     expect(await screen.findByText('珠宝严选直播间')).toBeInTheDocument();
   });
 
@@ -999,13 +1100,17 @@ describe('App flow', () => {
     expect(orders.getByText(getMessage('profile.completed'))).toBeInTheDocument();
 
     await user.click(orders.getByRole('button', { name: getMessage('profile.orderAll') }));
-    expect(await screen.findByText(getMessage('orders.title'))).toBeInTheDocument();
+    const ordersTitle = await screen.findByRole('heading', { name: getMessage('orders.title') });
+    expect(ordersTitle).toBeInTheDocument();
+    expect(ordersTitle.closest('.simple-page-header')?.querySelector('.eyebrow')).not.toBeInTheDocument();
     expect(window.location.pathname).toBe('/orders');
     expect(window.location.search).toBe('?tab=all');
     await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
     expect(await screen.findByText('Buyer One')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: getMessage('settings.title') }));
+    const settingsTitle = await screen.findByRole('heading', { name: getMessage('settings.title') });
+    expect(settingsTitle.closest('.simple-page-header')?.querySelector('.eyebrow')).not.toBeInTheDocument();
     const nickname = await screen.findByLabelText(getMessage('settings.nickname'));
     await user.clear(nickname);
     await user.type(nickname, 'Renamed Buyer');
@@ -1202,7 +1307,8 @@ describe('App flow', () => {
     expect(within(drawer).getByText('18K 金钻石项链')).toBeInTheDocument();
     expect(within(drawer).getByText(getMessage('auction.currentPriceLabel'))).toBeInTheDocument();
 
-    await user.click(within(drawer).getByRole('button', { name: getMessage('product.bidNow') }));
+    const currentLotRow = within(drawer).getAllByTestId('lot-row')[0];
+    await user.click(within(currentLotRow).getByRole('button', { name: getMessage('auction.lookAround') }));
     expect(await screen.findByRole('dialog', { name: getMessage('product.detail') })).toBeInTheDocument();
 
     const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
@@ -1228,6 +1334,14 @@ describe('App flow', () => {
 
     expect(await within(bidDialog).findByText(getMessage('bid.highestPriceNotice'))).toBeInTheDocument();
     expect((await screen.findAllByText(/1503\.00/)).length).toBeGreaterThan(0);
+  });
+
+  it('opens only one initial lot detail sheet in strict mode', async () => {
+    seedSession();
+    renderWithRouter('/live/room_1001?lotId=lot_3001&from=me', { strict: true });
+
+    await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    expect(screen.getAllByRole('dialog', { name: getMessage('product.detail') })).toHaveLength(1);
   });
 
   it('renders the lot list as a half-screen scroll sheet with the running lot pinned first and original sequence visible', async () => {
@@ -1302,10 +1416,14 @@ describe('App flow', () => {
     expect(rows).toHaveLength(3);
     expect(rows[0]).toHaveClass('is-active');
     expect(rows[0]).toHaveAttribute('data-original-index', '2');
-    expect(within(rows[0]).getByText('#2')).toBeInTheDocument();
+    const firstSequence = rows[0].querySelector('.lot-thumb-frame .lot-sequence');
+    expect(firstSequence).toHaveTextContent('2');
+    expect(firstSequence).toHaveAttribute('aria-label', '#2');
     expect(within(rows[0]).getByText('Running second lot')).toBeInTheDocument();
     expect(rows[1]).toHaveAttribute('data-original-index', '1');
-    expect(within(rows[1]).getByText('#1')).toBeInTheDocument();
+    const secondSequence = rows[1].querySelector('.lot-thumb-frame .lot-sequence');
+    expect(secondSequence).toHaveTextContent('1');
+    expect(secondSequence).toHaveAttribute('aria-label', '#1');
     expect(within(rows[1]).getByText('Upcoming first lot')).toBeInTheDocument();
 
     await user.click(rows[1]);
@@ -1316,6 +1434,142 @@ describe('App flow', () => {
 
     await user.click(within(detailDialog).getByRole('button', { name: getMessage('common.close') }));
     expect(screen.getByRole('dialog', { name: getMessage('live.goodsList') })).toBeInTheDocument();
+  });
+
+  it('derives lot list action buttons from auction status and order state', async () => {
+    vi.mocked(api.getLiveRoom).mockResolvedValueOnce({
+      id: 'room_1001',
+      title: 'Action State Room',
+      merchantName: 'Action Merchant',
+      status: 'LIVE',
+      videoSource: 'recorded',
+      onlineCount: 328,
+      watcherCount: 1208,
+      activeAuctionId: 'auc_running_enrolled',
+      videoUrl: '/media/live-room-demo.mp4'
+    });
+    const baseLot = {
+      roomId: 'room_1001',
+      merchantId: 'merchant_01',
+      categoryId: 'jewelry',
+      startPrice: 0,
+      currentPrice: 0,
+      endTsMs: now + 120_000,
+      ruleSnapshot: { incrementRule: { type: 'fixed' as const, amount: 100, maxBidSteps: 10 } }
+    };
+    const runningLot = { ...baseLot, id: 'lot_running_enrolled', auctionId: 'auc_running_enrolled', title: 'Enrolled Running Lot', status: 'RUNNING' as const, currentPrice: 120000 };
+    const failedLot = { ...baseLot, id: 'lot_failed', auctionId: 'auc_failed', title: 'Failed Lot', status: 'CLOSED_FAILED' as const };
+    const lostWonLot = { ...baseLot, id: 'lot_lost_won', auctionId: 'auc_lost_won', title: 'Lost Sold Lot', status: 'CLOSED_WON' as const, leaderBidderId: 'u2' };
+    const hammerLot = { ...baseLot, id: 'lot_hammer_pending', auctionId: 'auc_hammer_pending', title: 'Hammer Pending Lot', status: 'HAMMER_PENDING' as const };
+    const wonUnpaidLot = { ...baseLot, id: 'lot_won_unpaid', auctionId: 'auc_won_unpaid', title: 'Won Unpaid Lot', status: 'CLOSED_WON' as const, currentPrice: 188800, leaderBidderId: 'u1' };
+    const readyLot = { ...baseLot, id: 'lot_ready', auctionId: 'auc_ready', title: 'Ready Lot', status: 'READY' as const };
+    vi.mocked(api.listLiveRoomLots).mockResolvedValueOnce({
+      items: [failedLot, lostWonLot, runningLot, hammerLot, wonUnpaidLot, readyLot],
+      total: 6,
+      page: 1,
+      page_size: 20
+    });
+    vi.mocked(api.listMyAuctionRecords).mockResolvedValueOnce({ items: [], total: 0, page: 1, page_size: 20 });
+    vi.mocked(api.listMyOrders).mockResolvedValueOnce({
+      items: [
+        {
+          id: 'ord_won_unpaid',
+          auctionId: 'auc_won_unpaid',
+          lotId: 'lot_won_unpaid',
+          buyerId: 'u1',
+          amount: 188800,
+          payStatus: 'UNPAID',
+          status: 'PENDING_PAY',
+          createdAt: '2026-06-05T08:00:00.000Z'
+        }
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20
+    });
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: getMessage('live.goodsEntry') }));
+
+    const rowByTitle = (title: string) => {
+      const row = screen.getByText(title).closest('.lot-row');
+      expect(row).not.toBeNull();
+      return row as HTMLElement;
+    };
+
+    expect(within(rowByTitle('Failed Lot')).getByRole('button', { name: getMessage('status.ended') })).toBeDisabled();
+    expect(within(rowByTitle('Lost Sold Lot')).getByRole('button', { name: getMessage('status.ended') })).toBeDisabled();
+    expect(within(rowByTitle('Enrolled Running Lot')).getByRole('button', { name: getMessage('auction.lookAround') })).toBeEnabled();
+    expect(within(rowByTitle('Hammer Pending Lot')).getByRole('button', { name: '截拍中' })).toBeDisabled();
+    expect(within(rowByTitle('Ready Lot')).getByRole('button', { name: getMessage('auction.lookAround') })).toBeEnabled();
+
+    await user.click(within(rowByTitle('Won Unpaid Lot')).getByRole('button', { name: getMessage('auction.pay') }));
+    await waitFor(() => expect(window.location.pathname).toBe('/pay/ord_won_unpaid'));
+  });
+
+  it('opens the paid winning order from the lot list view-order action', async () => {
+    vi.mocked(api.getLiveRoom).mockResolvedValueOnce({
+      id: 'room_1001',
+      title: 'Paid Order Room',
+      merchantName: 'Paid Merchant',
+      status: 'LIVE',
+      videoSource: 'recorded',
+      onlineCount: 328,
+      watcherCount: 1208,
+      videoUrl: '/media/live-room-demo.mp4'
+    });
+    const paidWonLot = {
+      id: 'lot_won_paid',
+      auctionId: 'auc_won_paid',
+      roomId: 'room_1001',
+      merchantId: 'merchant_01',
+      categoryId: 'jewelry',
+      title: 'Paid Winning Lot',
+      status: 'CLOSED_WON' as const,
+      startPrice: 0,
+      currentPrice: 166600,
+      leaderBidderId: 'u1',
+      endTsMs: now - 60_000,
+      ruleSnapshot: { incrementRule: { type: 'fixed' as const, amount: 100, maxBidSteps: 10 } }
+    };
+    vi.mocked(api.listLiveRoomLots).mockResolvedValueOnce({
+      items: [paidWonLot],
+      total: 1,
+      page: 1,
+      page_size: 20
+    });
+    vi.mocked(api.listMyOrders).mockResolvedValueOnce({
+      items: [
+        {
+          id: 'ord_won_paid',
+          auctionId: 'auc_won_paid',
+          lotId: 'lot_won_paid',
+          buyerId: 'u1',
+          amount: 166600,
+          payStatus: 'PAID',
+          status: 'PAID',
+          fulfillmentStatus: 'UNSHIPPED',
+          createdAt: '2026-06-05T08:00:00.000Z'
+        }
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20
+    });
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: getMessage('live.goodsEntry') }));
+    const row = screen.getByText('Paid Winning Lot').closest('.lot-row') as HTMLElement;
+    await user.click(within(row).getByRole('button', { name: getMessage('auction.viewOrder') }));
+
+    await waitFor(() => expect(window.location.pathname).toBe('/orders'));
+    expect(window.location.search).toBe('?tab=pendingShipment&orderId=ord_won_paid');
   });
 
   it('keeps row and action paths separate for an enrolled running lot in the lot list', async () => {
@@ -1356,12 +1610,13 @@ describe('App flow', () => {
 
     const closingListBackdrop = document.querySelector('.sheet-backdrop.is-closing .lot-list-sheet')?.closest('.sheet-backdrop') as HTMLElement | null;
     const bidDialog = await screen.findByRole('dialog', { name: getMessage('bid.confirmTitle') });
-    const bidBackdrop = bidDialog.closest('.sheet-backdrop') as HTMLElement;
+    const bidLayer = bidDialog.closest('.sheet-layer') as HTMLElement;
     expect(closingListBackdrop).not.toBeNull();
     expect(closingListBackdrop?.style.getPropertyValue('--sheet-exit-duration-ms')).toBe('150ms');
-    expect(bidBackdrop.style.getPropertyValue('--sheet-enter-duration-ms')).toBe('150ms');
-    expect(bidBackdrop.style.getPropertyValue('--sheet-exit-duration-ms')).toBe('150ms');
-    expect(Number(bidBackdrop.style.zIndex)).toBeGreaterThan(Number(closingListBackdrop?.style.zIndex ?? 0));
+    expect(bidDialog.closest('.sheet-backdrop')).toBeNull();
+    expect(bidLayer.style.getPropertyValue('--sheet-enter-duration-ms')).toBe('150ms');
+    expect(bidLayer.style.getPropertyValue('--sheet-exit-duration-ms')).toBe('150ms');
+    expect(Number(bidLayer.style.zIndex)).toBeGreaterThan(Number(closingListBackdrop?.style.zIndex ?? 0));
     expect(screen.queryByRole('dialog', { name: getMessage('product.detail') })).not.toBeInTheDocument();
   });
 
@@ -1583,7 +1838,9 @@ describe('App flow', () => {
     expect(within(gallery).getByText('1 / 3')).toBeInTheDocument();
     expect(track.style.transform).toContain('-400%');
     fireEvent.transitionEnd(track, { propertyName: 'transform' });
+    await waitFor(() => expect(track).toHaveClass('is-resetting'));
     await waitFor(() => expect(track.style.transform).toContain('-100%'));
+    await waitFor(() => expect(track).not.toHaveClass('is-resetting'));
   });
 
   it('uses ten demo lots in the live room list and shows optional product descriptions instead of status copy', async () => {
@@ -1597,7 +1854,12 @@ describe('App flow', () => {
     const rows = within(drawer).getAllByTestId('lot-row');
 
     expect(rows).toHaveLength(10);
-    expect(within(drawer).getByText('#10')).toBeInTheDocument();
+    const firstThumbFrame = rows[0].querySelector('.lot-thumb-frame') as HTMLElement;
+    expect(firstThumbFrame).toBeInTheDocument();
+    const firstSequence = firstThumbFrame.querySelector('.lot-sequence') as HTMLElement;
+    expect(firstSequence).toHaveTextContent('1');
+    expect(firstSequence).toHaveAttribute('aria-label', '#1');
+    expect(within(drawer).queryByText('#10')).not.toBeInTheDocument();
     expect(within(drawer).queryByText(/已落槌|待支付|宸茶惤妲|寰呮敮浠/)).not.toBeInTheDocument();
     expect(rows.some((row) => within(row).queryByText(/精选|绮鹃€?/))).toBe(true);
   });
@@ -2175,6 +2437,8 @@ describe('App flow', () => {
       expect(document.querySelector('.detail-sheet')).toBeInTheDocument();
       expect(document.querySelector('.sheet-backdrop.is-closing .detail-sheet')).toBeInTheDocument();
       expect(document.querySelector('.quick-bid-sheet')).toBeInTheDocument();
+      expect(document.querySelector('.sheet-layer .quick-bid-sheet')).toBeInTheDocument();
+      expect(document.querySelector('.sheet-backdrop .quick-bid-sheet')).not.toBeInTheDocument();
       expect(screen.getByRole('dialog', { name: getMessage('bid.confirmTitle') })).toBeInTheDocument();
 
       await act(async () => {
@@ -2228,7 +2492,7 @@ describe('App flow', () => {
         vi.advanceTimersByTime(4000);
       });
       expect(within(bidDialog).getByRole('button', { name: getMessage('bid.endedAutoReturn', 'zh-CN', { seconds: 0 }) })).toBeDisabled();
-      expect(document.querySelector('.sheet-backdrop.is-closing')).toBeInTheDocument();
+      expect(document.querySelector('.sheet-layer.is-closing .quick-bid-sheet')).toBeInTheDocument();
       await act(async () => {
         vi.advanceTimersByTime(460);
       });

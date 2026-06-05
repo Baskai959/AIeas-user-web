@@ -204,13 +204,16 @@ describe('mobile layout CSS', () => {
   });
 
   it('animates live room sheets from the backdrop and bottom panel', () => {
-    expect(rule('.sheet-backdrop')).toContain('z-index: 80');
+    expect(rule('.sheet-backdrop')).toContain('z-index: 110');
     expect(rule('.sheet-backdrop')).toContain('--sheet-enter-duration-ms: 250ms');
     expect(rule('.sheet-backdrop')).toContain('--sheet-exit-duration-ms: 150ms');
     expect(rule('.sheet-backdrop')).toContain('--sheet-easing: linear');
     expect(rule('.sheet-backdrop')).not.toContain('animation: sheet-backdrop-in');
     expect(rule('.sheet-backdrop::before')).toContain('animation: sheet-backdrop-in var(--sheet-enter-duration-ms) var(--sheet-easing) both');
     expect(rule('.sheet-backdrop.is-closing::before')).toContain('animation: sheet-backdrop-out var(--sheet-exit-duration-ms) var(--sheet-easing) forwards');
+    expect(rule('.sheet-layer')).toContain('z-index: 110');
+    expect(rule('.sheet-layer')).toContain('background: transparent');
+    expect(rule('.sheet-layer.is-closing .bottom-sheet')).toContain('animation: sheet-slide-down var(--sheet-exit-duration-ms) var(--sheet-easing) forwards');
     expect(rule('.bottom-sheet')).toContain('animation: sheet-slide-up var(--sheet-enter-duration-ms) var(--sheet-easing) both');
     expect(rule('.bottom-sheet')).toContain('will-change: transform');
     expect(rule('.sheet-backdrop.is-closing .bottom-sheet')).toContain('animation: sheet-slide-down var(--sheet-exit-duration-ms) var(--sheet-easing) forwards');
@@ -219,8 +222,19 @@ describe('mobile layout CSS', () => {
     expect(rule('.lot-list')).toContain('height: calc(100% - 52px)');
     expect(rule('.lot-list')).toContain('max-height: none');
     expect(rule('.lot-list')).toContain('overflow-y: auto');
-    expect(rule('.lot-row')).toContain('grid-template-columns: 32px 64px minmax(0, 1fr) auto');
-    expect(rule('.lot-sequence')).toContain('place-items: center');
+    expect(rule('.lot-row')).toContain('--lot-thumb-size: 92px');
+    expect(rule('.lot-row')).toContain('grid-template-columns: var(--lot-thumb-size) minmax(0, 1fr) auto');
+    expect(rule('.lot-thumb-frame')).toContain('position: relative');
+    expect(rule('.lot-thumb-frame')).toContain('width: var(--lot-thumb-size)');
+    expect(rule('.lot-thumb-frame')).toContain('height: var(--lot-thumb-size)');
+    expect(rule('.lot-sequence')).toContain('position: absolute');
+    expect(rule('.lot-sequence')).toContain('min-width: 18px');
+    expect(rule('.lot-sequence')).toContain('height: 18px');
+    expect(rule('.lot-sequence')).toContain('font-size: 9px');
+    expect(rule('.lot-sequence')).toContain('background: rgba(15, 23, 42, 0.5)');
+    expect(rule('.lot-sequence')).toContain('color: #fff');
+    expect(rule('.lot-action-button.is-look')).toContain('background: #fff');
+    expect(rule('.lot-action-button.is-disabled')).toContain('background: #e5e7eb');
     expect(rule('.detail-sheet')).toContain('height: 75dvh');
     expect(rule('.detail-sheet')).toContain('max-height: 75dvh');
     expect(rule('.detail-sheet')).toContain('display: flex');
@@ -232,11 +246,15 @@ describe('mobile layout CSS', () => {
     expect(rule('.lot-gallery-media-button')).toContain('touch-action: pan-y');
     expect(rule('.lot-gallery-track')).toContain('transition: transform 220ms ease');
     expect(rule('.lot-gallery-track.is-dragging,\n.lot-gallery-track.is-resetting')).toContain('transition: none');
+    expect(rule('.lot-gallery-slide')).toContain('position: relative');
     expect(rule('.lot-gallery-slide')).toContain('overflow: hidden');
+    expect(rule('.lot-gallery-slide img')).toContain('position: absolute');
+    expect(rule('.lot-gallery-slide img')).toContain('top: 50%');
     expect(rule('.lot-gallery-slide img')).toContain('width: 100%');
     expect(rule('.lot-gallery-slide img')).toContain('height: auto');
+    expect(rule('.lot-gallery-slide img')).toContain('transform: translateY(-50%)');
     expect(rule('.lot-gallery-slide img')).not.toContain('object-fit: cover');
-    expect(rule('.lot-gallery-slide img')).toContain('object-position: center');
+    expect(rule('.lot-gallery-slide img')).toContain('object-position: center center');
     expect(rule('.image-viewer-backdrop')).toContain('position: fixed');
     expect(rule('.image-viewer-backdrop')).toContain('z-index: 1200');
     expect(rule('.image-viewer-image')).toContain('touch-action: none');

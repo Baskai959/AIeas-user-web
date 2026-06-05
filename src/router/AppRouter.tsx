@@ -34,7 +34,7 @@ import closeCommentIconUrl from '../../Icon/close_comment.svg';
 import likeIconUrl from '../../Icon/like.svg';
 import logoUrl from '../../logo.png';
 import { createTranslator, defaultLocale, type Locale, type MessageKey } from '../i18n/messages';
-import { classifyAuctionRecord, groupAuctionRecords, myAuctionTabKeys, previewLotStatusKind, selectCurrentRunningLot, selectPreviewLot } from '../services/auctionViews';
+import { classifyAuctionRecord, groupAuctionRecords, hasPaidDeposit, myAuctionTabKeys, previewLotStatusKind, selectCurrentRunningLot, selectPreviewLot } from '../services/auctionViews';
 import {
   QUICK_BID_MAX_STEPS,
   buildBidPlacePayload,
@@ -109,6 +109,8 @@ type PreviewMediaSnapshot = {
 
 type AppLocationState = {
   returnTo?: string;
+  parentReturnTo?: string;
+  sourceTab?: MainTab;
   previewMedia?: PreviewMediaSnapshot;
 };
 
@@ -158,6 +160,25 @@ function parseMainTab(tab: string | null): MainTab | undefined {
 function parseMyAuctionTab(tab: string | null): MyAuctionTabKey {
   if (tab === 'pendingBid' || tab === 'pendingPay' || tab === 'pendingShipment' || tab === 'pendingReceipt' || tab === 'completed') return tab;
   return 'all';
+}
+
+const lotSortKeys: LotSortKey[] = ['default', 'auctionTime', 'publishedAt', 'priceAsc', 'priceDesc'];
+const lotStatusKeys: LotStatusFilter[] = ['all', 'READY', 'WARMING_UP', 'RUNNING', 'EXTENDED', 'HAMMER_PENDING', 'CLOSED_WON', 'CLOSED_FAILED', 'SETTLED'];
+
+function parseLotSort(value: string | null): LotSortKey {
+  return lotSortKeys.includes(value as LotSortKey) ? (value as LotSortKey) : 'default';
+}
+
+function parseLotStatus(value: string | null): LotStatusFilter {
+  return lotStatusKeys.includes(value as LotStatusFilter) ? (value as LotStatusFilter) : 'all';
+}
+
+function discoverLotSearchParams({ sort, status, categoryId }: { sort: LotSortKey; status: LotStatusFilter; categoryId: string }): URLSearchParams {
+  const params = new URLSearchParams();
+  params.set('sort', sort);
+  params.set('status', status);
+  params.set('categoryId', categoryId);
+  return params;
 }
 
 function currentPath(location: Pick<Location, 'pathname' | 'search'>): string {
@@ -211,6 +232,15 @@ function orderTabFromOrder(order?: Order): MyAuctionTabKey {
   if (isPaidOrder(order) && order?.fulfillmentStatus === 'SHIPPED') return 'pendingReceipt';
   if (isPaidOrder(order) && order?.fulfillmentStatus === 'RECEIVED') return 'completed';
   return 'all';
+}
+
+function buildOrderByAuctionId(records: UserAuctionRecord[] = [], orders: Order[] = []): Map<string, Order> {
+  const byAuctionId = new Map<string, Order>();
+  orders.forEach((order) => byAuctionId.set(order.auctionId, order));
+  records.forEach((record) => {
+    if (record.order) byAuctionId.set(record.lot.auctionId, record.order);
+  });
+  return byAuctionId;
 }
 
 function transitionRouteUpdate(update: () => void): void {
@@ -326,13 +356,8 @@ function useAppNavigation() {
   const location = useLocation() as Location<AppLocationState | null>;
 
   const openLot = (lot: LiveRoomLot) => {
-    const status = stateFromLot(lot).status;
-    if (status === 'RUNNING' || status === 'EXTENDED') {
-      const returnTo = liveReturnPath(location, lot.roomId);
-      navigateWithTransition(navigate, livePath(lot.roomId, lot.id, liveSourceTabFromPath(returnTo)), { state: { returnTo } });
-      return;
-    }
-    navigateWithTransition(navigate, `/product/${lot.id}`);
+    const returnTo = currentPath(location);
+    navigateWithTransition(navigate, `/product/${lot.id}`, { state: { returnTo, sourceTab: liveSourceTabFromPath(returnTo) } });
   };
 
   const openRoom = (roomId: string, lotId?: string, previewMedia?: PreviewMediaSnapshot) => {
@@ -402,8 +427,20 @@ function MerchantRoutePage({ apiClient }: { apiClient: ApiClient }) {
 
 function ProductRoutePage({ apiClient }: { apiClient: ApiClient }) {
   const { lotId = 'lot_3001' } = useParams();
-  const { navigate, openRoom } = useAppNavigation();
-  return <ProductPage apiClient={apiClient} lotId={lotId} onBack={() => navigateWithTransition(navigate, '/')} onOpenRoom={(roomId, lotId) => openRoom(roomId, lotId)} />;
+  const navigate = useNavigate();
+  const location = useLocation() as Location<AppLocationState | null>;
+  const returnTo = location.state?.returnTo ?? '/';
+  const sourceTab = location.state?.sourceTab ?? liveSourceTabFromPath(returnTo);
+  const openRoomFromProduct = (roomId: string, targetLotId: string) => {
+    navigateWithTransition(navigate, livePath(roomId, targetLotId, sourceTab), {
+      state: {
+        returnTo: currentPath(location),
+        parentReturnTo: returnTo,
+        sourceTab
+      }
+    });
+  };
+  return <ProductPage apiClient={apiClient} lotId={lotId} onBack={() => navigateWithTransition(navigate, returnTo)} onOpenRoom={openRoomFromProduct} />;
 }
 
 function LiveRoutePage({ apiClient }: { apiClient: ApiClient }) {
@@ -414,6 +451,7 @@ function LiveRoutePage({ apiClient }: { apiClient: ApiClient }) {
   const location = useLocation() as Location<AppLocationState | null>;
   const from = parseMainTab(searchParams.get('from'));
   const returnTo = location.state?.returnTo ?? fallbackLiveReturnPath(roomId, from);
+  const returnState = returnTo.startsWith('/product/') && location.state?.parentReturnTo ? { returnTo: location.state.parentReturnTo, sourceTab: location.state.sourceTab } : undefined;
 
   return (
     <LiveRoomPage
@@ -422,7 +460,7 @@ function LiveRoutePage({ apiClient }: { apiClient: ApiClient }) {
       initialLotId={searchParams.get('lotId') ?? undefined}
       initialPreviewMedia={location.state?.previewMedia}
       userId={user?.id ?? 'u1'}
-      onBack={() => navigateWithTransition(navigate, returnTo)}
+      onBack={() => navigateWithTransition(navigate, returnTo, returnState ? { state: returnState } : undefined)}
       onPay={(orderId) => navigateWithTransition(navigate, `/pay/${orderId}`)}
       onOpenOrder={(orderId, tab) => navigateWithTransition(navigate, ordersPath(tab, orderId))}
     />
@@ -561,36 +599,81 @@ function LoginPage({ apiClient, onLoggedIn }: { apiClient: ApiClient; onLoggedIn
 }
 
 function LotDiscoveryPage({ apiClient, onOpenLot, onOpenMerchant }: { apiClient: ApiClient; onOpenLot: (lot: LiveRoomLot) => void; onOpenMerchant: (id: string) => void }) {
-  const [lotSort, setLotSort] = useState<LotSortKey>('default');
-  const [lotStatus, setLotStatus] = useState<LotStatusFilter>('all');
-  const [categoryId, setCategoryId] = useState('all');
+  const user = useSessionStore((state) => state.user);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [lotSort, setLotSort] = useState<LotSortKey>(() => parseLotSort(searchParams.get('sort')));
+  const [lotStatus, setLotStatus] = useState<LotStatusFilter>(() => parseLotStatus(searchParams.get('status')));
+  const [categoryId, setCategoryId] = useState(() => searchParams.get('categoryId') ?? 'all');
   const categories = useQuery({ queryKey: ['categories'], queryFn: () => apiClient.listCategories(), placeholderData: { items: demoCategories, total: demoCategories.length, page: 1, page_size: 20 } });
   const lots = useQuery({
     queryKey: ['discover-lots', lotSort, lotStatus, categoryId],
     queryFn: () => apiClient.searchLots({ sort: lotSort, status: lotStatus, categoryId })
   });
+  const myAuctionRecords = useQuery({
+    queryKey: ['my-auction-records'],
+    queryFn: () => apiClient.listMyAuctionRecords(),
+    placeholderData: { items: [], total: 0, page: 1, page_size: 20 }
+  });
+  const myOrders = useQuery({
+    queryKey: ['my-orders'],
+    queryFn: () => apiClient.listMyOrders(),
+    placeholderData: { items: [], total: 0, page: 1, page_size: 20 }
+  });
+  const enrolledAuctionIds = useMemo(() => {
+    const ids = new Set<string>();
+    (myAuctionRecords.data?.items ?? []).forEach((record) => {
+      if (hasPaidDeposit(record)) ids.add(record.lot.auctionId);
+    });
+    return ids;
+  }, [myAuctionRecords.data?.items]);
+  const orderByAuctionId = useMemo(() => buildOrderByAuctionId(myAuctionRecords.data?.items, myOrders.data?.items), [myAuctionRecords.data?.items, myOrders.data?.items]);
+  const updateFilters = (nextFilters: Partial<{ sort: LotSortKey; status: LotStatusFilter; categoryId: string }>) => {
+    const nextSort = nextFilters.sort ?? lotSort;
+    const nextStatus = nextFilters.status ?? lotStatus;
+    const nextCategoryId = nextFilters.categoryId ?? categoryId;
+    setLotSort(nextSort);
+    setLotStatus(nextStatus);
+    setCategoryId(nextCategoryId);
+    setSearchParams(discoverLotSearchParams({ sort: nextSort, status: nextStatus, categoryId: nextCategoryId }));
+  };
+
+  useEffect(() => {
+    setLotSort(parseLotSort(searchParams.get('sort')));
+    setLotStatus(parseLotStatus(searchParams.get('status')));
+    setCategoryId(searchParams.get('categoryId') ?? 'all');
+  }, [searchParams]);
 
   return (
     <section className="search-page discover-lots-page">
       <header className="simple-page-header discover-lots-header">
         <div>
-          <p className="eyebrow">{t('nav.discover')}</p>
           <h1>{t('discoverLots.title')}</h1>
         </div>
       </header>
       <FilterRow>
-        <FilterSelect label={t('filter.sort')} value={lotSort} onChange={(value) => setLotSort(value as LotSortKey)} options={lotSortOptions()} />
-        <FilterSelect label={t('filter.status')} value={lotStatus} onChange={(value) => setLotStatus(value as LotStatusFilter)} options={lotStatusOptions()} />
+        <FilterSelect label={t('filter.sort')} value={lotSort} onChange={(value) => updateFilters({ sort: value as LotSortKey })} options={lotSortOptions()} />
+        <FilterSelect label={t('filter.status')} value={lotStatus} onChange={(value) => updateFilters({ status: value as LotStatusFilter })} options={lotStatusOptions()} />
         <FilterSelect
           label={t('filter.category')}
           value={categoryId}
-          onChange={setCategoryId}
+          onChange={(value) => updateFilters({ categoryId: value })}
           options={[{ value: 'all', label: t('status.all') }, ...(categories.data?.items ?? []).map((item) => ({ value: item.id, label: item.name }))]}
         />
       </FilterRow>
       <ResultList loading={lots.isLoading} empty={!lots.data?.items.length}>
         {(lots.data?.items ?? []).map((lot) => (
-          <LotResultCard key={lot.id} lot={lot} onOpen={() => onOpenLot(lot)} onOpenMerchant={onOpenMerchant} />
+          <LotResultCard
+            key={lot.id}
+            lot={lot}
+            action={deriveLotListAction({
+              state: stateFromLot(lot),
+              enrolled: enrolledAuctionIds.has(lot.auctionId),
+              order: orderByAuctionId.get(lot.auctionId),
+              userId: user?.id ?? 'u1'
+            })}
+            onOpen={() => onOpenLot(lot)}
+            onOpenMerchant={onOpenMerchant}
+          />
         ))}
       </ResultList>
     </section>
@@ -1379,7 +1462,6 @@ function SettingsPage({
           <ArrowLeft size={18} /> {t('common.back')}
         </button>
         <div>
-          <p className="eyebrow">{t('nav.me')}</p>
           <h1>{t('settings.title')}</h1>
         </div>
       </header>
@@ -1405,7 +1487,6 @@ function SettingsPage({
       <section className="settings-card settings-logout-card">
         <div>
           <h2>{t('settings.account')}</h2>
-          <p>{t('settings.logoutDesc')}</p>
         </div>
         <Button block color="danger" onClick={() => setShowLogoutDialog(true)}>
           <LogOut size={17} /> {t('settings.logout')}
@@ -1469,7 +1550,6 @@ function OrdersPage({
           <ArrowLeft size={18} /> {t('common.back')}
         </button>
         <div>
-          <p className="eyebrow">{t('nav.me')}</p>
           <h1>{t('orders.title')}</h1>
         </div>
       </header>
@@ -1508,7 +1588,6 @@ function FollowingPage({ onBack, onOpenRoom }: { onBack: () => void; onOpenRoom:
           <ArrowLeft size={18} /> {t('common.back')}
         </button>
         <div>
-          <p className="eyebrow">{t('nav.me')}</p>
           <h1>{t('profile.followingTitle')}</h1>
         </div>
       </header>
@@ -1555,7 +1634,6 @@ function FootprintsPage({ onBack, onOpenRoom }: { onBack: () => void; onOpenRoom
           <ArrowLeft size={18} /> {t('common.back')}
         </button>
         <div>
-          <p className="eyebrow">{t('nav.me')}</p>
           <h1>{t('profile.footprintTitle')}</h1>
         </div>
       </header>
@@ -1684,8 +1762,9 @@ function LiveRoomResultCard({ room, onOpen }: { room: LiveRoom; onOpen: () => vo
   );
 }
 
-function LotResultCard({ lot, onOpen, onOpenMerchant }: { lot: LiveRoomLot; onOpen: () => void; onOpenMerchant?: (merchantId: string) => void }) {
+function LotResultCard({ lot, action, onOpen, onOpenMerchant }: { lot: LiveRoomLot; action?: LotListAction; onOpen: () => void; onOpenMerchant?: (merchantId: string) => void }) {
   const state = stateFromLot(lot);
+  const buttonAction = action ?? deriveFallbackLotResultAction(state.status);
   return (
     <article className="search-result-card lot-result-card">
       <button className="result-media" type="button" onClick={onOpen}>
@@ -1705,8 +1784,18 @@ function LotResultCard({ lot, onOpen, onOpenMerchant }: { lot: LiveRoomLot; onOp
           </button>
         ) : null}
       </div>
-      <Button size="small" color={state.status === 'RUNNING' || state.status === 'EXTENDED' ? 'danger' : 'primary'} fill={isUpcomingAuctionStatus(state.status) ? 'outline' : 'solid'} onClick={onOpen}>
-        {lotActionText(state.status)}
+      <Button
+        size="small"
+        color={buttonAction.color}
+        fill={buttonAction.fill}
+        disabled={buttonAction.disabled}
+        className={lotListActionClassName(buttonAction)}
+        onClick={() => {
+          if (buttonAction.disabled) return;
+          onOpen();
+        }}
+      >
+        {t(buttonAction.label)}
       </Button>
     </article>
   );
@@ -1969,8 +2058,10 @@ function LotImageGallery({ lot }: { lot: LiveRoomLot }) {
       cancelAnimationFrame(galleryRestoreRafRef.current);
     }
     galleryRestoreRafRef.current = requestAnimationFrame(() => {
-      galleryRestoreRafRef.current = undefined;
-      setGalleryResetting(false);
+      galleryRestoreRafRef.current = requestAnimationFrame(() => {
+        galleryRestoreRafRef.current = undefined;
+        setGalleryResetting(false);
+      });
     });
   };
   const openViewer = () => {
@@ -2667,6 +2758,7 @@ const LIVE_SHEET_ANIMATION_MS = {
 const AUCTION_ENDED_HOLD_MS = 5000;
 const AUCTION_CARD_ANIMATION_MS = 380;
 const WIN_CELEBRATION_DURATION_MS = 4200;
+const LIVE_SHEET_Z_INDEX_BASE = 110;
 
 type LiveSheetVariant = keyof typeof LIVE_SHEET_ANIMATION_MS;
 type LiveSheetType = 'lotList' | 'detail' | 'quickBid';
@@ -2679,6 +2771,10 @@ type LiveSheetInstance = {
   phase: LiveSheetPhase;
   lotId?: string;
 };
+
+function liveSheetInstanceKey(type: LiveSheetType, lotId?: string): string {
+  return `${type}:${lotId ?? ''}`;
+}
 
 type FloatingAuctionCardPhase = 'entering' | 'visible' | 'holding' | 'leaving';
 type FloatingAuctionCardMode = 'running' | 'ended';
@@ -2800,6 +2896,7 @@ function LiveRoomPage({
   const lastRankingBidRef = useRef<RankingBidHint>();
   const sheetTimersRef = useRef<number[]>([]);
   const liveSheetsRef = useRef<LiveSheetInstance[]>([]);
+  const liveSheetKeysRef = useRef<Set<string>>(new Set());
   const floatingAuctionCardRef = useRef<FloatingAuctionCardState>();
   const pendingFloatingAuctionCardRef = useRef<FloatingAuctionCardState>();
   const likeBurstTimerRef = useRef<number>();
@@ -2845,14 +2942,7 @@ function LiveRoomPage({
   const lots = lotsQuery.data?.items.length ? lotsQuery.data.items : demoLotPage.items;
   const myAuctionRecordItems = myAuctionRecordsQuery.data?.items;
   const myOrderItems = myOrdersQuery.data?.items;
-  const orderByAuctionId = useMemo(() => {
-    const orders = new Map<string, Order>();
-    (myOrderItems ?? []).forEach((order) => orders.set(order.auctionId, order));
-    (myAuctionRecordItems ?? []).forEach((record) => {
-      if (record.order) orders.set(record.lot.auctionId, record.order);
-    });
-    return orders;
-  }, [myAuctionRecordItems, myOrderItems]);
+  const orderByAuctionId = useMemo(() => buildOrderByAuctionId(myAuctionRecordItems, myOrderItems), [myAuctionRecordItems, myOrderItems]);
   const roomPreviewMediaSource = liveRoomPreviewVideoUrl(room);
   const initialMediaPosition = isPreviewMediaSnapshotApplicable(initialPreviewMedia, room, roomPreviewMediaSource) ? initialPreviewMedia : undefined;
   const activeLot = selectCurrentRunningLot(room, lots, lotStates);
@@ -2923,7 +3013,13 @@ function LiveRoomPage({
 
   const scheduleSheetRemoval = useCallback((id: string, durationMs: number) => {
     const timer = window.setTimeout(() => {
-      setLiveSheets((prev) => prev.filter((sheet) => sheet.id !== id));
+      setLiveSheets((prev) => {
+        const removedSheet = prev.find((sheet) => sheet.id === id);
+        if (removedSheet) {
+          liveSheetKeysRef.current.delete(liveSheetInstanceKey(removedSheet.type, removedSheet.lotId));
+        }
+        return prev.filter((sheet) => sheet.id !== id);
+      });
     }, durationMs);
     sheetTimersRef.current.push(timer);
   }, []);
@@ -2932,6 +3028,7 @@ function LiveRoomPage({
     (id: string) => {
       const sheet = liveSheetsRef.current.find((item) => item.id === id);
       if (!sheet || sheet.phase === 'closing') return;
+      liveSheetKeysRef.current.delete(liveSheetInstanceKey(sheet.type, sheet.lotId));
       setLiveSheets((prev) => prev.map((item) => (item.id === id ? { ...item, phase: 'closing' } : item)));
       scheduleSheetRemoval(id, LIVE_SHEET_ANIMATION_MS[sheet.variant].exit);
     },
@@ -2941,6 +3038,7 @@ function LiveRoomPage({
   const closeActiveLiveSheets = useCallback(() => {
     const closingSheets = liveSheetsRef.current.filter((sheet) => sheet.phase !== 'closing');
     if (!closingSheets.length) return;
+    closingSheets.forEach((sheet) => liveSheetKeysRef.current.delete(liveSheetInstanceKey(sheet.type, sheet.lotId)));
     setLiveSheets((prev) => prev.map((sheet) => (sheet.phase === 'closing' ? sheet : { ...sheet, phase: 'closing' })));
     closingSheets.forEach((sheet) => scheduleSheetRemoval(sheet.id, LIVE_SHEET_ANIMATION_MS[sheet.variant].exit));
   }, [scheduleSheetRemoval]);
@@ -2948,22 +3046,31 @@ function LiveRoomPage({
   const openLiveSheet = useCallback(
     (type: LiveSheetType, lotId?: string, options: { closeExisting?: boolean; variant?: LiveSheetVariant } = {}) => {
       if (options.closeExisting ?? true) closeActiveLiveSheets();
+      const sheetKey = liveSheetInstanceKey(type, lotId);
+      if (liveSheetKeysRef.current.has(sheetKey)) return;
+      liveSheetKeysRef.current.add(sheetKey);
       const variantByType: Record<LiveSheetType, LiveSheetVariant> = {
         lotList: 'lotList',
         detail: 'detail',
         quickBid: 'quickBid'
       };
       const id = makeRequestId(`sheet-${type}`);
-      setLiveSheets((prev) => [...prev, { id, type, lotId, variant: options.variant ?? variantByType[type], phase: 'opening' }]);
+      setLiveSheets((prev) => {
+        const hasDuplicate = prev.some((sheet) => sheet.phase !== 'closing' && liveSheetInstanceKey(sheet.type, sheet.lotId) === sheetKey);
+        if (hasDuplicate) return prev;
+        return [...prev, { id, type, lotId, variant: options.variant ?? variantByType[type], phase: 'opening' }];
+      });
       scheduleSheetOpen(id);
     },
     [closeActiveLiveSheets, scheduleSheetOpen]
   );
 
   useEffect(() => {
+    const liveSheetKeys = liveSheetKeysRef.current;
     return () => {
       sheetTimersRef.current.forEach((timer) => window.clearTimeout(timer));
       sheetTimersRef.current = [];
+      liveSheetKeys.clear();
     };
   }, []);
 
@@ -3497,7 +3604,7 @@ function LiveRoomPage({
       ) : null}
 
       {liveSheets.map((sheet, index) => {
-        const zIndex = 90 + index;
+        const zIndex = LIVE_SHEET_Z_INDEX_BASE + index;
         const accessibilityHidden = sheet.phase === 'closing' && liveSheets.some((otherSheet, otherIndex) => otherIndex > index && otherSheet.phase !== 'closing');
         if (sheet.type === 'lotList') {
           return (
@@ -3510,9 +3617,13 @@ function LiveRoomPage({
               states={lotStates}
               activeAuctionId={activeLot?.auctionId}
               enrolledAuctionIds={enrolledAuctions}
+              ordersByAuctionId={orderByAuctionId}
+              userId={userId}
               onClose={() => closeLiveSheet(sheet.id)}
               onOpenLot={openLotFromList}
               onQuickBid={openQuickBidFromList}
+              onPay={(order, lot) => onPay(order.id, lot.auctionId)}
+              onOpenOrder={(order) => onOpenOrder(order.id, orderTabFromOrder(order))}
             />
           );
         }
@@ -4512,6 +4623,7 @@ function AnimatedSheetFrame({
   accessibilityHidden = false,
   className,
   label,
+  showBackdrop = true,
   onClose,
   children
 }: {
@@ -4521,6 +4633,7 @@ function AnimatedSheetFrame({
   accessibilityHidden?: boolean;
   className: string;
   label: string;
+  showBackdrop?: boolean;
   onClose: () => void;
   children: (requestClose: () => void) => ReactNode;
 }) {
@@ -4529,11 +4642,11 @@ function AnimatedSheetFrame({
     if (phase === 'closing') return;
     onClose();
   }, [onClose, phase]);
-  const backdropClassName = ['sheet-backdrop', phase === 'opening' ? 'is-opening' : '', phase === 'closing' ? 'is-closing' : ''].filter(Boolean).join(' ');
+  const frameClassName = [showBackdrop ? 'sheet-backdrop' : 'sheet-layer', phase === 'opening' ? 'is-opening' : '', phase === 'closing' ? 'is-closing' : ''].filter(Boolean).join(' ');
 
   return (
     <div
-      className={backdropClassName}
+      className={frameClassName}
       aria-hidden={accessibilityHidden ? true : undefined}
       style={
         {
@@ -4560,9 +4673,13 @@ function LotListSheet({
   states,
   activeAuctionId,
   enrolledAuctionIds,
+  ordersByAuctionId,
+  userId,
   onClose,
   onOpenLot,
-  onQuickBid
+  onQuickBid,
+  onPay,
+  onOpenOrder
 }: {
   phase: LiveSheetPhase;
   zIndex: number;
@@ -4571,9 +4688,13 @@ function LotListSheet({
   states: Record<string, AuctionState>;
   activeAuctionId?: string;
   enrolledAuctionIds: ReadonlySet<string>;
+  ordersByAuctionId: ReadonlyMap<string, Order>;
+  userId: string;
   onClose: () => void;
   onOpenLot: (lot: LiveRoomLot) => void;
   onQuickBid: (lot: LiveRoomLot) => void;
+  onPay: (order: Order, lot: LiveRoomLot) => void;
+  onOpenOrder: (order: Order) => void;
 }) {
   const sortedLots = useMemo(() => sortLotListForSheet(lots, states, activeAuctionId), [activeAuctionId, lots, states]);
   return (
@@ -4584,7 +4705,13 @@ function LotListSheet({
         <div className="lot-list">
           {sortedLots.map(({ lot, state, originalIndex }) => {
             const isRunning = isRunningAuctionStatus(state.status);
-            const canQuickBid = isRunning && enrolledAuctionIds.has(lot.auctionId);
+            const action = deriveLotListAction({
+              state,
+              enrolled: enrolledAuctionIds.has(lot.auctionId),
+              order: ordersByAuctionId.get(lot.auctionId),
+              userId
+            });
+            const actionClassName = lotListActionClassName(action);
             return (
               <article
                 className={lot.auctionId === activeAuctionId && isRunning ? 'lot-row is-active' : 'lot-row'}
@@ -4601,10 +4728,12 @@ function LotListSheet({
                   onOpenLot(lot);
                 }}
               >
-                <span className="lot-sequence" aria-label={`#${originalIndex + 1}`}>
-                  #{originalIndex + 1}
-                </span>
-                <VisualPlaceholder title={lot.title} imageUrl={lot.imageUrl} tone="red" />
+                <div className="lot-thumb-frame">
+                  <VisualPlaceholder title={lot.title} imageUrl={lot.imageUrl} tone="red" />
+                  <span className="lot-sequence" aria-label={`#${originalIndex + 1}`}>
+                    {originalIndex + 1}
+                  </span>
+                </div>
                 <div>
                   <span className="status-badge">{lotStatusLabel(state.status)}</span>
                   <h3>{lot.title}</h3>
@@ -4616,18 +4745,29 @@ function LotListSheet({
                 </div>
                 <Button
                   size="small"
-                  color={isRunning ? 'danger' : 'primary'}
-                  fill={isUpcomingAuctionStatus(state.status) ? 'outline' : 'solid'}
+                  color={action.color}
+                  fill={action.fill}
+                  disabled={action.disabled}
+                  className={actionClassName}
                   onClick={(event) => {
                     event.stopPropagation();
-                    if (canQuickBid) {
+                    if (action.disabled) return;
+                    if (action.kind === 'quickBid') {
                       onQuickBid(lot);
+                      return;
+                    }
+                    if (action.kind === 'pay' && action.order) {
+                      onPay(action.order, lot);
+                      return;
+                    }
+                    if (action.kind === 'order' && action.order) {
+                      onOpenOrder(action.order);
                       return;
                     }
                     onOpenLot(lot);
                   }}
                 >
-                  {lotActionText(state.status)}
+                  {t(action.label)}
                 </Button>
               </article>
             );
@@ -4652,6 +4792,68 @@ function sortLotListForSheet(lots: LiveRoomLot[], states: Record<string, Auction
 
 function isRunningAuctionStatus(status: AuctionState['status'] | LiveRoomLot['status']): boolean {
   return status === 'RUNNING' || status === 'EXTENDED';
+}
+
+type LotListAction = {
+  kind: 'quickBid' | 'pay' | 'order' | 'look' | 'disabled';
+  label: MessageKey;
+  color: 'primary' | 'danger';
+  fill: 'solid' | 'outline';
+  disabled?: boolean;
+  order?: Order;
+};
+
+function lotListActionClassName(action: LotListAction): string {
+  return [
+    'lot-action-button',
+    action.kind === 'look' || action.kind === 'order' ? 'is-look' : '',
+    action.disabled ? 'is-disabled' : '',
+    action.kind === 'pay' || action.kind === 'quickBid' ? 'is-primary-action' : ''
+  ].filter(Boolean).join(' ');
+}
+
+function deriveFallbackLotResultAction(status: AuctionState['status']): LotListAction {
+  if (status === 'RUNNING' || status === 'EXTENDED') {
+    return { kind: 'quickBid', label: 'product.bidNow', color: 'danger', fill: 'solid' };
+  }
+  if (isUpcomingAuctionStatus(status)) {
+    return { kind: 'look', label: 'product.openDetail', color: 'primary', fill: 'outline' };
+  }
+  return { kind: 'look', label: 'product.viewResult', color: 'primary', fill: 'solid' };
+}
+
+function deriveLotListAction({
+  state,
+  enrolled,
+  order,
+  userId
+}: {
+  state: AuctionState;
+  enrolled: boolean;
+  order?: Order;
+  userId: string;
+}): LotListAction {
+  if (state.status === 'HAMMER_PENDING') {
+    return { kind: 'disabled', label: 'auction.hammerInProgress', color: 'primary', fill: 'solid', disabled: true };
+  }
+
+  if (state.status === 'CLOSED_FAILED') {
+    return { kind: 'disabled', label: 'status.ended', color: 'primary', fill: 'solid', disabled: true };
+  }
+
+  if (state.status === 'CLOSED_WON' || state.status === 'SETTLED') {
+    const userWon = Boolean(order?.buyerId === userId || state.leaderBidderId === userId);
+    if (!userWon) return { kind: 'disabled', label: 'status.ended', color: 'primary', fill: 'solid', disabled: true };
+    if (order && isPendingPayOrder(order)) return { kind: 'pay', label: 'auction.pay', color: 'danger', fill: 'solid', order };
+    if (order && isPaidOrder(order)) return { kind: 'order', label: 'auction.viewOrder', color: 'primary', fill: 'outline', order };
+    return { kind: 'look', label: 'auction.lookAround', color: 'primary', fill: 'outline' };
+  }
+
+  if (isRunningAuctionStatus(state.status) && enrolled) {
+    return { kind: 'quickBid', label: 'product.bidNow', color: 'danger', fill: 'solid' };
+  }
+
+  return { kind: 'look', label: 'auction.lookAround', color: 'primary', fill: 'outline' };
 }
 
 type LotDetailAction = {
@@ -4911,7 +5113,7 @@ function BidSheet({
   const submitText = isClosed ? t('bid.endedAutoReturn', { seconds: closedCountdown }) : feedback.status === 'submitting' ? t('auction.bidSubmitted') : t('bid.submitNow');
 
   return (
-    <AnimatedSheetFrame variant={variant} phase={phase} zIndex={zIndex} accessibilityHidden={accessibilityHidden} className="bid-sheet quick-bid-sheet" label={t('bid.confirmTitle')} onClose={onClose}>
+    <AnimatedSheetFrame variant={variant} phase={phase} zIndex={zIndex} accessibilityHidden={accessibilityHidden} className="bid-sheet quick-bid-sheet" label={t('bid.confirmTitle')} showBackdrop={false} onClose={onClose}>
       {() => (
         <>
         <div className="quick-bid-timer">
@@ -5313,12 +5515,6 @@ function lotStatusLabel(status: AuctionState['status']): string {
     SETTLED: 'auction.settled'
   };
   return t(keys[status]);
-}
-
-function lotActionText(status: AuctionState['status']): string {
-  if (status === 'RUNNING' || status === 'EXTENDED') return t('product.bidNow');
-  if (isUpcomingAuctionStatus(status)) return t('product.openDetail');
-  return t('product.viewResult');
 }
 
 function defaultRanking(state: AuctionState): RankingItem[] {

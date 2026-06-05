@@ -665,7 +665,7 @@ button {
   position: absolute;
   top: 58px;
   right: 0;
-  z-index: 81;
+  z-index: 91;
   width: clamp(166px, 44vw, 194px);
   color: #fff;
   background: rgba(0, 0, 0, 0.2);
@@ -1657,7 +1657,19 @@ button {
   --sheet-easing: linear;
   position: absolute;
   inset: 0;
-  z-index: 80;
+  z-index: 110;
+  display: flex;
+  align-items: flex-end;
+  background: transparent;
+}
+
+.sheet-layer {
+  --sheet-enter-duration-ms: 250ms;
+  --sheet-exit-duration-ms: 150ms;
+  --sheet-easing: linear;
+  position: absolute;
+  inset: 0;
+  z-index: 110;
   display: flex;
   align-items: flex-end;
   background: transparent;
@@ -1690,6 +1702,10 @@ button {
 }
 
 .sheet-backdrop.is-closing .bottom-sheet {
+  animation: sheet-slide-down var(--sheet-exit-duration-ms) var(--sheet-easing) forwards;
+}
+
+.sheet-layer.is-closing .bottom-sheet {
   animation: sheet-slide-down var(--sheet-exit-duration-ms) var(--sheet-easing) forwards;
 }
 
@@ -1763,15 +1779,16 @@ button {
 }
 
 .lot-row {
+  --lot-thumb-size: 92px;
   display: grid;
-  grid-template-columns: 32px 64px minmax(0, 1fr) auto;
+  grid-template-columns: var(--lot-thumb-size) minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   min-width: 0;
-  padding: 8px;
+  padding: 10px;
   background: #f8fafc;
   border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 8px;
+  border-radius: 12px;
 }
 
 .lot-row.is-active {
@@ -1779,22 +1796,75 @@ button {
   box-shadow: 0 10px 24px rgba(239, 68, 68, 0.12);
 }
 
+.lot-thumb-frame {
+  position: relative;
+  width: var(--lot-thumb-size);
+  height: var(--lot-thumb-size);
+  overflow: hidden;
+  background: #fff;
+  border-radius: 10px;
+}
+
 .lot-sequence {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
   display: grid;
   place-items: center;
-  align-self: stretch;
-  color: #475467;
-  font-size: 13px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  background: rgba(15, 23, 42, 0.5);
+  border-radius: 0 0 10px 0;
+}
+
+.lot-row .lot-action-button,
+.lot-result-card .lot-action-button {
+  min-width: 76px;
+  border-radius: 999px;
   font-weight: 700;
 }
 
-.lot-row img {
-  width: 64px;
-  height: 64px;
-  object-fit: contain;
-  padding: 8px;
+.lot-action-button.is-look {
+  --background-color: #fff;
+  --border-color: rgba(239, 68, 68, 0.18);
+  --text-color: #ef4444;
   background: #fff;
-  border-radius: 8px;
+  border-color: rgba(239, 68, 68, 0.18);
+  color: #ef4444;
+}
+
+.lot-action-button.is-disabled {
+  --background-color: #e5e7eb;
+  --border-color: #e5e7eb;
+  --text-color: #98a2b3;
+  background: #e5e7eb;
+  border-color: #e5e7eb;
+  color: #98a2b3;
+  opacity: 1;
+}
+
+.lot-action-button.is-disabled:disabled {
+  --background-color: #e5e7eb;
+  --border-color: #e5e7eb;
+  --text-color: #98a2b3;
+  background: #e5e7eb;
+  border-color: #e5e7eb;
+  color: #98a2b3;
+  opacity: 1;
+}
+
+.lot-thumb-frame > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  padding: 0;
+  background: #fff;
+  border-radius: 0;
 }
 
 .lot-row div {
@@ -1924,6 +1994,7 @@ button {
 
 .lot-gallery-slide {
   flex: 0 0 100%;
+  position: relative;
   display: grid;
   place-items: center;
   min-width: 0;
@@ -1932,9 +2003,13 @@ button {
 }
 
 .lot-gallery-slide img {
+  position: absolute;
+  top: 50%;
+  left: 0;
   width: 100%;
   height: auto;
-  object-position: center;
+  transform: translateY(-50%);
+  object-position: center center;
 }
 
 .lot-gallery-slide .visual-placeholder {
@@ -4278,9 +4353,9 @@ button {
 }
 
 .lot-row .visual-placeholder {
-  width: 64px;
-  height: 64px;
-  border-radius: 8px;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
 }
 
 .detail-hero .visual-placeholder {
@@ -4617,16 +4692,22 @@ button {
   }
 
   .lot-row {
-    grid-template-columns: 58px 1fr;
+    --lot-thumb-size: 82px;
+    grid-template-columns: var(--lot-thumb-size) minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 8px;
   }
 
-  .lot-row img {
-    width: 58px;
-    height: 58px;
+  .lot-sequence {
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 8px;
   }
 
   .lot-row .adm-button {
-    grid-column: 1 / -1;
+    min-width: 70px;
+    padding: 0 10px;
   }
 
   .price-grid {
