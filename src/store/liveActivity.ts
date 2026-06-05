@@ -7,9 +7,14 @@ const maxFootprints = 100;
 interface LiveActivityState {
   followedRooms: FollowedLiveRoom[];
   footprints: LiveRoomFootprint[];
+  roomLikeCounts: Record<string, number>;
+  commentDrafts: Record<string, string>;
   followRoom: (room: LiveRoom) => void;
   unfollowRoom: (roomId: string) => void;
   isFollowing: (roomId: string) => boolean;
+  likeRoom: (roomId: string) => void;
+  setCommentDraft: (roomId: string, draft: string) => void;
+  clearCommentDraft: (roomId: string) => void;
   recordFootprint: (room: LiveRoom) => void;
   getFootprintsPage: (offset: number, limit: number) => LiveRoomFootprint[];
   clearActivity: () => void;
@@ -20,6 +25,8 @@ export const useLiveActivityStore = create<LiveActivityState>()(
     (set, get) => ({
       followedRooms: [],
       footprints: [],
+      roomLikeCounts: {},
+      commentDrafts: {},
       followRoom: (room) => {
         const item = roomToFollowed(room);
         set((state) => ({
@@ -32,6 +39,29 @@ export const useLiveActivityStore = create<LiveActivityState>()(
         }));
       },
       isFollowing: (roomId) => get().followedRooms.some((followed) => followed.roomId === roomId),
+      likeRoom: (roomId) => {
+        set((state) => ({
+          roomLikeCounts: {
+            ...state.roomLikeCounts,
+            [roomId]: (state.roomLikeCounts[roomId] ?? 0) + 1
+          }
+        }));
+      },
+      setCommentDraft: (roomId, draft) => {
+        set((state) => ({
+          commentDrafts: {
+            ...state.commentDrafts,
+            [roomId]: draft
+          }
+        }));
+      },
+      clearCommentDraft: (roomId) => {
+        set((state) => {
+          const nextDrafts = { ...state.commentDrafts };
+          delete nextDrafts[roomId];
+          return { commentDrafts: nextDrafts };
+        });
+      },
       recordFootprint: (room) => {
         const item = roomToFootprint(room);
         set((state) => ({
@@ -39,14 +69,16 @@ export const useLiveActivityStore = create<LiveActivityState>()(
         }));
       },
       getFootprintsPage: (offset, limit) => get().footprints.slice(offset, offset + limit),
-      clearActivity: () => set({ followedRooms: [], footprints: [] })
+      clearActivity: () => set({ followedRooms: [], footprints: [], roomLikeCounts: {}, commentDrafts: {} })
     }),
     {
       name: 'aieas-user-live-activity',
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         followedRooms: state.followedRooms,
-        footprints: state.footprints
+        footprints: state.footprints,
+        roomLikeCounts: state.roomLikeCounts,
+        commentDrafts: state.commentDrafts
       })
     }
   )

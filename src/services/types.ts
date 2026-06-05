@@ -79,6 +79,7 @@ export interface LiveRoom {
   };
   onlineCount: number;
   watcherCount: number;
+  likeCount?: number;
   activeAuctionId?: string;
   liveSessionId?: number;
   startedAt?: string;
@@ -131,6 +132,7 @@ export interface LiveRoomLot {
   subtitle?: string;
   description?: string;
   imageUrl?: string;
+  imageUrls?: string[];
   status: AuctionStatus;
   startPrice: number;
   currentPrice: number;

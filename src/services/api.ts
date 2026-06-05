@@ -126,6 +126,7 @@ function normalizeLiveRoom(raw: Record<string, unknown>): LiveRoom {
     digitalHuman: normalizeDigitalHuman(raw.digitalHuman),
     onlineCount: Number(raw.onlineCount ?? 0),
     watcherCount: Number(raw.viewerTotal ?? 0),
+    likeCount: raw.likeCount === undefined ? undefined : Number(raw.likeCount),
     activeAuctionId: optionalNumberString(raw.activeAuctionId),
     liveSessionId: Number(raw.id),
     startedAt: optionalString(raw.openedAt) ?? optionalString(raw.scheduledStartTime),
@@ -138,6 +139,7 @@ function normalizeLot(raw: Record<string, unknown>): LiveRoomLot {
   const startPrice = Number(raw.startPrice ?? 0);
   const currentPrice = Number(raw.currentPrice ?? raw.dealPrice ?? startPrice);
   const imageUrls = Array.isArray(raw.imageUrls) ? raw.imageUrls : [];
+  const normalizedImageUrls = imageUrls.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
   const ruleSnapshot = normalizeRuleSnapshot(raw);
   return {
     id: auctionId,
@@ -148,7 +150,8 @@ function normalizeLot(raw: Record<string, unknown>): LiveRoomLot {
     title: String(raw.title),
     subtitle: optionalString(raw.brand),
     description: optionalString(raw.description),
-    imageUrl: optionalString(raw.imageUrl) ?? optionalString(raw.coverUrl) ?? imageUrls.find((item): item is string => typeof item === 'string'),
+    imageUrl: optionalString(raw.imageUrl) ?? optionalString(raw.coverUrl) ?? normalizedImageUrls[0],
+    imageUrls: normalizedImageUrls.length ? normalizedImageUrls.slice(0, 5) : undefined,
     status: String(raw.status) as LiveRoomLot['status'],
     startPrice,
     currentPrice,

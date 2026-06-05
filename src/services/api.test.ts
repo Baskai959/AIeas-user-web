@@ -194,6 +194,17 @@ describe('ApiClient', () => {
     expect(lots.items.some((lot) => lot.status === 'RUNNING')).toBe(true);
   });
 
+  it('provides five-image galleries for selected local demo lots', async () => {
+    const api = new DemoApiClient(vi.fn());
+
+    const lots = await api.listLiveRoomLots('room_1001');
+    const galleryLots = lots.items.filter((lot) => lot.imageUrls?.length === 5);
+
+    expect(galleryLots.length).toBeGreaterThanOrEqual(2);
+    expect(galleryLots.every((lot) => lot.imageUrl === lot.imageUrls?.[0])).toBe(true);
+    expect(galleryLots.flatMap((lot) => lot.imageUrls ?? []).every((url) => url.startsWith('/gallery/'))).toBe(true);
+  });
+
   it('filters and sorts local demo search data for the redesigned H5 UI', async () => {
     const api = new DemoApiClient(vi.fn());
 

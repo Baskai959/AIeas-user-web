@@ -12,6 +12,11 @@ import { useProfileStore } from './store/profile';
 import { useSessionStore } from './store/session';
 
 const now = Date.now();
+const detailEnrollAndPayText = '报名并支付保证金';
+const detailWaitingText = '等待开拍';
+const detailViewOrderText = '查看订单';
+const detailExpandRankingText = '展开全部';
+const detailCollapseRankingText = '收起';
 
 const api = {
   login: vi.fn(async () => ({
@@ -30,6 +35,7 @@ const api = {
         videoSource: 'recorded',
         onlineCount: 328,
         watcherCount: 1208,
+        likeCount: 0,
         activeAuctionId: 'auc_2001',
         videoUrl: '/media/live-room-demo.mp4'
       }
@@ -46,6 +52,7 @@ const api = {
     videoSource: 'recorded',
     onlineCount: 328,
     watcherCount: 1208,
+    likeCount: 0,
     activeAuctionId: 'auc_2001',
     videoUrl: '/media/live-room-demo.mp4'
   })),
@@ -59,6 +66,8 @@ const api = {
         categoryId: 'jewelry',
         title: '18K 金钻石项链',
         subtitle: 'GIA 证书 主播实拍',
+        description: '精选高净度钻石与 18K 金链身，适合直播间近景展示。',
+        imageUrls: ['/gallery/necklace-1.jpg', '/gallery/necklace-2.jpg', '/gallery/necklace-3.jpg'],
         status: 'RUNNING',
         startPrice: 0,
         currentPrice: 150100,
@@ -76,14 +85,29 @@ const api = {
         merchantId: 'merchant_01',
         categoryId: 'jewelry',
         title: '翡翠冰种吊坠',
+        description: '冰种翡翠吊坠，适合收藏和日常佩戴。',
         status: 'READY',
         startPrice: 0,
         currentPrice: 0,
         endTsMs: now + 420_000,
         ruleSnapshot: { incrementRule: { type: 'fixed', amount: 200, maxBidSteps: 10 } }
-      }
+      },
+      ...Array.from({ length: 8 }, (_, index) => ({
+        id: `lot_extra_${index + 3}`,
+        auctionId: `auc_extra_${index + 3}`,
+        roomId: 'room_1001',
+        merchantId: 'merchant_01',
+        categoryId: index % 2 === 0 ? 'jewelry' : 'craft',
+        title: `Demo lot ${index + 3}`,
+        description: `Demo product intro ${index + 3}`,
+        status: 'READY' as const,
+        startPrice: 0,
+        currentPrice: 0,
+        endTsMs: now + (index + 8) * 60_000,
+        ruleSnapshot: { incrementRule: { type: 'fixed' as const, amount: 100, maxBidSteps: 10 } }
+      }))
     ],
-    total: 2,
+    total: 10,
     page: 1,
     page_size: 20
   })),
@@ -472,15 +496,40 @@ describe('App flow', () => {
 
     await user.click(screen.getByRole('button', { name: getMessage('discover.enterLive') }));
     expect(await screen.findByText('云上珠宝')).toBeInTheDocument();
-    expect(screen.queryByText(getMessage('live.shopScore'))).not.toBeInTheDocument();
+    const liveShop = screen.getByText('云上珠宝').closest('.live-shop');
+    expect(liveShop).not.toBeNull();
+    expect(within(liveShop as HTMLElement).getByText(getMessage('live.likes', undefined, { count: '0' }))).toBeInTheDocument();
+    expect(within(liveShop as HTMLElement).getByRole('button', { name: `+${getMessage('live.follow')}` })).toHaveClass('live-follow-pill');
+    const headerWatchers = screen.getByLabelText(getMessage('live.statsOnline', undefined, { count: '1208' }));
+    expect(headerWatchers).toHaveClass('live-header-watchers');
+    expect(headerWatchers.querySelector('svg')).toBeInTheDocument();
+    expect(document.querySelector('.live-header-bidders')).not.toBeInTheDocument();
     expect(screen.getByTestId('live-room-video')).toHaveAttribute('src', '/media/live-room-demo.mp4');
     expect(window.location.pathname).toBe('/live/room_1001');
     expect(window.location.search).toBe('?from=home');
 
-    await user.click(screen.getByTestId('live-room-close'));
+    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
     expect(await screen.findByText('珠宝严选直播间')).toBeInTheDocument();
     expect(window.location.pathname).toBe('/');
     expect(window.location.search).toBe('?focusRoomId=room_1001');
+  });
+
+  it('renders a complete mobile login screen and submits with demo credentials', async () => {
+    renderApp();
+    const user = userEvent.setup();
+
+    expect(screen.getByText(getMessage('login.liveBadge'))).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: getMessage('login.title') })).toBeInTheDocument();
+    expect(screen.getByText(getMessage('login.featureRealtime'))).toBeInTheDocument();
+    expect(screen.getByText(getMessage('login.featureBid'))).toBeInTheDocument();
+    expect(screen.getByLabelText(getMessage('login.account'))).toHaveValue('buyer001');
+    expect(screen.getByLabelText(getMessage('login.password'))).toHaveValue('Passw0rd!');
+    expect(screen.getByText(getMessage('login.demoAccount'))).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+
+    expect(await screen.findByTestId('discover-feed')).toBeInTheDocument();
+    expect(api.login).toHaveBeenCalledWith({ account: 'buyer001', password: 'Passw0rd!', role: 'buyer' });
   });
 
   it('continues a recorded preview video from its current position after entering the live room', async () => {
@@ -500,6 +549,10 @@ describe('App flow', () => {
     expect(liveVideo).toHaveAttribute('src', '/media/live-room-demo.mp4');
     expect(window.location.pathname).toBe('/live/room_1001');
     expect(window.location.search).toBe('?from=home');
+
+    liveVideo.currentTime = 26;
+    fireEvent.canPlay(liveVideo);
+    expect(liveVideo.currentTime).toBeCloseTo(26, 1);
   });
 
   it('does not apply preview video progress when entering the live room from a non-preview route', async () => {
@@ -808,6 +861,10 @@ describe('App flow', () => {
     expect(idleVideo).not.toBeNull();
     await waitFor(() => expect(idleVideo!.currentTime).toBeCloseTo(9.5, 1));
     expect(idleVideo).toHaveAttribute('src', '/media/AI_Presenter_Silent.mp4');
+
+    idleVideo!.currentTime = 15;
+    fireEvent.canPlay(idleVideo!);
+    expect(idleVideo!.currentTime).toBeCloseTo(15, 1);
   });
 
   it('uses the discover tab as a lot list and opens a running lot directly in the live room', async () => {
@@ -825,26 +882,48 @@ describe('App flow', () => {
     expect(await screen.findByText('云上珠宝')).toBeInTheDocument();
     expect(await screen.findByRole('dialog', { name: getMessage('product.detail') })).toBeInTheDocument();
 
-    await user.click(screen.getByTestId('live-room-close'));
+    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
     expect(await screen.findByText(getMessage('discoverLots.title'))).toBeInTheDocument();
     expect(window.location.pathname).toBe('/discover');
   });
 
-  it('sends, appends, and toggles live-room comments', async () => {
+  it('sends, drafts, likes, and toggles live-room comments', async () => {
     seedSession();
     window.history.pushState(null, '', '/live/room_1001');
     renderApp();
     const user = userEvent.setup();
 
-    const input = await screen.findByLabelText(getMessage('live.commentInput'));
+    const inputTrigger = await screen.findByRole('button', { name: getMessage('live.commentInput') });
     expect(screen.queryByText('主播正在讲解细节')).not.toBeInTheDocument();
     expect(screen.queryByText(getMessage('live.chat.bid'))).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: getMessage('live.commentSend') })).not.toBeInTheDocument();
+    const likeButton = screen.getByRole('button', { name: getMessage('live.likeRoom') });
+    expect(likeButton).toBeInTheDocument();
+    expect(likeButton).not.toHaveClass('is-liked');
 
+    await user.click(likeButton);
+    expect(await screen.findByText(getMessage('live.likes', undefined, { count: '1' }))).toBeInTheDocument();
+    expect(likeButton).toHaveClass('is-liked');
+    expect(likeButton).toHaveAttribute('aria-pressed', 'true');
+    expect(likeButton.querySelector('.comment-like-burst')).toBeInTheDocument();
+    expect(likeButton.querySelectorAll('.comment-like-burst span')).toHaveLength(15);
+
+    await user.click(inputTrigger);
+    const input = await screen.findByRole('textbox', { name: getMessage('live.commentInput') });
     await user.click(screen.getByRole('button', { name: getMessage('live.commentSend') }));
     expect(screen.queryByText('出价很激烈')).not.toBeInTheDocument();
 
     await user.type(input, '出价很激烈{enter}');
     expect(await screen.findByText('出价很激烈')).toBeInTheDocument();
+
+    await user.type(input, 'Draft kept locally');
+    expect(useLiveActivityStore.getState().commentDrafts.room_1001).toBe('Draft kept locally');
+    await user.click(screen.getByRole('button', { name: getMessage('live.commentCloseComposer') }));
+    expect(screen.queryByRole('textbox', { name: getMessage('live.commentInput') })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: getMessage('live.likedRoom') }).querySelector('.comment-like-burst')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: getMessage('live.commentInput') }));
+    expect(await screen.findByRole('textbox', { name: getMessage('live.commentInput') })).toHaveValue('Draft kept locally');
+    await user.click(screen.getByRole('button', { name: getMessage('live.commentCloseComposer') }));
 
     await user.click(screen.getByRole('button', { name: getMessage('live.commentHide') }));
     expect(screen.queryByLabelText(getMessage('live.commentInput'))).not.toBeInTheDocument();
@@ -852,7 +931,7 @@ describe('App flow', () => {
     expect(showButton.querySelector('img')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: getMessage('live.goodsEntry') })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: getMessage('live.commentShow') }));
-    expect(await screen.findByLabelText(getMessage('live.commentInput'))).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: getMessage('live.commentInput') })).toBeInTheDocument();
   });
 
   it('toggles live-room following and manages followed rooms from the following page', async () => {
@@ -862,11 +941,11 @@ describe('App flow', () => {
     await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
     await user.click(await screen.findByRole('button', { name: getMessage('discover.enterLive') }));
 
-    await user.click(await screen.findByRole('button', { name: getMessage('live.follow') }));
+    await user.click(await screen.findByRole('button', { name: `+${getMessage('live.follow')}` }));
     expect(await screen.findByRole('button', { name: getMessage('live.followed') })).toBeInTheDocument();
     expect(useLiveActivityStore.getState().followedRooms).toHaveLength(1);
 
-    await user.click(screen.getByTestId('live-room-close'));
+    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
     await user.click(screen.getByRole('button', { name: getMessage('profile.following') }));
 
@@ -889,7 +968,7 @@ describe('App flow', () => {
     await screen.findByText('云上珠宝');
     expect(useLiveActivityStore.getState().footprints).toHaveLength(1);
 
-    await user.click(screen.getByTestId('live-room-close'));
+    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
     await user.click(screen.getByRole('button', { name: getMessage('profile.footprints') }));
 
@@ -965,6 +1044,86 @@ describe('App flow', () => {
     await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
     expect(await screen.findByRole('button', { name: getMessage('nav.home') })).toBeInTheDocument();
     expect(usePreferencesStore.getState().locale).toBe('zh-CN');
+  });
+
+  it('logs out from settings and keeps local browsing data when requested', async () => {
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await waitFor(() => expect(useSessionStore.getState().accessToken).toBe('jwt'));
+    useLiveActivityStore.getState().followRoom({
+      id: 'room_keep',
+      title: '保留直播间',
+      merchantName: '云上珠宝',
+      status: 'LIVE',
+      videoSource: 'recorded',
+      onlineCount: 1,
+      watcherCount: 1
+    });
+    useLiveActivityStore.getState().recordFootprint({
+      id: 'room_keep',
+      title: '保留直播间',
+      merchantName: '云上珠宝',
+      status: 'LIVE',
+      videoSource: 'recorded',
+      onlineCount: 1,
+      watcherCount: 1
+    });
+
+    await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
+    await user.click(screen.getByRole('button', { name: getMessage('settings.title') }));
+    await user.click(await screen.findByRole('button', { name: getMessage('settings.logout') }));
+
+    const dialog = await screen.findByRole('dialog', { name: getMessage('settings.logoutTitle') });
+    await user.click(within(dialog).getByRole('button', { name: getMessage('settings.logoutKeepData') }));
+
+    expect(await screen.findByRole('heading', { name: getMessage('login.title') })).toBeInTheDocument();
+    expect(useSessionStore.getState().accessToken).toBe('');
+    expect(useLiveActivityStore.getState().followedRooms).toHaveLength(1);
+    expect(useLiveActivityStore.getState().footprints).toHaveLength(1);
+  });
+
+  it('logs out from settings and clears local browsing data when requested', async () => {
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await waitFor(() => expect(useSessionStore.getState().accessToken).toBe('jwt'));
+    useLiveActivityStore.getState().followRoom({
+      id: 'room_clear',
+      title: '清理直播间',
+      merchantName: '云上珠宝',
+      status: 'LIVE',
+      videoSource: 'recorded',
+      onlineCount: 1,
+      watcherCount: 1
+    });
+    useLiveActivityStore.getState().recordFootprint({
+      id: 'room_clear',
+      title: '清理直播间',
+      merchantName: '云上珠宝',
+      status: 'LIVE',
+      videoSource: 'recorded',
+      onlineCount: 1,
+      watcherCount: 1
+    });
+    useLiveActivityStore.getState().likeRoom('room_clear');
+    useLiveActivityStore.getState().setCommentDraft('room_clear', 'draft');
+
+    await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
+    await user.click(screen.getByRole('button', { name: getMessage('settings.title') }));
+    await user.click(await screen.findByRole('button', { name: getMessage('settings.logout') }));
+
+    const dialog = await screen.findByRole('dialog', { name: getMessage('settings.logoutTitle') });
+    await user.click(within(dialog).getByRole('button', { name: getMessage('settings.logoutClearData') }));
+
+    expect(await screen.findByRole('heading', { name: getMessage('login.title') })).toBeInTheDocument();
+    expect(useSessionStore.getState().accessToken).toBe('');
+    expect(useLiveActivityStore.getState().followedRooms).toHaveLength(0);
+    expect(useLiveActivityStore.getState().footprints).toHaveLength(0);
+    expect(useLiveActivityStore.getState().roomLikeCounts).toEqual({});
+    expect(useLiveActivityStore.getState().commentDrafts).toEqual({});
   });
 
   it('opens the payment page from a pending-pay auction record', async () => {
@@ -1047,9 +1206,12 @@ describe('App flow', () => {
     expect(await screen.findByRole('dialog', { name: getMessage('product.detail') })).toBeInTheDocument();
 
     const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
-    await user.click(within(detailDialog).getByRole('button', { name: getMessage('auction.enroll') }));
-    expect(await within(detailDialog).findByRole('button', { name: getMessage('auction.enrolled') })).toBeInTheDocument();
+    await user.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+    expect(await within(detailDialog).findByRole('button', { name: getMessage('product.bidNow') })).toBeInTheDocument();
     await user.click(within(detailDialog).getByRole('button', { name: getMessage('common.close') }));
+    const stillOpenDrawer = screen.getByRole('dialog', { name: getMessage('live.goodsList') });
+    expect(stillOpenDrawer).toBeInTheDocument();
+    await user.click(within(stillOpenDrawer).getByRole('button', { name: getMessage('common.close') }));
     await user.click(await screen.findByRole('button', { name: getMessage('auction.quickBid') }));
 
     const bidDialog = await screen.findByRole('dialog', { name: getMessage('bid.confirmTitle') });
@@ -1145,6 +1307,299 @@ describe('App flow', () => {
     expect(rows[1]).toHaveAttribute('data-original-index', '1');
     expect(within(rows[1]).getByText('#1')).toBeInTheDocument();
     expect(within(rows[1]).getByText('Upcoming first lot')).toBeInTheDocument();
+
+    await user.click(rows[1]);
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    expect(detailDialog).toHaveClass('detail-sheet');
+    expect(within(detailDialog).getByRole('button', { name: detailWaitingText })).toBeDisabled();
+    expect(screen.getByRole('dialog', { name: getMessage('live.goodsList') })).toBeInTheDocument();
+
+    await user.click(within(detailDialog).getByRole('button', { name: getMessage('common.close') }));
+    expect(screen.getByRole('dialog', { name: getMessage('live.goodsList') })).toBeInTheDocument();
+  });
+
+  it('keeps row and action paths separate for an enrolled running lot in the lot list', async () => {
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: getMessage('live.goodsEntry') }));
+    const drawer = await screen.findByRole('dialog', { name: getMessage('live.goodsList') });
+    const runningRow = within(drawer).getAllByTestId('lot-row')[0];
+
+    await user.click(runningRow);
+    const enrollmentDetail = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    await user.click(within(enrollmentDetail).getByRole('button', { name: detailEnrollAndPayText }));
+    expect(await within(enrollmentDetail).findByRole('button', { name: getMessage('product.bidNow') })).toBeInTheDocument();
+    await user.click(within(enrollmentDetail).getByRole('button', { name: getMessage('common.close') }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: getMessage('product.detail') })).not.toBeInTheDocument());
+
+    const listDialog = screen.getByRole('dialog', { name: getMessage('live.goodsList') });
+    const enrolledRunningRow = within(listDialog).getAllByTestId('lot-row')[0];
+    await user.click(enrolledRunningRow);
+
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    const listBackdrop = listDialog.closest('.sheet-backdrop') as HTMLElement;
+    const detailBackdrop = detailDialog.closest('.sheet-backdrop') as HTMLElement;
+    expect(detailDialog).toHaveClass('detail-sheet');
+    expect(detailBackdrop.style.getPropertyValue('--sheet-enter-duration-ms')).toBe('250ms');
+    expect(Number(detailBackdrop.style.zIndex)).toBeGreaterThan(Number(listBackdrop.style.zIndex));
+    expect(screen.getByRole('dialog', { name: getMessage('live.goodsList') })).toBeInTheDocument();
+
+    await user.click(within(detailDialog).getByRole('button', { name: getMessage('common.close') }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: getMessage('product.detail') })).not.toBeInTheDocument());
+
+    const reopenedList = screen.getByRole('dialog', { name: getMessage('live.goodsList') });
+    const actionRow = within(reopenedList).getAllByTestId('lot-row')[0];
+    await user.click(within(actionRow).getByRole('button', { name: getMessage('product.bidNow') }));
+
+    const closingListBackdrop = document.querySelector('.sheet-backdrop.is-closing .lot-list-sheet')?.closest('.sheet-backdrop') as HTMLElement | null;
+    const bidDialog = await screen.findByRole('dialog', { name: getMessage('bid.confirmTitle') });
+    const bidBackdrop = bidDialog.closest('.sheet-backdrop') as HTMLElement;
+    expect(closingListBackdrop).not.toBeNull();
+    expect(closingListBackdrop?.style.getPropertyValue('--sheet-exit-duration-ms')).toBe('150ms');
+    expect(bidBackdrop.style.getPropertyValue('--sheet-enter-duration-ms')).toBe('150ms');
+    expect(bidBackdrop.style.getPropertyValue('--sheet-exit-duration-ms')).toBe('150ms');
+    expect(Number(bidBackdrop.style.zIndex)).toBeGreaterThan(Number(closingListBackdrop?.style.zIndex ?? 0));
+    expect(screen.queryByRole('dialog', { name: getMessage('product.detail') })).not.toBeInTheDocument();
+  });
+
+  it('shows paid winning lots as view-order actions and highlights the target order', async () => {
+    vi.mocked(api.getLiveRoom).mockResolvedValueOnce({
+      id: 'room_1001',
+      title: 'Paid order room',
+      merchantName: 'Order Merchant',
+      status: 'LIVE',
+      videoSource: 'recorded',
+      onlineCount: 328,
+      watcherCount: 1208,
+      videoUrl: '/media/live-room-demo.mp4'
+    });
+    vi.mocked(api.listLiveRoomLots).mockResolvedValueOnce({
+      items: [
+        {
+          id: 'lot_completed',
+          auctionId: 'auc_completed',
+          roomId: 'room_1001',
+          merchantId: 'merchant_01',
+          title: 'Completed Lot',
+          description: 'A paid settled lot description.',
+          status: 'SETTLED',
+          startPrice: 0,
+          currentPrice: 79000,
+          finalPrice: 79000,
+          endTsMs: now - 240_000,
+          ruleSnapshot: { incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 } }
+        }
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20
+    });
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: getMessage('live.goodsEntry') }));
+    const drawer = await screen.findByRole('dialog', { name: getMessage('live.goodsList') });
+    await user.click(within(drawer).getByTestId('lot-row'));
+
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    const viewOrderButton = within(detailDialog).getByRole('button', { name: detailViewOrderText });
+    await user.click(viewOrderButton);
+
+    await waitFor(() => expect(window.location.pathname).toBe('/orders'));
+    expect(window.location.search).toContain('tab=completed');
+    expect(window.location.search).toContain('orderId=ord_completed');
+    const highlightedOrder = await screen.findByTestId('order-record-ord_completed');
+    expect(highlightedOrder).toHaveClass('is-highlighted');
+  });
+
+  it('keeps the detail sheet chrome fixed and expands the ranking list on demand', async () => {
+    const sockets = installMockControlSocket();
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+    await screen.findByRole('button', { name: getMessage('auction.lookAround') });
+
+    await act(async () => {
+      emitLatestMockControl(sockets, {
+        type: 'ranking.updated',
+        payload: {
+          auctionId: 'auc_2001',
+          items: [
+            { rank: 1, bidderId: 'u2', nicknameMask: '用户**02', price: 150100, bidTsMs: now },
+            { rank: 2, bidderId: 'u3', nicknameMask: '用户**03', price: 150000, bidTsMs: now - 1000 },
+            { rank: 3, bidderId: 'u4', nicknameMask: '用户**04', price: 149900, bidTsMs: now - 2000 },
+            { rank: 4, bidderId: 'u5', nicknameMask: '用户**05', price: 149800, bidTsMs: now - 3000 }
+          ]
+        }
+      });
+    });
+
+    await user.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    expect(detailDialog).toHaveClass('detail-sheet');
+    expect(detailDialog.querySelector('.detail-sheet-header')).toBeInTheDocument();
+    expect(detailDialog.querySelector('.detail-scroll-body')).toBeInTheDocument();
+    expect(detailDialog.querySelector('.detail-sticky-actions')).toBeInTheDocument();
+
+    expect(within(detailDialog).getByText('用户**05')).toBeInTheDocument();
+    const toggle = within(detailDialog).getByRole('button', { name: detailExpandRankingText });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+    expect(await within(detailDialog).findByText('用户**05')).toBeInTheDocument();
+    expect(within(detailDialog).getByRole('button', { name: detailCollapseRankingText })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('limits the lot detail ranking to top eight and places the toggle below the list', async () => {
+    const sockets = installMockControlSocket();
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+    await screen.findByRole('button', { name: getMessage('auction.lookAround') });
+
+    await act(async () => {
+      emitLatestMockControl(sockets, {
+        type: 'ranking.updated',
+        payload: {
+          auctionId: 'auc_2001',
+          items: Array.from({ length: 9 }, (_, index) => ({
+            rank: index + 1,
+            bidderId: `u${index + 2}`,
+            nicknameMask: `排名用户${index + 1}`,
+            price: 150_100 - index * 100,
+            bidTsMs: now - index * 1000
+          }))
+        }
+      });
+    });
+
+    await user.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    const rankingPanel = detailDialog.querySelector('.detail-ranking-panel') as HTMLElement;
+    const detailTitle = detailDialog.querySelector('.detail-header-title') as HTMLElement;
+    expect(within(detailTitle).getByRole('heading', { name: getMessage('product.detail') })).toBeInTheDocument();
+    expect(within(detailTitle).getByText('竞拍中')).toBeInTheDocument();
+    expect(detailDialog.querySelector('.detail-status-strip')).toBeNull();
+    expect(rankingPanel).toBeInTheDocument();
+    expect(rankingPanel).not.toHaveClass('is-expanded');
+    expect(within(rankingPanel).getByText('排名用户4')).toBeInTheDocument();
+    expect(rankingPanel.querySelectorAll('.ranking-row')).toHaveLength(8);
+
+    const firstPrice = within(rankingPanel).getByText('¥1501.00');
+    expect(firstPrice).toHaveClass('detail-ranking-price');
+    expect(firstPrice).toHaveClass('is-first');
+    const toggle = within(rankingPanel).getByRole('button', { name: detailExpandRankingText });
+    expect(toggle.closest('.detail-ranking-actions')).not.toBeNull();
+
+    await user.click(toggle);
+    expect(await within(rankingPanel).findByText('排名用户8')).toBeInTheDocument();
+    expect(within(rankingPanel).queryByText('排名用户9')).not.toBeInTheDocument();
+    expect(rankingPanel.querySelectorAll('.ranking-row')).toHaveLength(8);
+    expect(rankingPanel).toHaveClass('is-expanded');
+    await user.click(within(rankingPanel).getByRole('button', { name: detailCollapseRankingText }));
+    expect(rankingPanel).not.toHaveClass('is-expanded');
+    expect(rankingPanel.querySelectorAll('.ranking-row')).toHaveLength(8);
+  });
+
+  it('shows a swipeable lot image gallery and full-screen image viewer', async () => {
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: getMessage('auction.lookAround') }));
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    const gallery = detailDialog.querySelector('.lot-gallery') as HTMLElement;
+    expect(gallery).toBeInTheDocument();
+    expect(within(gallery).getByText('1 / 3')).toBeInTheDocument();
+    expect(within(gallery).getAllByAltText('18K 金钻石项链 1')[0]).toHaveAttribute('src', '/gallery/necklace-1.jpg');
+
+    await user.click(within(gallery).getByRole('button', { name: getMessage('product.nextImage') }));
+    expect(within(gallery).getByText('2 / 3')).toBeInTheDocument();
+    expect(within(gallery).getByAltText('18K 金钻石项链 2')).toHaveAttribute('src', '/gallery/necklace-2.jpg');
+
+    await user.click(within(gallery).getByRole('button', { name: getMessage('product.openImageViewer') }));
+    const viewer = await screen.findByRole('dialog', { name: getMessage('product.imageViewer') });
+    expect(viewer.parentElement).toBe(document.body);
+    expect(within(viewer).getByText('2 / 3')).toBeInTheDocument();
+    await user.click(within(viewer).getByRole('button', { name: getMessage('product.nextImage') }));
+    await user.click(within(viewer).getByRole('button', { name: getMessage('product.nextImage') }));
+    expect(within(viewer).getByText('1 / 3')).toBeInTheDocument();
+    expect(within(viewer).getByAltText('18K 金钻石项链 1')).toHaveAttribute('src', '/gallery/necklace-1.jpg');
+
+    const viewerImage = within(viewer).getByRole('button', { name: getMessage('product.imageViewer') });
+    expect(within(viewer).queryByRole('button', { name: getMessage('product.resetImage') })).not.toBeInTheDocument();
+    fireEvent.wheel(viewerImage, { deltaY: -120 });
+    expect(await within(viewer).findByRole('button', { name: getMessage('product.resetImage') })).toBeInTheDocument();
+
+    await user.click(within(viewer).getByRole('button', { name: getMessage('product.resetImage') }));
+    expect(within(viewer).queryByRole('button', { name: getMessage('product.resetImage') })).not.toBeInTheDocument();
+  });
+
+  it('switches lot gallery images with touch-follow drag and a seamless clone loop', async () => {
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: getMessage('auction.lookAround') }));
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    const gallery = detailDialog.querySelector('.lot-gallery') as HTMLElement;
+    const mediaButton = within(gallery).getByRole('button', { name: getMessage('product.openImageViewer') });
+    const track = gallery.querySelector('.lot-gallery-track') as HTMLElement;
+    vi.spyOn(mediaButton, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 300,
+      height: 204,
+      top: 0,
+      left: 0,
+      right: 300,
+      bottom: 204,
+      toJSON: () => ({})
+    } as DOMRect);
+
+    firePointer(mediaButton, 'pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 220, clientY: 100 });
+    firePointer(mediaButton, 'pointermove', { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 100 });
+    await waitFor(() => expect(track).toHaveClass('is-dragging'));
+    expect(track.style.transform).toContain('-120px');
+    firePointer(mediaButton, 'pointerup', { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 100 });
+    expect(within(gallery).getByText('1 / 3')).toBeInTheDocument();
+
+    firePointer(mediaButton, 'pointerdown', { pointerId: 2, pointerType: 'touch', clientX: 220, clientY: 100 });
+    firePointer(mediaButton, 'pointermove', { pointerId: 2, pointerType: 'touch', clientX: 40, clientY: 100 });
+    firePointer(mediaButton, 'pointerup', { pointerId: 2, pointerType: 'touch', clientX: 40, clientY: 100 });
+    expect(within(gallery).getByText('2 / 3')).toBeInTheDocument();
+
+    await user.click(within(gallery).getByRole('button', { name: getMessage('product.nextImage') }));
+    expect(within(gallery).getByText('3 / 3')).toBeInTheDocument();
+    await user.click(within(gallery).getByRole('button', { name: getMessage('product.nextImage') }));
+    expect(within(gallery).getByText('1 / 3')).toBeInTheDocument();
+    expect(track.style.transform).toContain('-400%');
+    fireEvent.transitionEnd(track, { propertyName: 'transform' });
+    await waitFor(() => expect(track.style.transform).toContain('-100%'));
+  });
+
+  it('uses ten demo lots in the live room list and shows optional product descriptions instead of status copy', async () => {
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: getMessage('live.goodsEntry') }));
+    const drawer = await screen.findByRole('dialog', { name: getMessage('live.goodsList') });
+    const rows = within(drawer).getAllByTestId('lot-row');
+
+    expect(rows).toHaveLength(10);
+    expect(within(drawer).getByText('#10')).toBeInTheDocument();
+    expect(within(drawer).queryByText(/已落槌|待支付|宸茶惤妲|寰呮敮浠/)).not.toBeInTheDocument();
+    expect(rows.some((row) => within(row).queryByText(/精选|绮鹃€?/))).toBe(true);
   });
 
   it('shows a right-docked live ranking rail, appends the current user, and collapses it', async () => {
@@ -1712,7 +2167,7 @@ describe('App flow', () => {
       fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
       await flushApp();
       const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
-      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('auction.enroll') }));
+      fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
       await flushApp();
       fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('product.bidNow') }));
       await flushApp();
@@ -1745,7 +2200,7 @@ describe('App flow', () => {
       fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
       await flushApp();
       const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
-      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('auction.enroll') }));
+      fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
       await flushApp();
       fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('product.bidNow') }));
       await flushApp();

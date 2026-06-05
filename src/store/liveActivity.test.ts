@@ -71,4 +71,23 @@ describe('live activity store', () => {
     expect(useLiveActivityStore.getState().getFootprintsPage(0, 10)).toHaveLength(10);
     expect(useLiveActivityStore.getState().getFootprintsPage(10, 10)).toHaveLength(10);
   });
+
+  it('stores demo likes and comment drafts per live room', () => {
+    useLiveActivityStore.getState().likeRoom('room_1001');
+    useLiveActivityStore.getState().likeRoom('room_1001');
+    useLiveActivityStore.getState().likeRoom('room_1002');
+    useLiveActivityStore.getState().setCommentDraft('room_1001', 'Draft comment');
+    useLiveActivityStore.getState().setCommentDraft('room_1002', 'Other draft');
+
+    expect(useLiveActivityStore.getState().roomLikeCounts).toMatchObject({
+      room_1001: 2,
+      room_1002: 1
+    });
+    expect(useLiveActivityStore.getState().commentDrafts.room_1001).toBe('Draft comment');
+
+    useLiveActivityStore.getState().clearCommentDraft('room_1001');
+
+    expect(useLiveActivityStore.getState().commentDrafts.room_1001).toBeUndefined();
+    expect(useLiveActivityStore.getState().commentDrafts.room_1002).toBe('Other draft');
+  });
 });

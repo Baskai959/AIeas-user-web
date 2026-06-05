@@ -24,6 +24,7 @@ export interface ChatSendInput {
 }
 
 export type MessageHandler = (message: RealtimeMessage) => void;
+type NativeReconnectTimer = number | ReturnType<typeof setTimeout>;
 
 export interface RealtimeClient {
   connect(): void;
@@ -49,6 +50,15 @@ interface NativeOptions {
   baseUrl: string;
   roomId: string;
   lastSeq?: number;
+  storage?: Storage;
+  reconnect?: {
+    baseDelayMs?: number;
+    maxDelayMs?: number;
+    maxJitterMs?: number;
+    random?: () => number;
+    setTimeout?: (handler: () => void, timeoutMs: number) => NativeReconnectTimer;
+    clearTimeout?: (timer: NativeReconnectTimer) => void;
+  };
 }
 
 interface MockControlOptions {
@@ -56,10 +66,37 @@ interface MockControlOptions {
   roomId: string;
 }
 
-export function buildLiveSessionWsUrl(baseUrl: string, roomId: string, lastSeq?: number): string {
+export function buildLiveRoomWsUrl(baseUrl: string, roomId: string, lastSeq?: number): string {
   const base = baseUrl.replace(/\/$/, '');
   const query = lastSeq === undefined ? '' : `?lastSeq=${encodeURIComponent(String(lastSeq))}`;
-  return `${base}/ws/live-sessions/${encodeURIComponent(roomId)}${query}`;
+  return `${base}/ws/live-rooms/${encodeURIComponent(roomId)}${query}`;
+}
+
+export function realtimeLastSeqStorageKey(roomId: string): string {
+  return `live-room:${roomId}:lastSeq`;
+}
+
+export function nextNativeReconnectDelay(
+  retryCount: number,
+  random: () => number = Math.random,
+  baseDelayMs = 500,
+  maxDelayMs = 10_000,
+  maxJitterMs = 1_000
+): number {
+  const expDelay = Math.min(maxDelayMs, baseDelayMs * 2 ** retryCount);
+  const jitter = Math.floor(random() * Math.min(maxJitterMs, expDelay));
+  return expDelay + jitter;
+}
+
+function readStoredLastSeq(roomId: string, storage?: Storage): number {
+  if (!storage) return 0;
+  try {
+    const raw = storage.getItem(realtimeLastSeqStorageKey(roomId));
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  } catch {
+    return 0;
+  }
 }
 
 export function isFreshRealtimeMessage(message: Pick<RealtimeMessage, 'seq'>, lastSeq: number): boolean {
@@ -434,24 +471,32 @@ export class MockRealtimeClient implements RealtimeClient {
 export class NativeWebSocketClient implements RealtimeClient {
   private socket?: WebSocket;
   private handlers = new Set<MessageHandler>();
+  private lastSeq: number;
+  private retryCount = 0;
+  private manualClosed = true;
+  private reconnectTimer?: NativeReconnectTimer;
 
-  constructor(private readonly options: NativeOptions) {}
+  constructor(private readonly options: NativeOptions) {
+    this.lastSeq = Math.max(options.lastSeq ?? 0, readStoredLastSeq(options.roomId, options.storage));
+  }
 
   connect(): void {
-    this.socket = new WebSocket(buildLiveSessionWsUrl(this.options.baseUrl, this.options.roomId, this.options.lastSeq));
-    this.socket.addEventListener('message', (event) => {
-      const data = JSON.parse(String(event.data)) as RealtimeMessage;
-      this.handlers.forEach((handler) => handler(data));
-    });
+    this.manualClosed = false;
+    this.clearReconnectTimer();
+    this.openSocket();
   }
 
   disconnect(): void {
+    this.manualClosed = true;
+    this.clearReconnectTimer();
     this.socket?.close();
+    this.socket = undefined;
     this.handlers.clear();
   }
 
   send(message: RealtimeMessage): void {
-    this.socket?.send(JSON.stringify(message));
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+    this.socket.send(JSON.stringify(message));
   }
 
   onMessage(handler: MessageHandler): () => void {
@@ -459,6 +504,97 @@ export class NativeWebSocketClient implements RealtimeClient {
     return () => {
       this.handlers.delete(handler);
     };
+  }
+
+  private openSocket(): void {
+    if (this.manualClosed) return;
+    if (this.socket && (this.socket.readyState === WebSocket.CONNECTING || this.socket.readyState === WebSocket.OPEN)) return;
+
+    const socket = new WebSocket(
+      buildLiveRoomWsUrl(this.options.baseUrl, this.options.roomId, this.lastSeq > 0 ? this.lastSeq : undefined)
+    );
+    this.socket = socket;
+
+    socket.addEventListener('open', () => {
+      if (this.socket !== socket) return;
+      this.retryCount = 0;
+      this.clearReconnectTimer();
+    });
+
+    socket.addEventListener('message', (event) => {
+      if (this.socket !== socket) return;
+      this.handleMessage(event);
+    });
+
+    socket.addEventListener('error', () => {
+      if (this.socket !== socket) return;
+      socket.close();
+    });
+
+    socket.addEventListener('close', () => {
+      if (this.socket === socket) this.socket = undefined;
+      if (!this.manualClosed) this.scheduleReconnect();
+    });
+  }
+
+  private handleMessage(event: MessageEvent): void {
+    const message = JSON.parse(String(event.data)) as RealtimeMessage;
+    if (!this.acceptSeq(message)) return;
+    this.handlers.forEach((handler) => handler(message));
+
+    if (message.type !== 'gateway.draining') return;
+    const payload = message.payload as { retryAfterMs?: number } | undefined;
+    const retryAfterMs = Number(payload?.retryAfterMs ?? 0);
+    this.scheduleReconnect(Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? retryAfterMs : 0);
+    this.socket?.close();
+  }
+
+  private acceptSeq(message: RealtimeMessage): boolean {
+    if (typeof message.seq !== 'number' || message.seq <= 0) return true;
+    if (message.seq <= this.lastSeq) return false;
+    this.lastSeq = message.seq;
+    this.persistLastSeq();
+    return true;
+  }
+
+  private persistLastSeq(): void {
+    if (!this.options.storage) return;
+    try {
+      this.options.storage.setItem(realtimeLastSeqStorageKey(this.options.roomId), String(this.lastSeq));
+    } catch {
+      // Storage can fail in private modes. Keep the in-memory cursor for this session.
+    }
+  }
+
+  private scheduleReconnect(minDelayMs = 0): void {
+    if (this.manualClosed || this.reconnectTimer !== undefined) return;
+    const delay = Math.max(minDelayMs, this.nextReconnectDelay());
+    const setTimeoutFn =
+      this.options.reconnect?.setTimeout ?? ((handler: () => void, timeoutMs: number) => window.setTimeout(handler, timeoutMs));
+    this.reconnectTimer = setTimeoutFn(() => {
+      this.reconnectTimer = undefined;
+      this.openSocket();
+    }, delay);
+  }
+
+  private nextReconnectDelay(): number {
+    const delay = nextNativeReconnectDelay(
+      this.retryCount,
+      this.options.reconnect?.random ?? Math.random,
+      this.options.reconnect?.baseDelayMs,
+      this.options.reconnect?.maxDelayMs,
+      this.options.reconnect?.maxJitterMs
+    );
+    this.retryCount += 1;
+    return delay;
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer === undefined) return;
+    const clearTimeoutFn =
+      this.options.reconnect?.clearTimeout ?? ((timer: NativeReconnectTimer) => window.clearTimeout(timer as number));
+    clearTimeoutFn(this.reconnectTimer);
+    this.reconnectTimer = undefined;
   }
 }
 

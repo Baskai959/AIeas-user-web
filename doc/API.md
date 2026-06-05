@@ -597,7 +597,8 @@
 | `title` | string | 是 | 商品标题 |
 | `subtitle` | string | 否 | 商品副标题 |
 | `description` | string | 否 | 商品描述 |
-| `imageUrl` | string | 否 | 商品图片 |
+| `imageUrl` | string | 否 | 商品封面或单图兜底 |
+| `imageUrls` | string[] | 否 | 商品详情图集，建议返回 1-5 张 |
 | `status` | string | 是 | 拍卖状态 |
 | `startPrice` | integer | 是 | 起拍价，单位分 |
 | `currentPrice` | integer | 是 | 当前最高价，单位分 |

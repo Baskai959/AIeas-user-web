@@ -1,18 +1,22 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type TouchEvent as ReactTouchEvent, type TransitionEvent as ReactTransitionEvent, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type TouchEvent as ReactTouchEvent, type TransitionEvent as ReactTransitionEvent, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams, type Location, type NavigateFunction } from 'react-router-dom';
 import { Button, DotLoading, SafeArea, Tabs } from 'antd-mobile';
 import {
   ArrowLeft,
   Camera,
+  ChevronLeft,
   ChevronRight,
   Check,
   Gavel,
+  LogOut,
   MapPin,
   Minus,
   Package,
   Plus,
   Radio,
+  RotateCcw,
   Search,
   Settings,
   ShoppingBag,
@@ -27,6 +31,7 @@ import {
 } from 'lucide-react';
 import commentIconUrl from '../../Icon/comment.svg';
 import closeCommentIconUrl from '../../Icon/close_comment.svg';
+import likeIconUrl from '../../Icon/like.svg';
 import logoUrl from '../../logo.png';
 import { createTranslator, defaultLocale, type Locale, type MessageKey } from '../i18n/messages';
 import { classifyAuctionRecord, groupAuctionRecords, myAuctionTabKeys, previewLotStatusKind, selectCurrentRunningLot, selectPreviewLot } from '../services/auctionViews';
@@ -86,8 +91,13 @@ let t = createTranslator(activeLocale);
 const liveVideoFallback = '/media/live-room-demo.mp4';
 const avatarScaleMin = 1;
 const avatarScaleMax = 2.6;
+const imageViewerScaleMin = 1;
+const imageViewerScaleMax = 4;
+const imageViewerOffsetMax = 720;
+const imageViewerSwipeThreshold = 42;
 
 type PointerPoint = { x: number; y: number };
+type ImageViewerTransform = { scale: number; offsetX: number; offsetY: number };
 type SearchTab = 'lots' | 'liveRooms' | 'merchants';
 
 type PreviewMediaSnapshot = {
@@ -120,6 +130,7 @@ type FeedDragState = {
 const feedTapMaxDurationMs = 250;
 const feedTapMaxMovePx = 8;
 const previewMediaSnapshotMaxAgeMs = 30_000;
+const likeBurstParticles = Array.from({ length: 15 }, (_, index) => index);
 
 function feedTrackTransform(trackIndex: number, offsetPx = 0): string {
   const percent = trackIndex === 0 ? 0 : -trackIndex * 100;
@@ -178,8 +189,28 @@ function livePath(roomId: string, lotId?: string, from?: MainTab): string {
   return query ? `/live/${roomId}?${query}` : `/live/${roomId}`;
 }
 
-function ordersPath(tab: MyAuctionTabKey): string {
-  return `/orders?${new URLSearchParams({ tab }).toString()}`;
+function ordersPath(tab: MyAuctionTabKey, orderId?: string): string {
+  const params = new URLSearchParams({ tab });
+  if (orderId) params.set('orderId', orderId);
+  return `/orders?${params.toString()}`;
+}
+
+function isPendingPayOrder(order?: Order): boolean {
+  if (!order) return false;
+  return order.payStatus === 'UNPAID' || order.status === 'PENDING_PAY';
+}
+
+function isPaidOrder(order?: Order): boolean {
+  if (!order) return false;
+  return order.payStatus === 'PAID' || order.status === 'PAID';
+}
+
+function orderTabFromOrder(order?: Order): MyAuctionTabKey {
+  if (isPendingPayOrder(order)) return 'pendingPay';
+  if (isPaidOrder(order) && order?.fulfillmentStatus === 'UNSHIPPED') return 'pendingShipment';
+  if (isPaidOrder(order) && order?.fulfillmentStatus === 'SHIPPED') return 'pendingReceipt';
+  if (isPaidOrder(order) && order?.fulfillmentStatus === 'RECEIVED') return 'completed';
+  return 'all';
 }
 
 function transitionRouteUpdate(update: () => void): void {
@@ -393,6 +424,7 @@ function LiveRoutePage({ apiClient }: { apiClient: ApiClient }) {
       userId={user?.id ?? 'u1'}
       onBack={() => navigateWithTransition(navigate, returnTo)}
       onPay={(orderId) => navigateWithTransition(navigate, `/pay/${orderId}`)}
+      onOpenOrder={(orderId, tab) => navigateWithTransition(navigate, ordersPath(tab, orderId))}
     />
   );
 }
@@ -412,13 +444,23 @@ function PayRoutePage({ apiClient }: { apiClient: ApiClient }) {
 function SettingsRoutePage({ apiClient }: { apiClient: ApiClient }) {
   const user = useSessionStore((state) => state.user);
   const updateUser = useSessionStore((state) => state.updateUser);
+  const clearSession = useSessionStore((state) => state.clearSession);
+  const clearActivity = useLiveActivityStore((state) => state.clearActivity);
   const navigate = useNavigate();
+  const logout = ({ keepBrowsingData }: { keepBrowsingData: boolean }) => {
+    if (!keepBrowsingData) {
+      clearActivity();
+    }
+    clearSession();
+    navigateWithTransition(navigate, '/login', { replace: true });
+  };
   return (
     <SettingsPage
       apiClient={apiClient}
       sessionUser={user}
       onBack={() => navigateWithTransition(navigate, '/me')}
       onProfileUpdated={(profile) => updateUser({ nickname: profile.nickname, avatarUrl: profile.avatarUrl })}
+      onLogout={logout}
     />
   );
 }
@@ -426,10 +468,12 @@ function SettingsRoutePage({ apiClient }: { apiClient: ApiClient }) {
 function OrdersRoutePage({ apiClient }: { apiClient: ApiClient }) {
   const [searchParams] = useSearchParams();
   const { navigate, openLot } = useAppNavigation();
+  const highlightedOrderId = searchParams.get('orderId') ?? undefined;
   return (
     <OrdersPage
       apiClient={apiClient}
       activeTab={parseMyAuctionTab(searchParams.get('tab'))}
+      highlightedOrderId={highlightedOrderId}
       onBack={() => navigateWithTransition(navigate, '/me')}
       onTabChange={(tab) => navigateWithTransition(navigate, ordersPath(tab))}
       onOpenLot={openLot}
@@ -460,28 +504,58 @@ function LoginPage({ apiClient, onLoggedIn }: { apiClient: ApiClient; onLoggedIn
     mutationFn: () => apiClient.login({ account, password, role: 'buyer' }),
     onSuccess: onLoggedIn
   });
+  const submitLogin = (event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    if (!account.trim() || !password.trim() || login.isPending) return;
+    login.mutate();
+  };
 
   return (
     <section className="login-page">
-      <div className="login-hero">
-        <img src={logoUrl} alt={t('app.title')} />
-        <h1>{t('app.title')}</h1>
+      <div className="login-hero" aria-label={t('app.title')}>
+        <div className="login-brand-mark">
+          <img src={logoUrl} alt={t('app.title')} />
+          <span>{t('login.liveBadge')}</span>
+        </div>
+        <h1>{t('login.title')}</h1>
         <p>{t('app.subtitle')}</p>
+        <div className="login-feature-row" aria-label={t('login.demoHint')}>
+          <span><Radio size={14} /> {t('login.featureRealtime')}</span>
+          <span><Gavel size={14} /> {t('login.featureBid')}</span>
+          <span><WalletCards size={14} /> {t('login.featurePayment')}</span>
+        </div>
       </div>
-      <form className="auth-form">
-        <label className="field-label" htmlFor="login-account">
-          {t('login.account')}
-        </label>
-        <input id="login-account" value={account} onChange={(event) => setAccount(event.currentTarget.value)} />
-        <label className="field-label" htmlFor="login-password">
-          {t('login.password')}
-        </label>
-        <input id="login-password" type="password" value={password} onChange={(event) => setPassword(event.currentTarget.value)} />
+      <form className="auth-form login-card" onSubmit={submitLogin}>
+        <div className="login-card-header">
+          <div>
+            <p className="eyebrow">{t('common.mock')}</p>
+            <h2>{t('login.cardTitle')}</h2>
+          </div>
+          <span>{t('login.demoAccount')}</span>
+        </div>
+        <label className="field-label" htmlFor="login-account">{t('login.account')}</label>
+        <input
+          id="login-account"
+          value={account}
+          autoComplete="username"
+          placeholder={t('login.accountPlaceholder')}
+          onChange={(event) => setAccount(event.currentTarget.value)}
+        />
+        <label className="field-label" htmlFor="login-password">{t('login.password')}</label>
+        <input
+          id="login-password"
+          type="password"
+          value={password}
+          autoComplete="current-password"
+          placeholder={t('login.passwordPlaceholder')}
+          onChange={(event) => setPassword(event.currentTarget.value)}
+        />
+        {login.isError ? <p className="login-error" role="alert">{t('login.error')}</p> : null}
+        <Button block color="primary" size="large" type="submit" loading={login.isPending} disabled={!account.trim() || !password.trim()}>
+          {t('login.submit')}
+        </Button>
+        <p className="helper-text">{t('login.demoHint')}</p>
       </form>
-      <Button block color="primary" size="large" loading={login.isPending} onClick={() => login.mutate()}>
-        {t('login.submit')}
-      </Button>
-      <p className="helper-text">{t('login.demoHint')}</p>
     </section>
   );
 }
@@ -925,18 +999,24 @@ function isPreviewMediaSnapshotApplicable(snapshot: PreviewMediaSnapshot | undef
   return Date.now() - snapshot.capturedAtMs <= previewMediaSnapshotMaxAgeMs;
 }
 
-function applyInitialMediaPosition(video: HTMLVideoElement | null | undefined, snapshot?: PreviewMediaSnapshot): void {
-  if (!video || !snapshot) return;
+function previewMediaSnapshotKey(snapshot: PreviewMediaSnapshot | undefined): string | undefined {
+  if (!snapshot) return undefined;
+  return `${snapshot.roomId}|${snapshot.sourceUrl}|${snapshot.capturedAtMs}|${snapshot.currentTime}`;
+}
+
+function applyInitialMediaPosition(video: HTMLVideoElement | null | undefined, snapshot?: PreviewMediaSnapshot): boolean {
+  if (!video || !snapshot) return false;
   const currentTime = Number(snapshot.currentTime);
-  if (!Number.isFinite(currentTime) || currentTime < 0) return;
+  if (!Number.isFinite(currentTime) || currentTime < 0) return false;
   const duration = Number(video.duration);
-  if (Number.isFinite(duration) && duration > 0 && currentTime > duration) return;
+  if (Number.isFinite(duration) && duration > 0 && currentTime > duration) return false;
   try {
     video.currentTime = currentTime;
   } catch {
-    return;
+    return false;
   }
   void playVideo(video);
+  return true;
 }
 
 function SearchPage({
@@ -1253,12 +1333,14 @@ function SettingsPage({
   apiClient,
   sessionUser,
   onBack,
-  onProfileUpdated
+  onProfileUpdated,
+  onLogout
 }: {
   apiClient: ApiClient;
   sessionUser?: LoginResult['user'];
   onBack: () => void;
   onProfileUpdated: (profile: UserProfile) => void;
+  onLogout: (options: { keepBrowsingData: boolean }) => void;
 }) {
   const profileOverride = useProfileStore((state) => state.profileOverride);
   const setProfileOverride = useProfileStore((state) => state.setProfileOverride);
@@ -1269,6 +1351,7 @@ function SettingsPage({
   const profile = mergeProfile(baseProfile, profileOverride);
   const [nickname, setNickname] = useState(profile.nickname);
   const [languageNotice, setLanguageNotice] = useState('');
+  const [showLogoutDialog, setShowLogoutDialog] = useState(false);
 
   useEffect(() => {
     setNickname(profile.nickname);
@@ -1319,6 +1402,34 @@ function SettingsPage({
         </div>
         {languageNotice ? <p className="settings-hint" aria-live="polite">{languageNotice}</p> : null}
       </section>
+      <section className="settings-card settings-logout-card">
+        <div>
+          <h2>{t('settings.account')}</h2>
+          <p>{t('settings.logoutDesc')}</p>
+        </div>
+        <Button block color="danger" onClick={() => setShowLogoutDialog(true)}>
+          <LogOut size={17} /> {t('settings.logout')}
+        </Button>
+      </section>
+      {showLogoutDialog ? (
+        <div className="logout-choice-backdrop" role="dialog" aria-modal="true" aria-label={t('settings.logoutTitle')} onClick={() => setShowLogoutDialog(false)}>
+          <section className="logout-choice-panel" onClick={(event) => event.stopPropagation()}>
+            <h2>{t('settings.logoutTitle')}</h2>
+            <p>{t('settings.logoutMessage')}</p>
+            <div className="logout-choice-actions">
+              <Button block color="primary" onClick={() => onLogout({ keepBrowsingData: true })}>
+                {t('settings.logoutKeepData')}
+              </Button>
+              <Button block color="danger" fill="outline" onClick={() => onLogout({ keepBrowsingData: false })}>
+                {t('settings.logoutClearData')}
+              </Button>
+              <button className="logout-cancel-button" type="button" onClick={() => setShowLogoutDialog(false)}>
+                {t('settings.logoutCancel')}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1326,6 +1437,7 @@ function SettingsPage({
 function OrdersPage({
   apiClient,
   activeTab,
+  highlightedOrderId,
   onBack,
   onTabChange,
   onOpenLot,
@@ -1333,6 +1445,7 @@ function OrdersPage({
 }: {
   apiClient: ApiClient;
   activeTab: MyAuctionTabKey;
+  highlightedOrderId?: string;
   onBack: () => void;
   onTabChange: (tab: MyAuctionTabKey) => void;
   onOpenLot: (lot: LiveRoomLot) => void;
@@ -1340,6 +1453,15 @@ function OrdersPage({
 }) {
   const recordsQuery = useQuery({ queryKey: ['my-auction-records'], queryFn: () => apiClient.listMyAuctionRecords(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 } });
   const groupedRecords = groupAuctionRecords(recordsQuery.data?.items ?? []);
+
+  useEffect(() => {
+    if (!highlightedOrderId) return undefined;
+    const timer = window.setTimeout(() => {
+      document.querySelector(`[data-order-id="${highlightedOrderId}"]`)?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, highlightedOrderId, groupedRecords]);
+
   return (
     <section className="orders-page">
       <header className="simple-page-header">
@@ -1365,6 +1487,7 @@ function OrdersPage({
             <AuctionRecordCard
               key={record.id}
               record={record}
+              highlighted={Boolean(record.order?.id && record.order.id === highlightedOrderId)}
               onOpen={() => onOpenLot(record.lot)}
               onPay={record.order ? () => onOpenPay(record.order?.id ?? '', record.lot.auctionId) : undefined}
             />
@@ -1661,6 +1784,385 @@ function VisualPlaceholder({ title, imageUrl, tone = 'red' }: { title: string; i
   );
 }
 
+function lotImageUrls(lot: LiveRoomLot): string[] {
+  const urls = [...(lot.imageUrls ?? []), lot.imageUrl].filter(
+    (item): item is string => typeof item === 'string' && item.trim().length > 0
+  );
+  return Array.from(new Set(urls)).slice(0, 5);
+}
+
+function LotImageGallery({ lot }: { lot: LiveRoomLot }) {
+  const images = lotImageUrls(lot);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [galleryTrackIndex, setGalleryTrackIndex] = useState(images.length > 1 ? 1 : 0);
+  const [galleryDragOffsetPx, setGalleryDragOffsetPx] = useState(0);
+  const [galleryDragging, setGalleryDragging] = useState(false);
+  const [galleryResetting, setGalleryResetting] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerTransform, setViewerTransform] = useState<ImageViewerTransform>({ scale: 1, offsetX: 0, offsetY: 0 });
+  const [viewerGesturing, setViewerGesturing] = useState(false);
+  const suppressOpenRef = useRef(false);
+  const galleryGestureRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    width: number;
+    baseTrackIndex: number;
+  }>();
+  const galleryMediaRef = useRef<HTMLButtonElement>(null);
+  const galleryWindowListenersRef = useRef<{
+    move: (event: PointerEvent) => void;
+    end: (event: PointerEvent) => void;
+  }>();
+  const galleryRestoreRafRef = useRef<number>();
+  const viewerTransformRef = useRef<ImageViewerTransform>({ scale: 1, offsetX: 0, offsetY: 0 });
+  const viewerPointersRef = useRef<Map<number, PointerPoint>>(new Map());
+  const viewerDragRef = useRef<{ pointerId: number; x: number; y: number; offsetX: number; offsetY: number }>();
+  const viewerPinchRef = useRef<{ distance: number; centerX: number; centerY: number; scale: number; offsetX: number; offsetY: number }>();
+
+  const resetViewerTransform = useCallback(() => {
+    const next = { scale: 1, offsetX: 0, offsetY: 0 };
+    viewerTransformRef.current = next;
+    setViewerTransform(next);
+    viewerPointersRef.current.clear();
+    viewerDragRef.current = undefined;
+    viewerPinchRef.current = undefined;
+    setViewerGesturing(false);
+  }, []);
+  const updateViewerTransform = useCallback((updater: (current: ImageViewerTransform) => ImageViewerTransform) => {
+    setViewerTransform((current) => {
+      const next = updater(current);
+      viewerTransformRef.current = next;
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    setActiveIndex(0);
+    setGalleryTrackIndex(images.length > 1 ? 1 : 0);
+    setGalleryDragOffsetPx(0);
+    setGalleryDragging(false);
+    setGalleryResetting(false);
+    galleryGestureRef.current = undefined;
+    setViewerOpen(false);
+    resetViewerTransform();
+  }, [lot.id, images.length, resetViewerTransform]);
+
+  const removeGalleryWindowListeners = useCallback(() => {
+    const listeners = galleryWindowListenersRef.current;
+    if (!listeners) return;
+    window.removeEventListener('pointermove', listeners.move);
+    window.removeEventListener('pointerup', listeners.end);
+    window.removeEventListener('pointercancel', listeners.end);
+    galleryWindowListenersRef.current = undefined;
+  }, []);
+
+  useEffect(
+    () => () => {
+      removeGalleryWindowListeners();
+      if (galleryRestoreRafRef.current) {
+        cancelAnimationFrame(galleryRestoreRafRef.current);
+      }
+    },
+    [removeGalleryWindowListeners]
+  );
+
+  const imageCount = Math.max(images.length, 1);
+  const hasMultipleImages = images.length > 1;
+  const normalizedIndex = images.length ? ((activeIndex % images.length) + images.length) % images.length : 0;
+  const galleryItems = hasMultipleImages
+    ? [
+        { imageUrl: images[images.length - 1], imageIndex: images.length - 1, key: `clone-start-${images[images.length - 1]}` },
+        ...images.map((imageUrl, imageIndex) => ({ imageUrl, imageIndex, key: `image-${imageIndex}-${imageUrl}` })),
+        { imageUrl: images[0], imageIndex: 0, key: `clone-end-${images[0]}` }
+      ]
+    : images.map((imageUrl, imageIndex) => ({ imageUrl, imageIndex, key: `image-${imageIndex}-${imageUrl}` }));
+  const moveImage = (step: number) => {
+    if (imageCount <= 1) return;
+    resetViewerTransform();
+    setGalleryDragOffsetPx(0);
+    setGalleryDragging(false);
+    setGalleryResetting(false);
+    setGalleryTrackIndex(normalizedIndex + 1 + step);
+    setActiveIndex((value) => (value + step + imageCount) % imageCount);
+  };
+  const updateGalleryGesture = (clientX: number, clientY: number, preventDefault?: () => void) => {
+    const gesture = galleryGestureRef.current;
+    if (!gesture) return;
+    const deltaX = clientX - gesture.startX;
+    const deltaY = clientY - gesture.startY;
+    if (Math.abs(deltaX) > 8 && Math.abs(deltaX) > Math.abs(deltaY)) {
+      preventDefault?.();
+      suppressOpenRef.current = true;
+      setGalleryDragging(true);
+      setGalleryDragOffsetPx(deltaX);
+    }
+  };
+  const finishGalleryGestureAt = (pointerId: number, clientX: number, clientY: number) => {
+    const gesture = galleryGestureRef.current;
+    if (!gesture || gesture.pointerId !== pointerId) return;
+    const deltaX = clientX - gesture.startX;
+    const deltaY = clientY - gesture.startY;
+    const shouldTreatAsDrag = Math.abs(deltaX) > 8 && Math.abs(deltaX) > Math.abs(deltaY);
+    const shouldSwitch = shouldTreatAsDrag && Math.abs(deltaX) > gesture.width * 0.5;
+    galleryMediaRef.current?.releasePointerCapture?.(pointerId);
+    removeGalleryWindowListeners();
+    galleryGestureRef.current = undefined;
+    setGalleryDragging(false);
+    setGalleryDragOffsetPx(0);
+    if (!shouldTreatAsDrag) {
+      setGalleryTrackIndex(gesture.baseTrackIndex);
+      return;
+    }
+    suppressOpenRef.current = true;
+    if (!shouldSwitch) {
+      setGalleryTrackIndex(gesture.baseTrackIndex);
+      return;
+    }
+    const step = deltaX > 0 ? -1 : 1;
+    setGalleryTrackIndex(gesture.baseTrackIndex + step);
+    setActiveIndex((value) => (value + step + imageCount) % imageCount);
+    resetViewerTransform();
+  };
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!hasMultipleImages) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const rect = event.currentTarget.getBoundingClientRect();
+    galleryGestureRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      width: rect.width || 1,
+      baseTrackIndex: normalizedIndex + 1
+    };
+    suppressOpenRef.current = false;
+    setGalleryTrackIndex(normalizedIndex + 1);
+    setGalleryDragOffsetPx(0);
+    setGalleryDragging(false);
+    setGalleryResetting(false);
+    removeGalleryWindowListeners();
+    const move = (nativeEvent: PointerEvent) => {
+      if (galleryGestureRef.current?.pointerId !== nativeEvent.pointerId) return;
+      updateGalleryGesture(nativeEvent.clientX, nativeEvent.clientY, () => nativeEvent.preventDefault());
+    };
+    const end = (nativeEvent: PointerEvent) => {
+      finishGalleryGestureAt(nativeEvent.pointerId, nativeEvent.clientX, nativeEvent.clientY);
+    };
+    window.addEventListener('pointermove', move, { passive: false });
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    galleryWindowListenersRef.current = { move, end };
+  };
+  const handlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (galleryGestureRef.current?.pointerId !== event.pointerId) return;
+    updateGalleryGesture(event.clientX, event.clientY, () => event.preventDefault());
+  };
+  const finishGalleryGesture = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    finishGalleryGestureAt(event.pointerId, event.clientX, event.clientY);
+  };
+  const handleGalleryTransitionEnd = (event: ReactTransitionEvent<HTMLDivElement>) => {
+    if ((event.propertyName && event.propertyName !== 'transform') || !hasMultipleImages) return;
+    if (galleryTrackIndex !== 0 && galleryTrackIndex !== imageCount + 1) return;
+    setGalleryResetting(true);
+    setGalleryTrackIndex(galleryTrackIndex === 0 ? imageCount : 1);
+    if (galleryRestoreRafRef.current) {
+      cancelAnimationFrame(galleryRestoreRafRef.current);
+    }
+    galleryRestoreRafRef.current = requestAnimationFrame(() => {
+      galleryRestoreRafRef.current = undefined;
+      setGalleryResetting(false);
+    });
+  };
+  const openViewer = () => {
+    if (suppressOpenRef.current) {
+      suppressOpenRef.current = false;
+      return;
+    }
+    if (!images.length) return;
+    resetViewerTransform();
+    setViewerOpen(true);
+  };
+  const closeViewer = () => {
+    setViewerOpen(false);
+    resetViewerTransform();
+  };
+  const startViewerGesture = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    viewerPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const activePointers = pointerEntries(viewerPointersRef.current);
+    setViewerGesturing(true);
+    if (activePointers.length >= 2) {
+      const gesture = pinchGesture(activePointers[0].point, activePointers[1].point);
+      viewerPinchRef.current = {
+        distance: gesture.distance,
+        centerX: gesture.centerX,
+        centerY: gesture.centerY,
+        scale: viewerTransformRef.current.scale,
+        offsetX: viewerTransformRef.current.offsetX,
+        offsetY: viewerTransformRef.current.offsetY
+      };
+      viewerDragRef.current = undefined;
+      return;
+    }
+    viewerDragRef.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      offsetX: viewerTransformRef.current.offsetX,
+      offsetY: viewerTransformRef.current.offsetY
+    };
+  };
+  const moveViewerGesture = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!viewerPointersRef.current.has(event.pointerId)) return;
+    event.preventDefault();
+    viewerPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const activePointers = pointerEntries(viewerPointersRef.current);
+    if (activePointers.length >= 2 && viewerPinchRef.current) {
+      const gesture = pinchGesture(activePointers[0].point, activePointers[1].point);
+      const pinch = viewerPinchRef.current;
+      updateViewerTransform(() => ({
+        scale: clamp(Number((pinch.scale * (gesture.distance / pinch.distance)).toFixed(2)), imageViewerScaleMin, imageViewerScaleMax),
+        offsetX: clamp(pinch.offsetX + gesture.centerX - pinch.centerX, -imageViewerOffsetMax, imageViewerOffsetMax),
+        offsetY: clamp(pinch.offsetY + gesture.centerY - pinch.centerY, -imageViewerOffsetMax, imageViewerOffsetMax)
+      }));
+      return;
+    }
+    const drag = viewerDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId || viewerTransformRef.current.scale <= 1) return;
+    updateViewerTransform((current) => ({
+      ...current,
+      offsetX: clamp(drag.offsetX + event.clientX - drag.x, -imageViewerOffsetMax, imageViewerOffsetMax),
+      offsetY: clamp(drag.offsetY + event.clientY - drag.y, -imageViewerOffsetMax, imageViewerOffsetMax)
+    }));
+  };
+  const endViewerGesture = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = viewerDragRef.current;
+    viewerPointersRef.current.delete(event.pointerId);
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    if (drag?.pointerId === event.pointerId) {
+      const deltaX = event.clientX - drag.x;
+      const deltaY = event.clientY - drag.y;
+      if (viewerTransformRef.current.scale <= 1 && Math.abs(deltaX) >= imageViewerSwipeThreshold && Math.abs(deltaX) > Math.abs(deltaY)) {
+        moveImage(deltaX > 0 ? -1 : 1);
+      }
+      viewerDragRef.current = undefined;
+    }
+    if (viewerPointersRef.current.size < 2) {
+      viewerPinchRef.current = undefined;
+    }
+    if (viewerPointersRef.current.size === 0) {
+      setViewerGesturing(false);
+    }
+  };
+  const zoomViewerByWheel = (event: ReactWheelEvent<HTMLButtonElement>) => {
+    const delta = event.deltaY < 0 ? 0.15 : -0.15;
+    updateViewerTransform((current) => {
+      const scale = clamp(Number((current.scale + delta).toFixed(2)), imageViewerScaleMin, imageViewerScaleMax);
+      if (scale === 1) return { scale, offsetX: 0, offsetY: 0 };
+      return { ...current, scale };
+    });
+  };
+
+  const currentImage = images[normalizedIndex];
+  const counter = `${normalizedIndex + 1} / ${imageCount}`;
+  const galleryTrackClassName = ['lot-gallery-track', galleryDragging ? 'is-dragging' : '', galleryResetting ? 'is-resetting' : '']
+    .filter(Boolean)
+    .join(' ');
+  const galleryTrackStyle = {
+    transform: `translate3d(calc(${-galleryTrackIndex * 100}% + ${galleryDragOffsetPx}px), 0, 0)`
+  } as CSSProperties;
+  const viewerIsTransformed =
+    Math.abs(viewerTransform.scale - 1) > 0.01 || Math.abs(viewerTransform.offsetX) > 1 || Math.abs(viewerTransform.offsetY) > 1;
+  const viewerImageStyle = {
+    '--viewer-scale': String(viewerTransform.scale),
+    '--viewer-offset-x': `${viewerTransform.offsetX}px`,
+    '--viewer-offset-y': `${viewerTransform.offsetY}px`
+  } as CSSProperties;
+  const viewer = viewerOpen && currentImage ? (
+    <div className="image-viewer-backdrop" role="dialog" aria-modal="true" aria-label={t('product.imageViewer')} onClick={closeViewer}>
+      <div className="image-viewer-panel" onClick={(event) => event.stopPropagation()}>
+        <button className="image-viewer-close" type="button" aria-label={t('common.close')} onClick={closeViewer}>
+          <X size={22} />
+        </button>
+        <button
+          className={viewerGesturing ? 'image-viewer-image is-gesturing' : 'image-viewer-image'}
+          type="button"
+          aria-label={t('product.imageViewer')}
+          onPointerDown={startViewerGesture}
+          onPointerMove={moveViewerGesture}
+          onPointerUp={endViewerGesture}
+          onPointerCancel={endViewerGesture}
+          onWheel={zoomViewerByWheel}
+        >
+          <img src={currentImage} alt={`${lot.title} ${normalizedIndex + 1}`} style={viewerImageStyle} />
+        </button>
+        {imageCount > 1 ? (
+          <>
+            <button className="image-viewer-nav is-prev" type="button" aria-label={t('product.previousImage')} onClick={() => moveImage(-1)}>
+              <ChevronLeft size={24} />
+            </button>
+            <button className="image-viewer-nav is-next" type="button" aria-label={t('product.nextImage')} onClick={() => moveImage(1)}>
+              <ChevronRight size={24} />
+            </button>
+          </>
+        ) : null}
+        {viewerIsTransformed ? (
+          <button className="image-viewer-reset" type="button" aria-label={t('product.resetImage')} onClick={resetViewerTransform}>
+            <RotateCcw size={24} />
+            <span>{t('product.resetImage')}</span>
+          </button>
+        ) : null}
+        <span className="image-viewer-counter">{counter}</span>
+      </div>
+    </div>
+  ) : null;
+
+  return (
+    <>
+      <section className="lot-gallery" aria-label={t('product.imageViewer')}>
+        <button
+          ref={galleryMediaRef}
+          className="lot-gallery-media-button"
+          type="button"
+          aria-label={t('product.openImageViewer')}
+          onClick={openViewer}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={finishGalleryGesture}
+          onPointerCancel={finishGalleryGesture}
+        >
+          <div className={galleryTrackClassName} style={galleryTrackStyle} onTransitionEnd={handleGalleryTransitionEnd}>
+            {images.length ? (
+              galleryItems.map((item) => (
+                <div className="lot-gallery-slide" key={item.key}>
+                  <img src={item.imageUrl} alt={`${lot.title} ${item.imageIndex + 1}`} />
+                </div>
+              ))
+            ) : (
+              <div className="lot-gallery-slide">
+                <VisualPlaceholder title={lot.title} tone="red" />
+              </div>
+            )}
+          </div>
+        </button>
+        {imageCount > 1 ? (
+          <>
+            <button className="lot-gallery-nav is-prev" type="button" aria-label={t('product.previousImage')} onClick={() => moveImage(-1)}>
+              <ChevronLeft size={18} />
+            </button>
+            <button className="lot-gallery-nav is-next" type="button" aria-label={t('product.nextImage')} onClick={() => moveImage(1)}>
+              <ChevronRight size={18} />
+            </button>
+          </>
+        ) : null}
+        <span className="lot-gallery-counter">{counter}</span>
+      </section>
+      {viewer ? createPortal(viewer, document.body) : null}
+    </>
+  );
+}
+
 function AvatarView({ profile }: { profile: UserProfile }) {
   if (profile.avatarUrl) return <img src={profile.avatarUrl} alt={profile.nickname} />;
   return (
@@ -1679,12 +2181,12 @@ function ProfileStat({ value, label, onClick }: { value: number; label: string; 
   );
 }
 
-function AuctionRecordCard({ record, onOpen, onPay }: { record: UserAuctionRecord; onOpen: () => void; onPay?: () => void }) {
+function AuctionRecordCard({ record, highlighted, onOpen, onPay }: { record: UserAuctionRecord; highlighted?: boolean; onOpen: () => void; onPay?: () => void }) {
   const state = stateFromLot(record.lot);
   const recordTab = classifyAuctionRecord(record) ?? 'all';
   const canPay = recordTab === 'pendingPay' && onPay;
   return (
-    <article className="search-result-card record-card">
+    <article className={highlighted ? 'search-result-card record-card is-highlighted' : 'search-result-card record-card'} data-testid={record.order ? `order-record-${record.order.id}` : undefined} data-order-id={record.order?.id}>
       <button className="result-media" type="button" onClick={onOpen}>
         <VisualPlaceholder title={record.lot.title} imageUrl={record.lot.imageUrl} tone={recordTab === 'completed' ? 'gold' : 'red'} />
       </button>
@@ -2155,17 +2657,18 @@ type QuickBidFeedback =
   | { status: 'success'; requestId?: string; message: string }
   | { status: 'error'; requestId?: string; message: string };
 
-const LIVE_SHEET_DURATIONS_MS = {
-  lotList: 340,
-  detail: 400,
-  quickBid: 460
+const LIVE_SHEET_ANIMATION_MS = {
+  lotList: { enter: 250, exit: 150, easing: 'linear' },
+  detail: { enter: 250, exit: 150, easing: 'linear' },
+  quickBid: { enter: 460, exit: 460, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+  quickBidFast: { enter: 150, exit: 150, easing: 'linear' }
 } as const;
 
 const AUCTION_ENDED_HOLD_MS = 5000;
 const AUCTION_CARD_ANIMATION_MS = 380;
 const WIN_CELEBRATION_DURATION_MS = 4200;
 
-type LiveSheetVariant = keyof typeof LIVE_SHEET_DURATIONS_MS;
+type LiveSheetVariant = keyof typeof LIVE_SHEET_ANIMATION_MS;
 type LiveSheetType = 'lotList' | 'detail' | 'quickBid';
 type LiveSheetPhase = 'opening' | 'open' | 'closing';
 
@@ -2260,7 +2763,8 @@ function LiveRoomPage({
   initialPreviewMedia,
   userId,
   onBack,
-  onPay
+  onPay,
+  onOpenOrder
 }: {
   apiClient: ApiClient;
   roomId: string;
@@ -2269,6 +2773,7 @@ function LiveRoomPage({
   userId: string;
   onBack: () => void;
   onPay: (orderId: string, auctionId: string) => void;
+  onOpenOrder: (orderId: string, tab: MyAuctionTabKey) => void;
 }) {
   const [selectedLotId, setSelectedLotId] = useState<string | undefined>(initialLotId);
   const [liveSheets, setLiveSheets] = useState<LiveSheetInstance[]>([]);
@@ -2279,12 +2784,15 @@ function LiveRoomPage({
   const [quickBidFeedback, setQuickBidFeedback] = useState<QuickBidFeedback>({ status: 'idle' });
   const [rankingCollapsed, setRankingCollapsed] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(true);
+  const [commentComposerOpen, setCommentComposerOpen] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
   const [chatMessages, setChatMessages] = useState<LiveChatMessage[]>(() => initialLiveChatMessages(roomId));
   const [ranking, setRanking] = useState<RankingItem[]>([]);
   const [enrolledAuctions, setEnrolledAuctions] = useState<Set<string>>(() => new Set());
   const [lotStates, setLotStates] = useState<Record<string, AuctionState>>({});
   const [liveStats, setLiveStats] = useState<LiveRoomStats>(demoLiveRoomStats);
+  const [likeBurstId, setLikeBurstId] = useState(0);
+  const [likeBurstVisible, setLikeBurstVisible] = useState(false);
   const [winningCelebrationId, setWinningCelebrationId] = useState<string>();
   const [now, setNow] = useState(Date.now());
   const realtimeRef = useRef<RealtimeClient>();
@@ -2294,12 +2802,17 @@ function LiveRoomPage({
   const liveSheetsRef = useRef<LiveSheetInstance[]>([]);
   const floatingAuctionCardRef = useRef<FloatingAuctionCardState>();
   const pendingFloatingAuctionCardRef = useRef<FloatingAuctionCardState>();
+  const likeBurstTimerRef = useRef<number>();
   const commentsViewportRef = useRef<HTMLDivElement>(null);
   const commentsEndRef = useRef<HTMLDivElement>(null);
   const commentsShouldStickRef = useRef(true);
   const followedRooms = useLiveActivityStore((state) => state.followedRooms);
+  const roomLocalLikeCount = useLiveActivityStore((state) => state.roomLikeCounts[roomId] ?? 0);
   const followRoom = useLiveActivityStore((state) => state.followRoom);
   const unfollowRoom = useLiveActivityStore((state) => state.unfollowRoom);
+  const likeRoom = useLiveActivityStore((state) => state.likeRoom);
+  const setStoredCommentDraft = useLiveActivityStore((state) => state.setCommentDraft);
+  const clearStoredCommentDraft = useLiveActivityStore((state) => state.clearCommentDraft);
   const recordFootprint = useLiveActivityStore((state) => state.recordFootprint);
 
   const roomQuery = useQuery({
@@ -2317,9 +2830,29 @@ function LiveRoomPage({
     queryFn: () => apiClient.getLiveRoomStats(roomId),
     placeholderData: demoLiveRoomStats
   });
+  const myAuctionRecordsQuery = useQuery({
+    queryKey: ['my-auction-records'],
+    queryFn: () => apiClient.listMyAuctionRecords(),
+    placeholderData: { items: [], total: 0, page: 1, page_size: 20 }
+  });
+  const myOrdersQuery = useQuery({
+    queryKey: ['my-orders'],
+    queryFn: () => apiClient.listMyOrders(),
+    placeholderData: { items: [], total: 0, page: 1, page_size: 20 }
+  });
 
   const room = roomQuery.data ?? findDemoLiveRoom(roomId);
   const lots = lotsQuery.data?.items.length ? lotsQuery.data.items : demoLotPage.items;
+  const myAuctionRecordItems = myAuctionRecordsQuery.data?.items;
+  const myOrderItems = myOrdersQuery.data?.items;
+  const orderByAuctionId = useMemo(() => {
+    const orders = new Map<string, Order>();
+    (myOrderItems ?? []).forEach((order) => orders.set(order.auctionId, order));
+    (myAuctionRecordItems ?? []).forEach((record) => {
+      if (record.order) orders.set(record.lot.auctionId, record.order);
+    });
+    return orders;
+  }, [myAuctionRecordItems, myOrderItems]);
   const roomPreviewMediaSource = liveRoomPreviewVideoUrl(room);
   const initialMediaPosition = isPreviewMediaSnapshotApplicable(initialPreviewMedia, room, roomPreviewMediaSource) ? initialPreviewMedia : undefined;
   const activeLot = selectCurrentRunningLot(room, lots, lotStates);
@@ -2352,8 +2885,18 @@ function LiveRoomPage({
 
   useEffect(() => {
     setChatMessages(initialLiveChatMessages(roomId));
+    setCommentDraft(useLiveActivityStore.getState().commentDrafts[roomId] ?? '');
+    setCommentComposerOpen(false);
+    setLikeBurstId(0);
+    setLikeBurstVisible(false);
     commentsShouldStickRef.current = true;
   }, [roomId]);
+
+  useEffect(() => {
+    return () => {
+      if (likeBurstTimerRef.current) window.clearTimeout(likeBurstTimerRef.current);
+    };
+  }, []);
 
   const currentState = activeLot ? lotStates[activeLot.auctionId] ?? stateQuery.data ?? activeLotInitialState : undefined;
   const hasBlockingLiveSheet = liveSheets.some((sheet) => sheet.phase !== 'closing');
@@ -2390,7 +2933,7 @@ function LiveRoomPage({
       const sheet = liveSheetsRef.current.find((item) => item.id === id);
       if (!sheet || sheet.phase === 'closing') return;
       setLiveSheets((prev) => prev.map((item) => (item.id === id ? { ...item, phase: 'closing' } : item)));
-      scheduleSheetRemoval(id, LIVE_SHEET_DURATIONS_MS[sheet.variant]);
+      scheduleSheetRemoval(id, LIVE_SHEET_ANIMATION_MS[sheet.variant].exit);
     },
     [scheduleSheetRemoval]
   );
@@ -2399,11 +2942,11 @@ function LiveRoomPage({
     const closingSheets = liveSheetsRef.current.filter((sheet) => sheet.phase !== 'closing');
     if (!closingSheets.length) return;
     setLiveSheets((prev) => prev.map((sheet) => (sheet.phase === 'closing' ? sheet : { ...sheet, phase: 'closing' })));
-    closingSheets.forEach((sheet) => scheduleSheetRemoval(sheet.id, LIVE_SHEET_DURATIONS_MS[sheet.variant]));
+    closingSheets.forEach((sheet) => scheduleSheetRemoval(sheet.id, LIVE_SHEET_ANIMATION_MS[sheet.variant].exit));
   }, [scheduleSheetRemoval]);
 
   const openLiveSheet = useCallback(
-    (type: LiveSheetType, lotId?: string, options: { closeExisting?: boolean } = {}) => {
+    (type: LiveSheetType, lotId?: string, options: { closeExisting?: boolean; variant?: LiveSheetVariant } = {}) => {
       if (options.closeExisting ?? true) closeActiveLiveSheets();
       const variantByType: Record<LiveSheetType, LiveSheetVariant> = {
         lotList: 'lotList',
@@ -2411,7 +2954,7 @@ function LiveRoomPage({
         quickBid: 'quickBid'
       };
       const id = makeRequestId(`sheet-${type}`);
-      setLiveSheets((prev) => [...prev, { id, type, lotId, variant: variantByType[type], phase: 'opening' }]);
+      setLiveSheets((prev) => [...prev, { id, type, lotId, variant: options.variant ?? variantByType[type], phase: 'opening' }]);
       scheduleSheetOpen(id);
     },
     [closeActiveLiveSheets, scheduleSheetOpen]
@@ -2600,6 +3143,7 @@ function LiveRoomPage({
     };
     appendChatMessage(message);
     setCommentDraft('');
+    clearStoredCommentDraft(roomId);
     realtimeRef.current?.send({
       type: 'chat.send',
       requestId: clientMessageId,
@@ -2609,10 +3153,18 @@ function LiveRoomPage({
         clientMessageId
       }
     });
-  }, [appendChatMessage, commentDraft, roomId, userId]);
+  }, [appendChatMessage, clearStoredCommentDraft, commentDraft, roomId, userId]);
 
-  const handleCommentKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+  const handleCommentDraftChange = useCallback(
+    (value: string) => {
+      setCommentDraft(value);
+      setStoredCommentDraft(roomId, value);
+    },
+    [roomId, setStoredCommentDraft]
+  );
+
+  const handleCommentKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
     sendComment();
   };
@@ -2634,7 +3186,12 @@ function LiveRoomPage({
     const minIncrement = context.activeLot && context.currentState ? minIncrementForLot(context.activeLot, context.currentState) : 100;
     const client: RealtimeClient | undefined =
       import.meta.env.VITE_REALTIME_MODE === 'websocket' && import.meta.env.VITE_WS_URL
-        ? new NativeWebSocketClient({ baseUrl: import.meta.env.VITE_WS_URL, roomId, lastSeq: lastSeqRef.current })
+        ? new NativeWebSocketClient({
+            baseUrl: import.meta.env.VITE_WS_URL,
+            roomId,
+            lastSeq: lastSeqRef.current,
+            storage: window.localStorage
+          })
         : hasActiveAuction && context.activeLot && context.currentState
           ? new MockRealtimeClient({
               roomId,
@@ -2828,11 +3385,19 @@ function LiveRoomPage({
     setSelectedLotId(lot.id);
     openLiveSheet('detail', lot.id);
   };
+  const openLotFromList = (lot: LiveRoomLot) => {
+    setSelectedLotId(lot.id);
+    openLiveSheet('detail', lot.id, { closeExisting: false });
+  };
 
-  const openQuickBid = (lot: LiveRoomLot) => {
+  const openQuickBid = (lot: LiveRoomLot, options: { variant?: LiveSheetVariant } = {}) => {
     setSelectedLotId(lot.id);
     setQuickBidFeedback({ status: 'idle' });
-    openLiveSheet('quickBid', lot.id);
+    openLiveSheet('quickBid', lot.id, options);
+  };
+
+  const openQuickBidFromList = (lot: LiveRoomLot) => {
+    openQuickBid(lot, { variant: 'quickBidFast' });
   };
 
   const toggleFollowRoom = () => {
@@ -2842,6 +3407,22 @@ function LiveRoomPage({
     }
     followRoom(room);
   };
+  const handleLikeRoom = () => {
+    likeRoom(room.id);
+    setLikeBurstId((value) => value + 1);
+    setLikeBurstVisible(true);
+    if (likeBurstTimerRef.current) window.clearTimeout(likeBurstTimerRef.current);
+    likeBurstTimerRef.current = window.setTimeout(() => setLikeBurstVisible(false), 820);
+  };
+  const openCommentComposer = () => {
+    setCommentsOpen(true);
+    setLikeBurstVisible(false);
+    if (likeBurstTimerRef.current) window.clearTimeout(likeBurstTimerRef.current);
+    setCommentComposerOpen(true);
+  };
+  const liveLikeCount = (room.likeCount ?? 0) + roomLocalLikeCount;
+  const hasLikedRoom = roomLocalLikeCount > 0;
+  const liveShopMetaText = t('live.likes', { count: formatCompactNumber(liveLikeCount) });
 
   if (room.status === 'ENDED') {
     return <RoomStatePage room={room} lots={lots} status="ended" onBack={onBack} onPay={(auctionId) => onPay('ord_2001', auctionId)} />;
@@ -2856,21 +3437,24 @@ function LiveRoomPage({
       <LiveRoomVideoSurface room={room} initialMediaPosition={initialMediaPosition} />
       <div className="live-gradient" />
       <header className="live-header">
+        <button className="live-back" onClick={onBack} aria-label={t('common.back')} type="button">
+          <ArrowLeft size={20} />
+        </button>
         <div className="live-shop">
-          <img className="live-shop-logo" src={logoUrl} alt={room.merchantName} />
+          <img className="live-shop-logo" src={room.coverUrl ?? logoUrl} alt={room.merchantName} />
           <div className="live-shop-copy">
             <strong>{room.merchantName}</strong>
+            <span>{liveShopMetaText}</span>
           </div>
+          <button className={isFollowingRoom ? 'live-follow-pill is-followed' : 'live-follow-pill'} type="button" onClick={toggleFollowRoom} aria-pressed={isFollowingRoom}>
+            {isFollowingRoom ? t('live.followed') : `+${t('live.follow')}`}
+          </button>
         </div>
-        <button className={isFollowingRoom ? 'live-follow-button is-followed' : 'live-follow-button'} type="button" onClick={toggleFollowRoom} aria-pressed={isFollowingRoom}>
-          {isFollowingRoom ? t('live.followed') : t('live.follow')}
-        </button>
-        <span className="live-header-watchers" aria-label={t('live.statsOnline', { count: liveStats.watcherCount })}>
-          {liveStats.watcherCount}
-        </span>
-        <button className="live-close" data-testid="live-room-close" onClick={onBack} aria-label={t('common.close')} type="button">
-          <X size={32} strokeWidth={2.6} />
-        </button>
+        <div className="live-header-right">
+          <span className="live-watcher-count live-header-watchers" aria-label={t('live.statsOnline', { count: liveStats.watcherCount })}>
+            <Users size={12} /> {liveStats.watcherCount}
+          </span>
+        </div>
       </header>
 
       {activeLot && currentState ? <LiveRankingRail items={ranking} userId={userId} collapsed={rankingCollapsed} lastBid={lastRankingBidRef.current} onToggle={() => setRankingCollapsed((value) => !value)} /> : null}
@@ -2880,12 +3464,19 @@ function LiveRoomPage({
         messages={chatMessages}
         userId={userId}
         draft={commentDraft}
+        composerOpen={commentComposerOpen}
         commentsViewportRef={commentsViewportRef}
         commentsEndRef={commentsEndRef}
-        onDraftChange={setCommentDraft}
+        onDraftChange={handleCommentDraftChange}
         onKeyDown={handleCommentKeyDown}
         onScroll={handleCommentScroll}
         onSend={sendComment}
+        onLike={handleLikeRoom}
+        liked={hasLikedRoom}
+        likeBurstId={likeBurstId}
+        likeBurstVisible={likeBurstVisible}
+        onComposerOpen={openCommentComposer}
+        onComposerClose={() => setCommentComposerOpen(false)}
         onToggle={() => setCommentsOpen((value) => !value)}
         onOpenList={() => openLiveSheet('lotList')}
       />
@@ -2918,8 +3509,10 @@ function LiveRoomPage({
               lots={lots}
               states={lotStates}
               activeAuctionId={activeLot?.auctionId}
+              enrolledAuctionIds={enrolledAuctions}
               onClose={() => closeLiveSheet(sheet.id)}
-              onOpenLot={openLot}
+              onOpenLot={openLotFromList}
+              onQuickBid={openQuickBidFromList}
             />
           );
         }
@@ -2941,19 +3534,24 @@ function LiveRoomPage({
               ranking={ranking}
               enrolled={enrolledAuctions.has(sheetLot.auctionId)}
               enrolling={enrollMutation.isPending}
+              order={orderByAuctionId.get(sheetLot.auctionId)}
+              orderLoading={myAuctionRecordsQuery.isLoading || myOrdersQuery.isLoading}
+              userId={userId}
               onClose={() => closeLiveSheet(sheet.id)}
               onEnroll={() => enrollMutation.mutate(sheetLot.auctionId)}
               onBid={() => openQuickBid(sheetLot)}
-              onPay={() => onPay('ord_2001', sheetLot.auctionId)}
+              onPay={(order) => onPay(order.id, sheetLot.auctionId)}
+              onOpenOrder={(order) => onOpenOrder(order.id, orderTabFromOrder(order))}
             />
           );
         }
 
         return (
-          <BidSheet
-            key={sheet.id}
-            phase={sheet.phase}
-            zIndex={zIndex}
+            <BidSheet
+              key={sheet.id}
+              variant={sheet.variant}
+              phase={sheet.phase}
+              zIndex={zIndex}
             accessibilityHidden={accessibilityHidden}
             lot={sheetLot}
             state={sheetState}
@@ -3023,16 +3621,25 @@ function WinningCelebration({ message, onComplete }: { message: string; onComple
 
 function LiveRoomVideoSurface({ room, initialMediaPosition }: { room: LiveRoom; initialMediaPosition?: PreviewMediaSnapshot }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const appliedInitialMediaKeyRef = useRef<string>();
+  const initialMediaKey = useMemo(() => previewMediaSnapshotKey(initialMediaPosition), [initialMediaPosition]);
 
   const syncRecordedVideoPosition = useCallback(() => {
     const video = videoRef.current;
     forceMutedVideo(video);
-    if (initialMediaPosition) {
-      applyInitialMediaPosition(video, initialMediaPosition);
-      return;
+    if (initialMediaPosition && initialMediaKey && appliedInitialMediaKeyRef.current !== initialMediaKey) {
+      const applied = applyInitialMediaPosition(video, initialMediaPosition);
+      if (applied) {
+        appliedInitialMediaKeyRef.current = initialMediaKey;
+        return;
+      }
     }
     void playVideo(video);
-  }, [initialMediaPosition]);
+  }, [initialMediaPosition, initialMediaKey]);
+
+  useEffect(() => {
+    appliedInitialMediaKeyRef.current = undefined;
+  }, [room.id, room.videoUrl]);
 
   useEffect(() => {
     if (room.videoSource !== 'recorded') return;
@@ -3084,12 +3691,19 @@ function LiveCommentPanel({
   messages,
   userId,
   draft,
+  composerOpen,
   commentsViewportRef,
   commentsEndRef,
   onDraftChange,
   onKeyDown,
   onScroll,
   onSend,
+  onLike,
+  liked,
+  likeBurstId,
+  likeBurstVisible,
+  onComposerOpen,
+  onComposerClose,
   onToggle,
   onOpenList
 }: {
@@ -3097,17 +3711,39 @@ function LiveCommentPanel({
   messages: LiveChatMessage[];
   userId: string;
   draft: string;
+  composerOpen: boolean;
   commentsViewportRef: RefObject<HTMLDivElement>;
   commentsEndRef: RefObject<HTMLDivElement>;
   onDraftChange: (value: string) => void;
-  onKeyDown: (event: ReactKeyboardEvent<HTMLInputElement>) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => void;
   onScroll: () => void;
   onSend: () => void;
+  onLike: () => void;
+  liked: boolean;
+  likeBurstId: number;
+  likeBurstVisible: boolean;
+  onComposerOpen: () => void;
+  onComposerClose: () => void;
   onToggle: () => void;
   onOpenList: () => void;
 }) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const syncTextareaHeight = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 118)}px`;
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!composerOpen) return;
+    syncTextareaHeight();
+    const timer = window.setTimeout(() => textareaRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [composerOpen, draft, syncTextareaHeight]);
+
   return (
-    <section className={open ? 'live-comment-panel' : 'live-comment-panel is-collapsed'} aria-label={t('live.commentPanel')}>
+    <section className={joinClassNames('live-comment-panel', !open && 'is-collapsed', composerOpen && 'is-composing')} aria-label={t('live.commentPanel')}>
       {open ? (
         <>
           <div className="live-comment-list" ref={commentsViewportRef} onScroll={onScroll} aria-label={t('live.commentList')}>
@@ -3123,30 +3759,54 @@ function LiveCommentPanel({
           </div>
         </>
       ) : null}
+      {composerOpen ? (
+        <>
+          <button className="live-comment-compose-dismiss" type="button" onClick={onComposerClose} aria-label={t('live.commentCloseComposer')} />
+          <div className="live-comment-composer">
+            <textarea
+              ref={textareaRef}
+              aria-label={t('live.commentInput')}
+              placeholder={t('live.commentPlaceholder')}
+              value={draft}
+              maxLength={240}
+              rows={1}
+              onChange={(event) => {
+                onDraftChange(event.currentTarget.value);
+                syncTextareaHeight();
+              }}
+              onKeyDown={onKeyDown}
+            />
+            <button className="comment-composer-send-button" type="button" onClick={onSend} disabled={!draft.trim()} aria-label={t('live.commentSend')}>
+              {t('live.commentSend')}
+            </button>
+          </div>
+        </>
+      ) : (
       <div className={open ? 'live-comment-input-row' : 'live-comment-input-row is-collapsed'}>
         <button className={open ? 'comment-toggle-button' : 'comment-toggle-button is-floating'} type="button" onClick={onToggle} aria-label={open ? t('live.commentHide') : t('live.commentShow')}>
           <img src={open ? closeCommentIconUrl : commentIconUrl} alt="" aria-hidden="true" />
         </button>
         {open ? (
-          <>
-            <input
-              aria-label={t('live.commentInput')}
-              placeholder={t('live.commentPlaceholder')}
-              value={draft}
-              maxLength={120}
-              onChange={(event) => onDraftChange(event.currentTarget.value)}
-              onKeyDown={onKeyDown}
-            />
-            <button className="comment-send-button" type="button" onClick={onSend} disabled={!draft.trim()} aria-label={t('live.commentSend')}>
-              {t('live.commentSend')}
-            </button>
-          </>
+          <button className="comment-input-trigger" type="button" onClick={onComposerOpen} aria-label={t('live.commentInput')}>
+            <span>{draft.trim() || t('live.commentPlaceholder')}</span>
+          </button>
         ) : null}
+        <button className={joinClassNames('comment-like-button', liked && 'is-liked')} type="button" onClick={onLike} aria-label={liked ? t('live.likedRoom') : t('live.likeRoom')} aria-pressed={liked}>
+          <img src={likeIconUrl} alt="" aria-hidden="true" />
+          {likeBurstVisible ? (
+            <span className="comment-like-burst" key={likeBurstId} aria-hidden="true">
+              {likeBurstParticles.map((particle) => (
+                <span key={particle} />
+              ))}
+            </span>
+          ) : null}
+        </button>
         <button className="comment-list-button" type="button" onClick={onOpenList} aria-label={t('live.goodsEntry')}>
           <ShoppingBag size={16} />
           <span>{t('live.goodsEntry')}</span>
         </button>
       </div>
+      )}
     </section>
   );
 }
@@ -3864,7 +4524,7 @@ function AnimatedSheetFrame({
   onClose: () => void;
   children: (requestClose: () => void) => ReactNode;
 }) {
-  const durationMs = LIVE_SHEET_DURATIONS_MS[variant];
+  const animation = LIVE_SHEET_ANIMATION_MS[variant];
   const requestClose = useCallback(() => {
     if (phase === 'closing') return;
     onClose();
@@ -3875,7 +4535,14 @@ function AnimatedSheetFrame({
     <div
       className={backdropClassName}
       aria-hidden={accessibilityHidden ? true : undefined}
-      style={{ '--sheet-duration-ms': `${durationMs}ms`, zIndex } as CSSProperties}
+      style={
+        {
+          '--sheet-enter-duration-ms': `${animation.enter}ms`,
+          '--sheet-exit-duration-ms': `${animation.exit}ms`,
+          '--sheet-easing': animation.easing,
+          zIndex
+        } as CSSProperties
+      }
       onClick={requestClose}
     >
       <section className={`bottom-sheet ${className}`} role="dialog" aria-label={label} onClick={(event) => event.stopPropagation()}>
@@ -3892,8 +4559,10 @@ function LotListSheet({
   lots,
   states,
   activeAuctionId,
+  enrolledAuctionIds,
   onClose,
-  onOpenLot
+  onOpenLot,
+  onQuickBid
 }: {
   phase: LiveSheetPhase;
   zIndex: number;
@@ -3901,8 +4570,10 @@ function LotListSheet({
   lots: LiveRoomLot[];
   states: Record<string, AuctionState>;
   activeAuctionId?: string;
+  enrolledAuctionIds: ReadonlySet<string>;
   onClose: () => void;
   onOpenLot: (lot: LiveRoomLot) => void;
+  onQuickBid: (lot: LiveRoomLot) => void;
 }) {
   const sortedLots = useMemo(() => sortLotListForSheet(lots, states, activeAuctionId), [activeAuctionId, lots, states]);
   return (
@@ -3912,12 +4583,23 @@ function LotListSheet({
         <SheetHeader title={t('live.goodsList')} onClose={requestClose} />
         <div className="lot-list">
           {sortedLots.map(({ lot, state, originalIndex }) => {
+            const isRunning = isRunningAuctionStatus(state.status);
+            const canQuickBid = isRunning && enrolledAuctionIds.has(lot.auctionId);
             return (
               <article
-                className={lot.auctionId === activeAuctionId && isRunningAuctionStatus(state.status) ? 'lot-row is-active' : 'lot-row'}
+                className={lot.auctionId === activeAuctionId && isRunning ? 'lot-row is-active' : 'lot-row'}
+                role="button"
+                tabIndex={0}
+                aria-label={lot.title}
                 data-original-index={originalIndex + 1}
                 data-testid="lot-row"
                 key={lot.id}
+                onClick={() => onOpenLot(lot)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  onOpenLot(lot);
+                }}
               >
                 <span className="lot-sequence" aria-label={`#${originalIndex + 1}`}>
                   #{originalIndex + 1}
@@ -3926,13 +4608,25 @@ function LotListSheet({
                 <div>
                   <span className="status-badge">{lotStatusLabel(state.status)}</span>
                   <h3>{lot.title}</h3>
-                  <p>{lot.subtitle}</p>
+                  {lot.description ? <p>{lot.description}</p> : null}
                   <div className="lot-price-line">
                     <span>{priceLabel(lot, state)}</span>
                     <strong>{formatMoney(priceValue(lot, state))}</strong>
                   </div>
                 </div>
-                <Button size="small" color={state.status === 'RUNNING' || state.status === 'EXTENDED' ? 'danger' : 'primary'} fill={isUpcomingAuctionStatus(state.status) ? 'outline' : 'solid'} onClick={() => onOpenLot(lot)}>
+                <Button
+                  size="small"
+                  color={isRunning ? 'danger' : 'primary'}
+                  fill={isUpcomingAuctionStatus(state.status) ? 'outline' : 'solid'}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (canQuickBid) {
+                      onQuickBid(lot);
+                      return;
+                    }
+                    onOpenLot(lot);
+                  }}
+                >
                   {lotActionText(state.status)}
                 </Button>
               </article>
@@ -3960,6 +4654,53 @@ function isRunningAuctionStatus(status: AuctionState['status'] | LiveRoomLot['st
   return status === 'RUNNING' || status === 'EXTENDED';
 }
 
+type LotDetailAction = {
+  kind: 'enroll' | 'bid' | 'wait' | 'pay' | 'order' | 'pendingOrder';
+  label: MessageKey;
+  color: 'primary' | 'danger';
+  disabled?: boolean;
+  loading?: boolean;
+  order?: Order;
+};
+
+function deriveLotDetailAction({
+  state,
+  enrolled,
+  enrolling,
+  order,
+  orderLoading,
+  userId
+}: {
+  state: AuctionState;
+  enrolled: boolean;
+  enrolling: boolean;
+  order?: Order;
+  orderLoading: boolean;
+  userId: string;
+}): LotDetailAction | undefined {
+  if (isRunningAuctionStatus(state.status)) {
+    return enrolled
+      ? { kind: 'bid', label: 'product.bidNow', color: 'danger' }
+      : { kind: 'enroll', label: 'auction.enrollAndPayDeposit', color: 'primary', loading: enrolling };
+  }
+
+  if (isUpcomingAuctionStatus(state.status)) {
+    return { kind: 'wait', label: 'auction.waitingStart', color: 'primary', disabled: true };
+  }
+
+  if (state.status === 'CLOSED_FAILED' || state.status === 'HAMMER_PENDING') return undefined;
+
+  if (state.status === 'CLOSED_WON' || state.status === 'SETTLED') {
+    const userWon = Boolean(order?.buyerId === userId || state.leaderBidderId === userId);
+    if (!userWon) return undefined;
+    if (order && isPaidOrder(order)) return { kind: 'order', label: 'auction.viewOrder', color: 'primary', order };
+    if (order && isPendingPayOrder(order)) return { kind: 'pay', label: 'auction.pay', color: 'danger', order };
+    if (orderLoading || !order) return { kind: 'pendingOrder', label: 'auction.orderPending', color: 'primary', disabled: true };
+  }
+
+  return undefined;
+}
+
 function LotDetailSheet({
   phase,
   zIndex,
@@ -3969,10 +4710,14 @@ function LotDetailSheet({
   ranking,
   enrolled,
   enrolling,
+  order,
+  orderLoading,
+  userId,
   onClose,
   onEnroll,
   onBid,
-  onPay
+  onPay,
+  onOpenOrder
 }: {
   phase: LiveSheetPhase;
   zIndex: number;
@@ -3982,59 +4727,94 @@ function LotDetailSheet({
   ranking: RankingItem[];
   enrolled: boolean;
   enrolling: boolean;
+  order?: Order;
+  orderLoading: boolean;
+  userId: string;
   onClose: () => void;
   onEnroll: () => void;
   onBid: () => void;
-  onPay: () => void;
+  onPay: (order: Order) => void;
+  onOpenOrder: (order: Order) => void;
 }) {
-  const canBid = state.status === 'RUNNING' || state.status === 'EXTENDED';
+  const [rankingExpanded, setRankingExpanded] = useState(false);
+  const detailRanking = ranking.length ? ranking : defaultRanking(state);
+  const visibleRanking = detailRanking.slice(0, 8);
+  const canToggleRanking = detailRanking.length > 3;
+  const action = deriveLotDetailAction({ state, enrolled, enrolling, order, orderLoading, userId });
+  const description = lot.description?.trim() || '';
+
+  useEffect(() => {
+    setRankingExpanded(false);
+  }, [lot.id]);
+
+  const handleAction = () => {
+    if (!action || action.disabled) return;
+    if (action.kind === 'enroll') onEnroll();
+    if (action.kind === 'bid') onBid();
+    if (action.kind === 'pay' && action.order) onPay(action.order);
+    if (action.kind === 'order' && action.order) onOpenOrder(action.order);
+  };
+
   return (
     <AnimatedSheetFrame variant="detail" phase={phase} zIndex={zIndex} accessibilityHidden={accessibilityHidden} className="detail-sheet" label={t('product.detail')} onClose={onClose}>
       {(requestClose) => (
         <>
-        <SheetHeader title={t('product.detail')} onClose={requestClose} />
-        <div className="detail-hero">
-          <VisualPlaceholder title={lot.title} imageUrl={lot.imageUrl} tone="red" />
-          <div className="detail-status-strip">
+        <header className="sheet-header detail-sheet-header">
+          <div className="detail-header-title">
+            <h2>{t('product.detail')}</h2>
             <span>{lotStatusLabel(state.status)}</span>
-            <strong>{state.leaderBidderId ? t('bid.leader') : t('product.noBid')}</strong>
           </div>
-        </div>
-        <div className="detail-body">
-          <p className="price-label">{priceLabel(lot, state)}</p>
-          <h2>{formatMoney(priceValue(lot, state))}</h2>
-          <h3>{lot.title}</h3>
-          <p>{lot.description ?? lot.subtitle}</p>
-          <div className="price-grid compact">
-            <Metric label={t('auction.participants')} value={String(state.participantCount ?? lot.participantCount ?? 0)} icon={<Users size={16} />} />
-            <Metric label={t('auction.bidCount')} value={String(state.bidCount ?? lot.bidCount ?? 0)} icon={<Gavel size={16} />} />
-            <Metric label={t('auction.increment')} value={formatMoney(minIncrementForLot(lot, state))} icon={<Plus size={16} />} />
-            <Metric label={t('auction.deposit')} value={formatMoney(lot.depositAmount ?? 0)} icon={<WalletCards size={16} />} />
-          </div>
-          <article className="ranking-panel">
-            <h4>{t('auction.ranking')}</h4>
-            {(ranking.length ? ranking : defaultRanking(state)).slice(0, 3).map((item) => (
-              <div className="ranking-row" key={`${item.rank}-${item.bidderId}`}>
-                <span>{item.rank}</span>
-                <strong>{item.nicknameMask}</strong>
-                <b>{formatMoney(item.price)}</b>
+          <button type="button" aria-label={t('common.close')} onClick={requestClose}>
+            <X size={18} />
+          </button>
+        </header>
+        <div className="detail-scroll-body">
+          <LotImageGallery lot={lot} />
+          <div className="detail-body">
+            <p className="price-label">{priceLabel(lot, state)}</p>
+            <h2>{formatMoney(priceValue(lot, state))}</h2>
+            <h3>{lot.title}</h3>
+            <p className={description ? 'detail-description' : 'detail-description is-empty'}>{description || t('product.noDescription')}</p>
+            <div className="price-grid compact detail-rule-grid">
+              <Metric label={t('auction.participants')} value={String(state.participantCount ?? lot.participantCount ?? 0)} icon={<Users size={16} />} />
+              <Metric label={t('auction.bidCount')} value={String(state.bidCount ?? lot.bidCount ?? 0)} icon={<Gavel size={16} />} />
+              <Metric label={t('auction.increment')} value={formatMoney(minIncrementForLot(lot, state))} icon={<Plus size={16} />} />
+              <Metric label={t('auction.deposit')} value={formatMoney(lot.depositAmount ?? 0)} icon={<WalletCards size={16} />} />
+            </div>
+            <article className={rankingExpanded ? 'ranking-panel detail-ranking-panel is-expanded' : 'ranking-panel detail-ranking-panel'}>
+              <div className="detail-ranking-header">
+                <h4>{t('auction.ranking')}</h4>
               </div>
-            ))}
-          </article>
+              <div className="detail-ranking-list">
+                {visibleRanking.length ? (
+                  visibleRanking.map((item) => (
+                    <div className="ranking-row" key={`${item.rank}-${item.bidderId}`}>
+                      <span>{item.rank}</span>
+                      <strong>{item.nicknameMask}</strong>
+                      <b className={item.rank === 1 ? 'detail-ranking-price is-first' : 'detail-ranking-price'}>{formatMoney(item.price)}</b>
+                    </div>
+                  ))
+                ) : (
+                  <p className="detail-ranking-empty">{t('auction.rankingEmpty')}</p>
+                )}
+              </div>
+              {canToggleRanking ? (
+                <div className="detail-ranking-actions">
+                  <button type="button" aria-expanded={rankingExpanded} onClick={() => setRankingExpanded((value) => !value)}>
+                    {rankingExpanded ? t('auction.collapseRanking') : t('auction.expandRanking')}
+                  </button>
+                </div>
+              ) : null}
+            </article>
+          </div>
         </div>
-        <footer className="sheet-actions">
-          <Button block fill={enrolled ? 'outline' : 'solid'} color="primary" loading={enrolling} disabled={!canBid} onClick={onEnroll}>
-            {enrolled ? t('auction.enrolled') : t('auction.enroll')}
-          </Button>
-          <Button block color="danger" disabled={!canBid || !enrolled} onClick={onBid}>
-            {canBid ? t('product.bidNow') : t('product.viewResult')}
-          </Button>
-          {!canBid && state.status === 'CLOSED_WON' ? (
-            <Button block color="primary" onClick={onPay}>
-              {t('auction.pay')}
+        {action ? (
+          <footer className="sheet-actions detail-sticky-actions">
+            <Button block color={action.color} loading={action.loading} disabled={action.disabled} className={action.kind === 'wait' || action.kind === 'pendingOrder' ? 'detail-action-button is-muted' : 'detail-action-button'} onClick={handleAction}>
+              {t(action.label)}
             </Button>
-          ) : null}
-        </footer>
+          </footer>
+        ) : null}
         </>
       )}
     </AnimatedSheetFrame>
@@ -4042,6 +4822,7 @@ function LotDetailSheet({
 }
 
 function BidSheet({
+  variant,
   phase,
   zIndex,
   accessibilityHidden,
@@ -4055,6 +4836,7 @@ function BidSheet({
   onClose,
   onSubmit
 }: {
+  variant: LiveSheetVariant;
   phase: LiveSheetPhase;
   zIndex: number;
   accessibilityHidden?: boolean;
@@ -4129,7 +4911,7 @@ function BidSheet({
   const submitText = isClosed ? t('bid.endedAutoReturn', { seconds: closedCountdown }) : feedback.status === 'submitting' ? t('auction.bidSubmitted') : t('bid.submitNow');
 
   return (
-    <AnimatedSheetFrame variant="quickBid" phase={phase} zIndex={zIndex} accessibilityHidden={accessibilityHidden} className="bid-sheet quick-bid-sheet" label={t('bid.confirmTitle')} onClose={onClose}>
+    <AnimatedSheetFrame variant={variant} phase={phase} zIndex={zIndex} accessibilityHidden={accessibilityHidden} className="bid-sheet quick-bid-sheet" label={t('bid.confirmTitle')} onClose={onClose}>
       {() => (
         <>
         <div className="quick-bid-timer">
@@ -4208,17 +4990,26 @@ function BidSheet({
 function DigitalHumanLiveStage({ idleVideoUrl, talkVideoUrl, initialMediaPosition }: { idleVideoUrl: string; talkVideoUrl: string; initialMediaPosition?: PreviewMediaSnapshot }) {
   const idleVideoRef = useRef<HTMLVideoElement>(null);
   const talkVideoRef = useRef<HTMLVideoElement>(null);
+  const appliedInitialMediaKeyRef = useRef<string>();
+  const initialMediaKey = useMemo(() => previewMediaSnapshotKey(initialMediaPosition), [initialMediaPosition]);
   const [mediaError, setMediaError] = useState(false);
 
   const syncIdleVideoPosition = useCallback(() => {
     const idleVideo = idleVideoRef.current;
     forceMutedVideo(idleVideo);
-    if (initialMediaPosition) {
-      applyInitialMediaPosition(idleVideo, initialMediaPosition);
-      return;
+    if (initialMediaPosition && initialMediaKey && appliedInitialMediaKeyRef.current !== initialMediaKey) {
+      const applied = applyInitialMediaPosition(idleVideo, initialMediaPosition);
+      if (applied) {
+        appliedInitialMediaKeyRef.current = initialMediaKey;
+        return;
+      }
     }
     void playVideo(idleVideo);
-  }, [initialMediaPosition]);
+  }, [initialMediaPosition, initialMediaKey]);
+
+  useEffect(() => {
+    appliedInitialMediaKeyRef.current = undefined;
+  }, [idleVideoUrl]);
 
   useEffect(() => {
     const talkVideo = talkVideoRef.current;

@@ -1,10 +1,76 @@
-import { describe, expect, it, vi } from 'vitest';
-import { buildLiveSessionWsUrl, isFreshRealtimeMessage, MockRealtimeClient, MockRealtimeControlClient } from './realtime';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  buildLiveRoomWsUrl,
+  isFreshRealtimeMessage,
+  MockRealtimeClient,
+  MockRealtimeControlClient,
+  NativeWebSocketClient,
+  nextNativeReconnectDelay,
+  realtimeLastSeqStorageKey
+} from './realtime';
+
+function createFakeWebSocketHarness() {
+  type Listener = (event?: { data?: string }) => void;
+  const sockets: Array<{
+    url: string;
+    closed: boolean;
+    readyState: number;
+    listeners: Record<string, Listener[]>;
+    addEventListener: (type: string, handler: Listener) => void;
+    open: () => void;
+    close: () => void;
+    emit: (message: unknown) => void;
+  }> = [];
+
+  class FakeWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSED = 3;
+    url: string;
+    readyState = FakeWebSocket.CONNECTING;
+    closed = false;
+    listeners: Record<string, Listener[]> = {};
+
+    constructor(url: string) {
+      this.url = url;
+      sockets.push(this);
+    }
+
+    addEventListener(type: string, handler: Listener) {
+      this.listeners[type] = [...(this.listeners[type] ?? []), handler];
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.listeners.open?.forEach((handler) => handler());
+    }
+
+    close() {
+      if (this.closed) return;
+      this.readyState = FakeWebSocket.CLOSED;
+      this.closed = true;
+      this.listeners.close?.forEach((handler) => handler());
+    }
+
+    emit(message: unknown) {
+      this.listeners.message?.forEach((handler) => handler({ data: JSON.stringify(message) }));
+    }
+  }
+
+  vi.stubGlobal('WebSocket', FakeWebSocket);
+  return { sockets };
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  window.localStorage.clear();
+});
 
 describe('realtime', () => {
-  it('builds the live-session WebSocket URL with lastSeq recovery', () => {
-    expect(buildLiveSessionWsUrl('ws://127.0.0.1:8888', '9001', 18)).toBe(
-      'ws://127.0.0.1:8888/ws/live-sessions/9001?lastSeq=18'
+  it('builds the live-room WebSocket URL with lastSeq recovery', () => {
+    expect(buildLiveRoomWsUrl('ws://127.0.0.1:8888', '9001', 18)).toBe(
+      'ws://127.0.0.1:8888/ws/live-rooms/9001?lastSeq=18'
     );
   });
 
@@ -12,6 +78,68 @@ describe('realtime', () => {
     expect(isFreshRealtimeMessage({ type: 'bid.accepted', seq: 12, payload: {} }, 11)).toBe(true);
     expect(isFreshRealtimeMessage({ type: 'bid.accepted', seq: 12, payload: {} }, 12)).toBe(false);
     expect(isFreshRealtimeMessage({ type: 'bid.accepted', seq: 9, payload: {} }, 12)).toBe(false);
+  });
+
+  it('calculates native reconnect delay with exponential backoff and jitter', () => {
+    expect(nextNativeReconnectDelay(0, () => 0)).toBe(500);
+    expect(nextNativeReconnectDelay(2, () => 0.5)).toBe(2500);
+    expect(nextNativeReconnectDelay(20, () => 0)).toBe(10_000);
+  });
+
+  it('persists native WebSocket lastSeq and drops duplicate replayed messages', () => {
+    const { sockets } = createFakeWebSocketHarness();
+    const client = new NativeWebSocketClient({
+      baseUrl: 'ws://127.0.0.1:8080',
+      roomId: 'room_1001',
+      storage: window.localStorage
+    });
+    const seen: string[] = [];
+    client.onMessage((message) => seen.push(message.type));
+
+    client.connect();
+    sockets[0].open();
+    sockets[0].emit({ type: 'bid.accepted', seq: 12, payload: { auctionId: 'auc_2001' } });
+    sockets[0].emit({ type: 'ranking.updated', seq: 12, payload: { auctionId: 'auc_2001', items: [] } });
+    sockets[0].emit({ type: 'timer.extended', seq: 9, payload: { auctionId: 'auc_2001' } });
+    sockets[0].emit({ type: 'room.online', seq: 13, payload: { roomId: 'room_1001', count: 328 } });
+
+    expect(seen).toEqual(['bid.accepted', 'room.online']);
+    expect(window.localStorage.getItem(realtimeLastSeqStorageKey('room_1001'))).toBe('13');
+    client.disconnect();
+  });
+
+  it('reconnects native WebSocket with persisted lastSeq after close and gateway draining', async () => {
+    vi.useFakeTimers();
+    const { sockets } = createFakeWebSocketHarness();
+    const client = new NativeWebSocketClient({
+      baseUrl: 'ws://127.0.0.1:8080/',
+      roomId: 'room_1001',
+      storage: window.localStorage,
+      reconnect: {
+        random: () => 0
+      }
+    });
+
+    client.connect();
+    sockets[0].open();
+    sockets[0].emit({ type: 'bid.accepted', seq: 21, payload: { auctionId: 'auc_2001' } });
+    sockets[0].close();
+    await vi.advanceTimersByTimeAsync(499);
+    expect(sockets).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sockets).toHaveLength(2);
+    expect(sockets[1].url).toBe('ws://127.0.0.1:8080/ws/live-rooms/room_1001?lastSeq=21');
+
+    sockets[1].open();
+    sockets[1].emit({ type: 'gateway.draining', payload: { retryAfterMs: 5000 } });
+    expect(sockets[1].closed).toBe(true);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sockets).toHaveLength(3);
+    expect(sockets[2].url).toBe('ws://127.0.0.1:8080/ws/live-rooms/room_1001?lastSeq=21');
+
+    client.disconnect();
   });
 
   it('emits live-room online, heartbeat, bid, ranking, snapshot-required, and close events in mock mode', async () => {
