@@ -2622,7 +2622,260 @@ describe('App flow', () => {
     }
   });
 
-  it('plays side-cannon celebration when the current user wins the lot', async () => {
+  it('shows the final-ten-second countdown through the global auction alert layer', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    vi.mocked(api.getAuctionState).mockResolvedValueOnce({
+      auctionId: 'auc_2001',
+      status: 'RUNNING',
+      currentPrice: 150100,
+      leaderBidderId: 'u2',
+      endTsMs: now + 9000,
+      serverTsMs: now,
+      bidCount: 36,
+      participantCount: 128
+    });
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      const pressureLayer = document.querySelector('.live-auction-alert.is-countdown.is-warning');
+      expect(pressureLayer).toBeInTheDocument();
+      expect(pressureLayer).toHaveTextContent('9');
+      expect(document.querySelector('.live-auction-alert-layer')).toContainElement(pressureLayer);
+      expect(document.querySelector('.live-countdown-pressure')).not.toBeInTheDocument();
+      expect(document.querySelector('.auction-float-countdown.is-warning')).toBeInTheDocument();
+      expect(document.querySelector('.live-auction-alert.is-countdown.is-critical')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('suppresses the countdown alert while a higher-priority auction alert is visible', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    vi.mocked(api.getAuctionState).mockResolvedValueOnce({
+      auctionId: 'auc_2001',
+      status: 'RUNNING',
+      currentPrice: 150100,
+      leaderBidderId: 'u2',
+      endTsMs: now + 3000,
+      serverTsMs: now,
+      bidCount: 36,
+      participantCount: 128
+    });
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      expect(document.querySelector('.live-auction-alert.is-countdown.is-critical')).toBeInTheDocument();
+      expect(document.querySelector('.auction-float-countdown.is-critical')).toBeInTheDocument();
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.accepted',
+          payload: {
+            auctionId: 'auc_2001',
+            bidderId: 'u1',
+            currentPrice: 150200,
+            leaderBidderId: 'u1',
+            bidTsMs: now + 1000
+          }
+        });
+      });
+
+      expect(document.querySelector('.live-auction-alert.is-leading')).toBeInTheDocument();
+      expect(document.querySelector('.live-auction-alert.is-countdown')).not.toBeInTheDocument();
+      await act(async () => {
+        vi.advanceTimersByTime(2600);
+      });
+      expect(document.querySelector('.live-auction-alert.is-leading')).not.toBeInTheDocument();
+      expect(document.querySelector('.live-auction-alert.is-countdown.is-critical')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('hides the countdown alert once the auction is closed', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    vi.mocked(api.getAuctionState).mockResolvedValueOnce({
+      auctionId: 'auc_2001',
+      status: 'RUNNING',
+      currentPrice: 150100,
+      leaderBidderId: 'u2',
+      endTsMs: now + 2000,
+      serverTsMs: now,
+      bidCount: 36,
+      participantCount: 128
+    });
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      expect(document.querySelector('.live-auction-alert.is-countdown.is-critical')).toBeInTheDocument();
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'auction.closed',
+          payload: {
+            auctionId: 'auc_2001',
+            status: 'CLOSED_WON',
+            winnerBidderId: 'u2',
+            finalPrice: 150100,
+            closedTsMs: Date.now()
+          }
+        });
+      });
+
+      expect(document.querySelector('.live-auction-alert.is-countdown')).not.toBeInTheDocument();
+      expect(document.querySelector('.live-auction-alert.is-closed')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows an atmospheric leading alert when the current user becomes leader', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.accepted',
+          payload: {
+            auctionId: 'auc_2001',
+            bidderId: 'u1',
+            currentPrice: 150200,
+            leaderBidderId: 'u1',
+            bidTsMs: now + 1000
+          }
+        });
+      });
+
+      expect(screen.getByText('领先')).toBeInTheDocument();
+      const leadingAlert = document.querySelector('.live-auction-alert.is-leading');
+      expect(leadingAlert).toBeInTheDocument();
+      expect(leadingAlert).toHaveTextContent('¥1502.00');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows an outbid alert only when another bidder overtakes the current user', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.accepted',
+          payload: {
+            auctionId: 'auc_2001',
+            bidderId: 'u3',
+            currentPrice: 150200,
+            leaderBidderId: 'u3',
+            bidTsMs: now + 1000
+          }
+        });
+      });
+      expect(screen.queryByText('被超越')).not.toBeInTheDocument();
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.accepted',
+          payload: {
+            auctionId: 'auc_2001',
+            bidderId: 'u1',
+            currentPrice: 150300,
+            leaderBidderId: 'u1',
+            bidTsMs: now + 1500
+          }
+        });
+      });
+      await flushApp();
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.accepted',
+          payload: {
+            auctionId: 'auc_2001',
+            bidderId: 'u4',
+            currentPrice: 150400,
+            leaderBidderId: 'u4',
+            bidTsMs: now + 2000
+          }
+        });
+      });
+
+      expect(screen.getByText('被超越')).toBeInTheDocument();
+      expect(screen.getByText('请立即加价夺回领先')).toBeInTheDocument();
+      expect(document.querySelector('.live-auction-alert.is-outbid')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows extension and closed alerts from realtime auction events', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'timer.extended',
+          payload: {
+            auctionId: 'auc_2001',
+            newEndTsMs: now + 180_000
+          }
+        });
+      });
+      expect(screen.getByText('竞拍延时')).toBeInTheDocument();
+      expect(document.querySelector('.live-auction-alert.is-extended')).toBeInTheDocument();
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'auction.closed',
+          payload: {
+            auctionId: 'auc_2001',
+            status: 'CLOSED_WON',
+            winnerBidderId: 'u2',
+            finalPrice: 150300,
+            closedTsMs: Date.now()
+          }
+        });
+      });
+      const closedAlert = document.querySelector('.live-auction-alert.is-closed');
+      expect(closedAlert).toBeInTheDocument();
+      expect(closedAlert).toHaveTextContent('竞拍结束');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows a global won alert instead of the old standalone celebration when the current user wins the lot', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
     const sockets = installMockControlSocket();
@@ -2647,10 +2900,12 @@ describe('App flow', () => {
         });
       });
 
-      expect(screen.getByRole('status')).toHaveTextContent(getMessage('celebration.win'));
-      expect(document.querySelector('.winning-cannon.is-left')).toBeInTheDocument();
-      expect(document.querySelector('.winning-cannon.is-right')).toBeInTheDocument();
-      expect(document.querySelectorAll('.winning-confetti-piece')).toHaveLength(16);
+      expect(screen.getByRole('status')).toHaveTextContent('竞拍成功');
+      expect(document.querySelector('.live-auction-alert.is-won')).toBeInTheDocument();
+      expect(document.querySelector('.live-auction-alert-cannon.is-left')).toBeInTheDocument();
+      expect(document.querySelector('.live-auction-alert-cannon.is-right')).toBeInTheDocument();
+      expect(document.querySelectorAll('.live-auction-alert-confetti-piece')).toHaveLength(16);
+      expect(document.querySelector('.winning-celebration')).not.toBeInTheDocument();
 
       await act(async () => {
         vi.advanceTimersByTime(4200);

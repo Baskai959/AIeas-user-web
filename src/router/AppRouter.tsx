@@ -2921,6 +2921,107 @@ const winningConfettiPieces = [
   { x: 298, y: -254, rotate: 280, delay: 300, color: '#56d07f', shape: 'ribbon' }
 ] as const;
 
+type LiveAuctionAlertKind = 'countdown' | 'leading' | 'outbid' | 'extended' | 'closed' | 'won';
+type AuctionEventAlertKind = Exclude<LiveAuctionAlertKind, 'countdown'>;
+
+type LiveAuctionAlert = {
+  id: string;
+  kind: LiveAuctionAlertKind;
+  auctionId: string;
+  lotId?: string;
+  title: string;
+  subtitle?: string;
+  value?: string;
+  kicker?: string;
+  tone?: CountdownPressurePhase;
+  price?: number;
+  priority: number;
+  durationMs: number;
+};
+
+type LiveAuctionAlertInput = Omit<LiveAuctionAlert, 'id' | 'priority' | 'durationMs'> & {
+  priority?: number;
+  durationMs?: number;
+};
+
+type CountdownPressurePhase = 'idle' | 'warning' | 'critical' | 'extended';
+
+const liveAuctionAlertPriority: Record<LiveAuctionAlertKind, number> = {
+  countdown: 10,
+  leading: 20,
+  outbid: 40,
+  extended: 30,
+  closed: 50,
+  won: 100
+};
+
+const liveAuctionAlertDurationMs: Record<LiveAuctionAlertKind, number> = {
+  countdown: 1400,
+  leading: 2600,
+  outbid: 3200,
+  extended: 2800,
+  closed: 3000,
+  won: WIN_CELEBRATION_DURATION_MS
+};
+
+const countdownPressureWarningMs = 10_000;
+const countdownPressureCriticalMs = 3000;
+const countdownPressureExtendedMs = 1200;
+
+function getCountdownPressurePhase(remainMs: number, status?: AuctionState['status'], extended = false): CountdownPressurePhase {
+  if (extended) return 'extended';
+  if (status !== 'RUNNING' && status !== 'EXTENDED') return 'idle';
+  if (remainMs <= 0) return 'idle';
+  if (remainMs <= countdownPressureCriticalMs) return 'critical';
+  if (remainMs <= countdownPressureWarningMs) return 'warning';
+  return 'idle';
+}
+
+function useLiveAuctionAlerts() {
+  const [alerts, setAlerts] = useState<LiveAuctionAlert[]>([]);
+  const timersRef = useRef<Record<string, number>>({});
+
+  const dismissAlert = useCallback((id: string) => {
+    const timer = timersRef.current[id];
+    if (timer) {
+      window.clearTimeout(timer);
+      delete timersRef.current[id];
+    }
+    setAlerts((prev) => prev.filter((alert) => alert.id !== id));
+  }, []);
+
+  const pushAlert = useCallback(
+    (input: LiveAuctionAlertInput) => {
+      const id = makeRequestId(`auction-alert-${input.kind}`);
+      const alert: LiveAuctionAlert = {
+        ...input,
+        id,
+        priority: input.priority ?? liveAuctionAlertPriority[input.kind],
+        durationMs: input.durationMs ?? liveAuctionAlertDurationMs[input.kind]
+      };
+
+      setAlerts((prev) => {
+        const withoutDuplicate = prev.filter((item) => !(item.kind === alert.kind && item.auctionId === alert.auctionId));
+        if (alert.kind === 'won') return [alert];
+        return [alert, ...withoutDuplicate.filter((item) => item.kind !== 'won')].slice(0, 3);
+      });
+
+      timersRef.current[id] = window.setTimeout(() => dismissAlert(id), alert.durationMs);
+    },
+    [dismissAlert]
+  );
+
+  useEffect(
+    () => () => {
+      Object.values(timersRef.current).forEach((timer) => window.clearTimeout(timer));
+      timersRef.current = {};
+    },
+    []
+  );
+
+  return { alerts, pushAlert };
+}
+
 function LiveRoomPage({
   apiClient,
   roomId,
@@ -2957,10 +3058,11 @@ function LiveRoomPage({
   const [enrolledAuctions, setEnrolledAuctions] = useState<Set<string>>(() => new Set());
   const [lotStates, setLotStates] = useState<Record<string, AuctionState>>({});
   const [liveStats, setLiveStats] = useState<LiveRoomStats>(demoLiveRoomStats);
+  const [countdownExtensionPulse, setCountdownExtensionPulse] = useState<{ auctionId: string; id: number } | undefined>();
   const [likeBurstId, setLikeBurstId] = useState(0);
   const [likeBurstVisible, setLikeBurstVisible] = useState(false);
-  const [winningCelebrationId, setWinningCelebrationId] = useState<string>();
   const [now, setNow] = useState(Date.now());
+  const { alerts: auctionAlerts, pushAlert: pushAuctionAlert } = useLiveAuctionAlerts();
   const realtimeRef = useRef<RealtimeClient>();
   const lastSeqRef = useRef(0);
   const lastRankingBidRef = useRef<RankingBidHint>();
@@ -2969,6 +3071,7 @@ function LiveRoomPage({
   const liveSheetKeysRef = useRef<Set<string>>(new Set());
   const floatingAuctionCardRef = useRef<FloatingAuctionCardState>();
   const pendingFloatingAuctionCardRef = useRef<FloatingAuctionCardState>();
+  const countdownExtensionTimerRef = useRef<number>();
   const likeBurstTimerRef = useRef<number>();
   const commentsViewportRef = useRef<HTMLDivElement>(null);
   const commentsEndRef = useRef<HTMLDivElement>(null);
@@ -3054,6 +3157,7 @@ function LiveRoomPage({
 
   useEffect(() => {
     return () => {
+      if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
       if (likeBurstTimerRef.current) window.clearTimeout(likeBurstTimerRef.current);
     };
   }, []);
@@ -3061,6 +3165,32 @@ function LiveRoomPage({
   const currentState = activeLot ? lotStates[activeLot.auctionId] ?? stateQuery.data ?? activeLotInitialState : undefined;
   const hasBlockingLiveSheet = liveSheets.some((sheet) => sheet.phase !== 'closing');
   const liveSheetOpen = hasBlockingLiveSheet;
+  const activeCountdownRemainMs = currentState ? msUntil(currentState.endTsMs, now) : 0;
+  const activeCountdownPressurePhase = getCountdownPressurePhase(
+    activeCountdownRemainMs,
+    currentState?.status,
+    Boolean(countdownExtensionPulse && countdownExtensionPulse.auctionId === activeLot?.auctionId)
+  );
+  const countdownAlert = useMemo<LiveAuctionAlert | undefined>(() => {
+    if (!activeLot || !currentState || activeCountdownPressurePhase === 'idle') return undefined;
+    const seconds = Math.max(0, Math.ceil(activeCountdownRemainMs / 1000));
+    const isExtended = activeCountdownPressurePhase === 'extended';
+    const subtitle = isExtended ? t('countdownPressure.extendedSubtitle') : t('countdownPressure.subtitle');
+    return {
+      id: `countdown-${activeLot.auctionId}-${activeCountdownPressurePhase}-${seconds}`,
+      kind: 'countdown',
+      auctionId: activeLot.auctionId,
+      lotId: activeLot.id,
+      tone: activeCountdownPressurePhase,
+      kicker: activeCountdownPressurePhase === 'critical' ? t('countdownPressure.criticalKicker') : t('countdownPressure.kicker'),
+      title: isExtended ? t('countdownPressure.extendedTitle') : t('countdownPressure.title', { seconds }),
+      subtitle: activeLot.title ? `${subtitle} · ${activeLot.title}` : subtitle,
+      value: isExtended ? '+' : String(seconds),
+      priority: liveAuctionAlertPriority.countdown,
+      durationMs: liveAuctionAlertDurationMs.countdown
+    };
+  }, [activeCountdownPressurePhase, activeCountdownRemainMs, activeLot, currentState]);
+  const visibleAuctionAlerts = auctionAlerts.length ? auctionAlerts : countdownAlert ? [countdownAlert] : [];
   const stateForLot = useCallback(
     (lot: LiveRoomLot) => lotStates[lot.auctionId] ?? (lot.auctionId === activeLot?.auctionId ? currentState : stateFromLot(lot)),
     [activeLot?.auctionId, currentState, lotStates]
@@ -3252,6 +3382,34 @@ function LiveRoomPage({
     [appendChatMessage, roomId]
   );
 
+  const pushAuctionAtmosphereAlert = useCallback(
+    (kind: AuctionEventAlertKind, options: { auctionId: string; lot?: LiveRoomLot; price?: number; subtitle?: string }) => {
+      const titleKey: Record<AuctionEventAlertKind, MessageKey> = {
+        leading: 'auctionAlert.leading.title',
+        outbid: 'auctionAlert.outbid.title',
+        extended: 'auctionAlert.extended.title',
+        closed: 'auctionAlert.closed.title',
+        won: 'auctionAlert.won.title'
+      };
+      const subtitleKey: Record<AuctionEventAlertKind, MessageKey> = {
+        leading: 'auctionAlert.leading.subtitle',
+        outbid: 'auctionAlert.outbid.subtitle',
+        extended: 'auctionAlert.extended.subtitle',
+        closed: 'auctionAlert.closed.subtitle',
+        won: 'auctionAlert.won.subtitle'
+      };
+      pushAuctionAlert({
+        kind,
+        auctionId: options.auctionId,
+        lotId: options.lot?.id,
+        title: t(titleKey[kind]),
+        subtitle: options.subtitle ?? t(subtitleKey[kind]),
+        price: options.price
+      });
+    },
+    [pushAuctionAlert]
+  );
+
   const acknowledgeChatMessage = useCallback((payload: Record<string, unknown>) => {
     const clientMessageId = String(payload.clientMessageId ?? '');
     if (!clientMessageId) return;
@@ -3391,13 +3549,42 @@ function LiveRoomPage({
         const payload = message.payload as Record<string, unknown>;
         const auctionId = String(payload.auctionId ?? latestContext.current.activeLot?.auctionId ?? '');
         const bidderId = String(payload.bidderId ?? payload.leaderBidderId ?? '');
+        const context = latestContext.current;
+        const acceptedLot = context.lots.find((lot) => lot.auctionId === auctionId);
+        const previousState = context.activeLot?.auctionId === auctionId ? context.currentState : undefined;
+        const previousLeaderId = previousState?.leaderBidderId ?? acceptedLot?.leaderBidderId;
+        const acceptedPrice = Number(payload.currentPrice ?? payload.price ?? previousState?.currentPrice ?? acceptedLot?.currentPrice ?? 0);
+        if (auctionId && acceptedLot && bidderId === userId) {
+          pushAuctionAtmosphereAlert('leading', { auctionId, lot: acceptedLot, price: acceptedPrice });
+        } else if (auctionId && acceptedLot && previousLeaderId === userId && bidderId && bidderId !== userId) {
+          pushAuctionAtmosphereAlert('outbid', { auctionId, lot: acceptedLot, price: acceptedPrice });
+        }
         if (auctionId && bidderId) {
           lastRankingBidRef.current = {
             auctionId,
             bidderId,
-            price: Number(payload.currentPrice ?? payload.price ?? 0),
+            price: acceptedPrice,
             bidTsMs: Number(payload.bidTsMs ?? Date.now())
           };
+        }
+      }
+      if (message.type === 'timer.extended') {
+        const payload = message.payload as Record<string, unknown>;
+        const context = latestContext.current;
+        const auctionId = String(payload.auctionId ?? context.activeLot?.auctionId ?? '');
+        const extendedLot = context.lots.find((lot) => lot.auctionId === auctionId);
+        if (auctionId && extendedLot && context.activeLot?.auctionId === auctionId) {
+          const newEndTsMs = Number(payload.newEndTsMs ?? payload.endTsMs ?? context.currentState?.endTsMs ?? Date.now());
+          if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
+          setCountdownExtensionPulse({ auctionId, id: Date.now() });
+          countdownExtensionTimerRef.current = window.setTimeout(() => {
+            setCountdownExtensionPulse((current) => (current?.auctionId === auctionId ? undefined : current));
+          }, countdownPressureExtendedMs);
+          pushAuctionAtmosphereAlert('extended', {
+            auctionId,
+            lot: extendedLot,
+            subtitle: t('auctionAlert.extended.subtitleWithTime', { time: formatCountdown(msUntil(newEndTsMs, Date.now())) })
+          });
         }
       }
       if (message.type === 'auction.started') {
@@ -3419,6 +3606,8 @@ function LiveRoomPage({
             bidCount: payload.bidCount === undefined ? baseStartedState.bidCount : Number(payload.bidCount),
             participantCount: payload.participantCount === undefined ? baseStartedState.participantCount : Number(payload.participantCount)
           };
+          if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
+          setCountdownExtensionPulse(undefined);
           setHiddenAuctionCardId(undefined);
           setRuntimeStartedAuctionId(auctionId);
           setLotStates((prev) => {
@@ -3457,8 +3646,15 @@ function LiveRoomPage({
         const context = latestContext.current;
         const closingAuctionId = String(payload.auctionId ?? context.activeLot?.auctionId ?? '');
         const winnerBidderId = String(payload.winnerBidderId ?? '');
-        if (String(payload.status ?? 'CLOSED_WON') === 'CLOSED_WON' && winnerBidderId === userId) {
-          setWinningCelebrationId(`${closingAuctionId || 'auction'}-${Date.now()}`);
+        const isCurrentUserWinner = String(payload.status ?? 'CLOSED_WON') === 'CLOSED_WON' && winnerBidderId === userId;
+        if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
+        setCountdownExtensionPulse(undefined);
+        if (closingAuctionId && context.activeLot?.auctionId === closingAuctionId) {
+          pushAuctionAtmosphereAlert(isCurrentUserWinner ? 'won' : 'closed', {
+            auctionId: closingAuctionId,
+            lot: context.activeLot,
+            price: Number(payload.finalPrice ?? context.currentState?.currentPrice ?? 0)
+          });
         }
         const visibleCard = floatingAuctionCardRef.current;
         if (
@@ -3494,6 +3690,7 @@ function LiveRoomPage({
       }
       handleRealtimeMessage(message, {
         activeAuctionId: latestContext.current.activeLot?.auctionId,
+        activeAuctionState: latestContext.current.currentState,
         userId,
         setLiveStats,
         setLotStates,
@@ -3526,7 +3723,7 @@ function LiveRoomPage({
       controlClient?.disconnect();
       client?.disconnect();
     };
-  }, [acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, pushNotice, requestFloatingAuctionCard, roomId, userId]);
+  }, [acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, pushAuctionAtmosphereAlert, pushNotice, requestFloatingAuctionCard, roomId, userId]);
 
   const enrollMutation = useMutation({
     mutationFn: (auctionId: string) => apiClient.enrollAuction(auctionId),
@@ -3758,43 +3955,62 @@ function LiveRoomPage({
           />
         );
       })}
-      {winningCelebrationId ? <WinningCelebration key={winningCelebrationId} message={t('celebration.win')} onComplete={() => setWinningCelebrationId(undefined)} /> : null}
+      <LiveAuctionAlertLayer alerts={visibleAuctionAlerts} />
     </section>
   );
 }
-
-function WinningCelebration({ message, onComplete }: { message: string; onComplete?: () => void }) {
-  const [visible, setVisible] = useState(true);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setVisible(false);
-      onComplete?.();
-    }, WIN_CELEBRATION_DURATION_MS);
-    return () => window.clearTimeout(timer);
-  }, [onComplete]);
-
-  if (!visible) return null;
-
+function LiveAuctionAlertLayer({ alerts }: { alerts: LiveAuctionAlert[] }) {
+  if (!alerts.length) return null;
   return (
-    <div className="winning-celebration" role="status" aria-live="polite">
-      <div className="winning-celebration-message">{message}</div>
-      <div className="winning-cannon is-left" aria-hidden="true">
-        <span className="winning-cannon-rim" />
-        <span className="winning-cannon-body" />
-        <span className="winning-cannon-spark" />
+    <div className="live-auction-alert-layer" aria-live="polite">
+      {alerts.map((alert, index) => (
+        <LiveAuctionAlertCard key={alert.id} alert={alert} index={index} />
+      ))}
+    </div>
+  );
+}
+
+function LiveAuctionAlertCard({ alert, index }: { alert: LiveAuctionAlert; index: number }) {
+  const isWon = alert.kind === 'won';
+  const toneClass = alert.tone && alert.tone !== 'idle' ? ` is-${alert.tone}` : '';
+  return (
+    <article
+      className={`live-auction-alert is-${alert.kind}${toneClass}`}
+      role="status"
+      aria-label={alert.subtitle ? `${alert.title}，${alert.subtitle}` : alert.title}
+      style={{ '--auction-alert-index': index } as CSSProperties}
+    >
+      <div className="live-auction-alert-card">
+        <span className="live-auction-alert-kicker">{alert.kicker ?? t(`auctionAlert.${alert.kind}.kicker` as MessageKey)}</span>
+        <strong className={alert.value ? 'live-auction-alert-value' : undefined}>{alert.value ?? alert.title}</strong>
+        {alert.value ? <span className="live-auction-alert-title">{alert.title}</span> : null}
+        {alert.subtitle ? <span>{alert.subtitle}</span> : null}
+        {alert.price !== undefined ? <em>{formatMoney(alert.price)}</em> : null}
       </div>
-      <div className="winning-cannon is-right" aria-hidden="true">
-        <span className="winning-cannon-rim" />
-        <span className="winning-cannon-body" />
-        <span className="winning-cannon-spark" />
+      {isWon ? <LiveAuctionAlertCelebration /> : null}
+    </article>
+  );
+}
+
+function LiveAuctionAlertCelebration() {
+  return (
+    <>
+      <div className="live-auction-alert-cannon is-left" aria-hidden="true">
+        <span className="live-auction-alert-cannon-rim" />
+        <span className="live-auction-alert-cannon-body" />
+        <span className="live-auction-alert-cannon-spark" />
       </div>
-      <div className="winning-confetti" aria-hidden="true">
+      <div className="live-auction-alert-cannon is-right" aria-hidden="true">
+        <span className="live-auction-alert-cannon-rim" />
+        <span className="live-auction-alert-cannon-body" />
+        <span className="live-auction-alert-cannon-spark" />
+      </div>
+      <div className="live-auction-alert-confetti" aria-hidden="true">
         {(['left', 'right'] as const).flatMap((side) =>
           winningConfettiPieces.map((piece, index) => (
             <span
               key={`${side}-${index}`}
-              className={`winning-confetti-piece is-${side} is-${piece.shape}`}
+              className={`live-auction-alert-confetti-piece is-${side} is-${piece.shape}`}
               style={
                 {
                   '--confetti-x': `${piece.x}px`,
@@ -3808,7 +4024,7 @@ function WinningCelebration({ message, onComplete }: { message: string; onComple
           ))
         )}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -4518,6 +4734,7 @@ function RoomStatePage({ room, lots, status, onBack, onPay }: { room: LiveRoom; 
 
 interface RealtimeHandlerOptions {
   activeAuctionId?: string;
+  activeAuctionState?: AuctionState;
   userId: string;
   setLiveStats: (updater: (prev: LiveRoomStats) => LiveRoomStats) => void;
   setLotStates: (updater: (prev: Record<string, AuctionState>) => Record<string, AuctionState>) => void;
@@ -4567,20 +4784,23 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
   if (message.type === 'bid.accepted') {
     const payload = message.payload as Record<string, unknown>;
     const auctionId = String(payload.auctionId ?? options.activeAuctionId ?? '');
-    options.setLotStates((prev) => ({
-      ...prev,
-      [auctionId]: {
-        ...(prev[auctionId] ?? fallbackAuctionState(auctionId)),
-        auctionId,
-        status: 'RUNNING',
-        currentPrice: Number(payload.currentPrice ?? payload.price ?? prev[auctionId]?.currentPrice ?? 0),
-        leaderBidderId: String(payload.leaderBidderId ?? payload.bidderId ?? ''),
-        bidCount: payload.bidCount === undefined ? (prev[auctionId]?.bidCount ?? 0) + 1 : Number(payload.bidCount),
-        participantCount: payload.participantCount === undefined ? prev[auctionId]?.participantCount : Number(payload.participantCount),
-        endTsMs: Number(payload.endTsMs ?? prev[auctionId]?.endTsMs ?? Date.now()),
-        serverTsMs: Date.now()
-      }
-    }));
+    options.setLotStates((prev) => {
+      const previous = prev[auctionId] ?? (auctionId === options.activeAuctionId ? options.activeAuctionState : undefined) ?? fallbackAuctionState(auctionId);
+      return {
+        ...prev,
+        [auctionId]: {
+          ...previous,
+          auctionId,
+          status: 'RUNNING',
+          currentPrice: Number(payload.currentPrice ?? payload.price ?? previous.currentPrice ?? 0),
+          leaderBidderId: String(payload.leaderBidderId ?? payload.bidderId ?? ''),
+          bidCount: payload.bidCount === undefined ? (previous.bidCount ?? 0) + 1 : Number(payload.bidCount),
+          participantCount: payload.participantCount === undefined ? previous.participantCount : Number(payload.participantCount),
+          endTsMs: Number(payload.endTsMs ?? previous.endTsMs ?? Date.now()),
+          serverTsMs: Date.now()
+        }
+      };
+    });
     options.onBidAccepted?.(message.requestId, payload);
     options.setNotice(String(payload.bidderId ?? payload.leaderBidderId) === options.userId ? t('auction.bidAccepted') : t('live.chat.bid'));
   }
@@ -4669,6 +4889,8 @@ function AuctionFloatingCard({
   const leader = state.leaderBidderId ? (ranking[0]?.nicknameMask ?? defaultRanking(state)[0]?.nicknameMask) : undefined;
   const actionText = ended ? t('auction.closed') : enrolled ? t('auction.quickBid') : t('auction.lookAround');
   const className = ['auction-float-card', `is-${phase}`, ended ? 'is-ended' : ''].filter(Boolean).join(' ');
+  const countdownPhase = ended ? 'idle' : getCountdownPressurePhase(remainMs, state.status);
+  const countdownClassName = ['auction-float-countdown', countdownPhase !== 'idle' ? `is-${countdownPhase}` : ''].filter(Boolean).join(' ');
   return (
     <article className={className}>
       <button
@@ -4687,7 +4909,7 @@ function AuctionFloatingCard({
         <h2>{lot.title}</h2>
         <strong>{formatMoney(priceValue(lot, state))}</strong>
         <p>{leader ?? t('bid.startPriceBidder')}</p>
-        <small>{ended ? t('auction.endShort') : formatCountdown(remainMs)}</small>
+        <small className={countdownClassName}>{ended ? t('auction.endShort') : formatCountdown(remainMs)}</small>
         <div className="float-card-legacy" aria-hidden="true">
           <span className="status-badge">{lotStatusLabel(state.status)}</span>
           <h2>{lot.title}</h2>
@@ -5174,6 +5396,8 @@ function BidSheet({
     ? t('bid.highestPriceNotice')
     : t('bid.aboveCurrentPriceNotice', { amount: formatQuickBidDeltaAmount(selectedPrice - currentBidPrice) });
   const countdownParts = formatCountdownParts(remainMs);
+  const countdownPhase = getCountdownPressurePhase(remainMs, state.status);
+  const countdownClassName = ['quick-bid-countdown', countdownPhase !== 'idle' ? `is-${countdownPhase}` : ''].filter(Boolean).join(' ');
   const closedCountdown = isClosed ? Math.max(0, Math.ceil(((closedAtMs ?? nowMs) + AUCTION_ENDED_HOLD_MS - nowMs) / 1000)) : 5;
 
   useEffect(() => {
@@ -5223,7 +5447,7 @@ function BidSheet({
           {isClosed ? (
             <h2>{t('bid.currentAuctionEnded')}</h2>
           ) : (
-            <h2 className="quick-bid-countdown">
+            <h2 className={countdownClassName}>
               <span className="quick-bid-countdown-label">{t('bid.countdownPrefix')}</span>
               <span className="quick-bid-countdown-display" aria-label={`${countdownParts.hours}:${countdownParts.minutes}:${countdownParts.seconds}`}>
                 <span className="quick-bid-countdown-unit">{countdownParts.hours}</span>
@@ -5455,13 +5679,41 @@ function ResultPage({ apiClient, auctionId, onBack, onPay }: { apiClient: ApiCli
       <h1>{t('result.title')}</h1>
       <h2>{order ? t('result.won') : t('result.lost')}</h2>
       <p>{auctionId}</p>
-      {order ? <WinningCelebration message={t('celebration.win')} /> : null}
+      {order ? <ResultWinningCelebration auctionId={auctionId} price={order.amount} /> : null}
       {order ? (
         <Button block color="primary" onClick={() => onPay(order.id)}>
           {t('auction.pay')}
         </Button>
       ) : null}
     </section>
+  );
+}
+
+function ResultWinningCelebration({ auctionId, price }: { auctionId: string; price?: number }) {
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setVisible(false), WIN_CELEBRATION_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  if (!visible) return null;
+
+  return (
+    <LiveAuctionAlertLayer
+      alerts={[
+        {
+          id: `result-${auctionId}`,
+          kind: 'won',
+          auctionId,
+          title: t('auctionAlert.won.title'),
+          subtitle: t('auctionAlert.won.subtitle'),
+          price,
+          priority: liveAuctionAlertPriority.won,
+          durationMs: liveAuctionAlertDurationMs.won
+        }
+      ]}
+    />
   );
 }
 

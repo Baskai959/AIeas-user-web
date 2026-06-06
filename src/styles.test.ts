@@ -315,18 +315,44 @@ describe('mobile layout CSS', () => {
     expect(rule('.logout-choice-actions .adm-button,\n.receipt-confirm-actions .adm-button')).toContain('min-height: 44px');
   });
 
-  it('animates the winning celebration cannons and confetti above live room UI', () => {
-    expect(rule('.winning-celebration')).toContain('position: fixed');
-    expect(rule('.winning-celebration')).toContain('z-index: 130');
-    expect(rule('.winning-celebration')).toContain('pointer-events: none');
-    expect(rule('.winning-cannon.is-left')).toContain('animation: winning-cannon-left');
-    expect(rule('.winning-cannon.is-right')).toContain('animation: winning-cannon-right');
-    expect(rule('.winning-confetti-piece')).toContain('animation: winning-confetti-left');
-    expect(rule('.winning-confetti-piece.is-right')).toContain('animation-name: winning-confetti-right');
-    expect(css).toContain('@keyframes winning-message-pop');
-    expect(css).toContain('@keyframes winning-cannon-left');
-    expect(css).toContain('@keyframes winning-cannon-right');
-    expect(css).toContain('@keyframes winning-confetti-left');
-    expect(css).toContain('@keyframes winning-confetti-right');
+  it('renders auction atmosphere alerts above all live-room UI without blocking touches', () => {
+    expect(rule('.live-auction-alert-layer')).toContain('position: fixed');
+    expect(rule('.live-auction-alert-layer')).toContain('z-index: 1400');
+    expect(rule('.live-auction-alert-layer')).toContain('pointer-events: none');
+    expect(rule('.live-auction-alert')).toContain('animation: auction-alert-pop');
+    expect(rule('.live-auction-alert.is-outbid')).toContain('animation-name: auction-alert-shake');
+    expect(rule('.live-auction-alert.is-won')).toContain('animation-name: auction-alert-win');
+    expect(rule('.live-auction-alert-cannon.is-left')).toContain('animation: auction-alert-cannon-left');
+    expect(rule('.live-auction-alert-cannon.is-right')).toContain('animation: auction-alert-cannon-right');
+    expect(rule('.live-auction-alert-confetti-piece')).toContain('animation: auction-alert-confetti-left');
+    expect(rule('.live-auction-alert-confetti-piece.is-right')).toContain('animation-name: auction-alert-confetti-right');
+    expect(css).toContain('@keyframes auction-alert-pop');
+    expect(css).toContain('@keyframes auction-alert-shake');
+    expect(css).toContain('@keyframes auction-alert-win');
+    expect(css).toContain('@keyframes auction-alert-cannon-left');
+    expect(css).toContain('@keyframes auction-alert-cannon-right');
+    expect(css).toContain('@keyframes auction-alert-confetti-left');
+    expect(css).toContain('@keyframes auction-alert-confetti-right');
+  });
+
+  it('styles the countdown pressure feedback through the global alert layer', () => {
+    expect(css).not.toContain('.live-countdown-pressure');
+    expect(rule('.live-auction-alert.is-countdown')).toContain('animation-duration: 1400ms');
+    expect(rule('.live-auction-alert.is-countdown .live-auction-alert-card')).toContain('background: linear-gradient');
+    expect(rule('.live-auction-alert.is-countdown .live-auction-alert-value')).toContain('font-size: clamp(58px, 18vw, 86px)');
+    expect(rule('.live-auction-alert.is-countdown.is-warning .live-auction-alert-card')).toContain('animation: countdown-alert-pulse');
+    expect(rule('.live-auction-alert.is-countdown.is-critical')).toContain('animation-name: auction-alert-shake');
+    expect(rule('.live-auction-alert.is-countdown.is-critical .live-auction-alert-card')).toContain('animation: countdown-alert-critical');
+    expect(rule('.live-auction-alert.is-countdown.is-extended .live-auction-alert-card')).toContain('animation: countdown-alert-extended');
+    expect(rule('.auction-float-countdown.is-warning')).toContain('color: #ffb020');
+    expect(rule('.auction-float-countdown.is-critical')).toContain('animation: float-countdown-critical');
+    expect(rule('.quick-bid-countdown.is-warning .quick-bid-countdown-unit')).toContain('animation: quick-countdown-warning');
+    expect(rule('.quick-bid-countdown.is-critical .quick-bid-countdown-unit')).toContain('animation: quick-countdown-critical');
+    expect(css).toContain('@keyframes countdown-alert-pulse');
+    expect(css).toContain('@keyframes countdown-alert-critical');
+    expect(css).toContain('@keyframes countdown-alert-extended');
+    expect(css).toContain('@keyframes float-countdown-critical');
+    expect(css).toContain('@keyframes quick-countdown-warning');
+    expect(css).toContain('@keyframes quick-countdown-critical');
   });
 });

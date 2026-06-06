@@ -1618,6 +1618,21 @@ button {
   font-size: 11px;
 }
 
+.auction-float-countdown {
+  transition: color 160ms ease, text-shadow 160ms ease, transform 160ms ease;
+}
+
+.auction-float-countdown.is-warning {
+  color: #ffb020;
+  text-shadow: 0 0 10px rgba(255, 176, 32, 0.5);
+}
+
+.auction-float-countdown.is-critical {
+  color: #ff3158;
+  text-shadow: 0 0 12px rgba(255, 49, 88, 0.65);
+  animation: float-countdown-critical 700ms ease-in-out infinite;
+}
+
 .float-card-main strong {
   display: block;
   margin: 2px 8px;
@@ -2559,6 +2574,15 @@ button {
   text-align: center;
   background: #ff8a00;
   border-radius: 6px;
+}
+
+.quick-bid-countdown.is-warning .quick-bid-countdown-unit {
+  animation: quick-countdown-warning 900ms ease-in-out infinite;
+}
+
+.quick-bid-countdown.is-critical .quick-bid-countdown-unit {
+  background: #ff3158;
+  animation: quick-countdown-critical 620ms ease-in-out infinite;
 }
 
 .quick-bid-countdown-separator {
@@ -4523,6 +4547,475 @@ button {
   border-radius: 8px;
 }
 
+.live-auction-alert-layer {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  z-index: 1400;
+  width: min(100vw, 460px);
+  height: 100dvh;
+  overflow: hidden;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.live-auction-alert {
+  position: absolute;
+  top: calc(clamp(84px, 17dvh, 148px) + var(--auction-alert-index, 0) * 76px);
+  left: 50%;
+  width: min(calc(100% - 42px), 326px);
+  color: #ffffff;
+  text-align: center;
+  transform: translate(-50%, 12px) scale(0.92);
+  animation: auction-alert-pop 2600ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.live-auction-alert-card {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  padding: 12px 18px 14px;
+  background: linear-gradient(135deg, rgba(16, 18, 28, 0.82), rgba(255, 49, 88, 0.78));
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 18px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28), 0 0 24px rgba(255, 49, 88, 0.22);
+  backdrop-filter: blur(14px);
+}
+
+.live-auction-alert-kicker {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.live-auction-alert strong {
+  font-size: 24px;
+  font-weight: 950;
+  line-height: 1.05;
+}
+
+.live-auction-alert span {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.live-auction-alert em {
+  color: #fff0a8;
+  font-size: 18px;
+  font-style: normal;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.live-auction-alert.is-countdown {
+  top: 24%;
+  width: min(calc(100% - 52px), 280px);
+  animation-duration: 1400ms;
+}
+
+.live-auction-alert.is-countdown .live-auction-alert-card {
+  min-width: 176px;
+  padding: 14px 20px 16px;
+  background: linear-gradient(135deg, rgba(18, 20, 31, 0.84), rgba(255, 49, 88, 0.72));
+  border-color: rgba(255, 255, 255, 0.2);
+  border-radius: 24px;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.34), 0 0 38px rgba(255, 49, 88, 0.22);
+}
+
+.live-auction-alert.is-countdown .live-auction-alert-value {
+  font-size: clamp(58px, 18vw, 86px);
+  line-height: 0.92;
+  text-shadow: 0 0 26px rgba(255, 49, 88, 0.52);
+}
+
+.live-auction-alert-title {
+  color: #fff1a8;
+}
+
+.live-auction-alert.is-countdown.is-warning .live-auction-alert-card {
+  animation: countdown-alert-pulse 900ms ease-in-out infinite;
+}
+
+.live-auction-alert.is-countdown.is-critical {
+  animation-name: auction-alert-shake;
+}
+
+.live-auction-alert.is-countdown.is-critical .live-auction-alert-card {
+  background: linear-gradient(135deg, rgba(68, 4, 20, 0.88), rgba(255, 49, 88, 0.84));
+  animation: countdown-alert-critical 620ms ease-in-out infinite;
+}
+
+.live-auction-alert.is-countdown.is-extended .live-auction-alert-card {
+  background: linear-gradient(135deg, rgba(12, 42, 78, 0.84), rgba(48, 121, 255, 0.74));
+  animation: countdown-alert-extended 1200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.live-auction-alert.is-countdown.is-extended .live-auction-alert-value {
+  color: #8bd3ff;
+  text-shadow: 0 0 28px rgba(88, 166, 255, 0.6);
+}
+
+.live-auction-alert.is-leading .live-auction-alert-card {
+  background: linear-gradient(135deg, rgba(35, 23, 8, 0.86), rgba(255, 155, 38, 0.82), rgba(255, 49, 88, 0.78));
+  box-shadow: 0 18px 44px rgba(255, 146, 43, 0.24), 0 0 26px rgba(255, 49, 88, 0.24);
+}
+
+.live-auction-alert.is-outbid {
+  animation-name: auction-alert-shake;
+}
+
+.live-auction-alert.is-outbid .live-auction-alert-card {
+  background: linear-gradient(135deg, rgba(50, 7, 18, 0.9), rgba(255, 49, 88, 0.84));
+  box-shadow: 0 20px 48px rgba(255, 49, 88, 0.3), 0 0 30px rgba(255, 49, 88, 0.28);
+}
+
+.live-auction-alert.is-extended .live-auction-alert-card {
+  background: linear-gradient(135deg, rgba(13, 26, 52, 0.88), rgba(48, 121, 255, 0.74), rgba(255, 177, 66, 0.78));
+  box-shadow: 0 18px 42px rgba(48, 121, 255, 0.2), 0 0 28px rgba(255, 177, 66, 0.2);
+}
+
+.live-auction-alert.is-closed .live-auction-alert-card {
+  background: linear-gradient(135deg, rgba(10, 12, 18, 0.9), rgba(48, 52, 66, 0.82));
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
+}
+
+.live-auction-alert.is-won {
+  top: 0;
+  width: 100%;
+  height: 100dvh;
+  transform: translateX(-50%);
+  animation-name: auction-alert-win;
+}
+
+.live-auction-alert.is-won .live-auction-alert-card {
+  position: absolute;
+  top: 22%;
+  left: 50%;
+  z-index: 4;
+  min-width: 190px;
+  padding: 10px 18px 12px;
+  color: #ff3158;
+  background: rgba(255, 241, 245, 0.96);
+  border-color: rgba(255, 49, 88, 0.18);
+  box-shadow: 0 16px 42px rgba(255, 49, 88, 0.24);
+  transform: translateX(-50%);
+}
+
+.live-auction-alert.is-won .live-auction-alert-kicker,
+.live-auction-alert.is-won span {
+  color: rgba(255, 49, 88, 0.72);
+}
+
+.live-auction-alert.is-won em {
+  color: #111827;
+}
+
+.live-auction-alert-cannon {
+  position: absolute;
+  bottom: 84px;
+  z-index: 2;
+  width: 62px;
+  height: 78px;
+  opacity: 0;
+  transform-origin: 50% 100%;
+}
+
+.live-auction-alert-cannon.is-left {
+  left: 8px;
+  animation: auction-alert-cannon-left 900ms cubic-bezier(0.22, 1, 0.36, 1) 80ms forwards;
+}
+
+.live-auction-alert-cannon.is-right {
+  right: 8px;
+  animation: auction-alert-cannon-right 900ms cubic-bezier(0.22, 1, 0.36, 1) 130ms forwards;
+}
+
+.live-auction-alert-cannon-body,
+.live-auction-alert-cannon-rim,
+.live-auction-alert-cannon-spark {
+  position: absolute;
+  display: block;
+}
+
+.live-auction-alert-cannon-body {
+  bottom: 0;
+  left: 14px;
+  width: 34px;
+  height: 58px;
+  background: linear-gradient(135deg, #ff5368 0%, #ff3158 54%, #c91f49 100%);
+  border-radius: 8px 8px 14px 14px;
+  box-shadow: inset -6px 0 0 rgba(157, 23, 77, 0.18), 0 12px 26px rgba(255, 49, 88, 0.24);
+}
+
+.live-auction-alert-cannon-body::before {
+  position: absolute;
+  top: 13px;
+  right: 4px;
+  left: 4px;
+  height: 8px;
+  content: '';
+  background: #ffd15c;
+  border-radius: 999px;
+}
+
+.live-auction-alert-cannon-rim {
+  top: 0;
+  left: 8px;
+  z-index: 2;
+  width: 46px;
+  height: 22px;
+  background: linear-gradient(135deg, #ffe37a 0%, #ffb43d 52%, #f97316 100%);
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.42);
+}
+
+.live-auction-alert-cannon-spark {
+  top: -10px;
+  left: 24px;
+  width: 14px;
+  height: 14px;
+  background: #fff176;
+  border-radius: 50%;
+  box-shadow: 0 0 18px rgba(255, 241, 118, 0.92);
+  transform: scale(0);
+  animation: auction-alert-spark 800ms ease-out 220ms forwards;
+}
+
+.live-auction-alert-confetti-piece {
+  position: absolute;
+  bottom: 150px;
+  left: 42px;
+  z-index: 3;
+  width: 13px;
+  height: 21px;
+  background: var(--confetti-color);
+  border-radius: 2px;
+  box-shadow: 0 3px 9px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  animation: auction-alert-confetti-left 2600ms cubic-bezier(0.16, 0.84, 0.28, 1) var(--confetti-delay) forwards;
+}
+
+.live-auction-alert-confetti-piece.is-right {
+  right: 42px;
+  left: auto;
+  animation-name: auction-alert-confetti-right;
+}
+
+.live-auction-alert-confetti-piece.is-dot {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+}
+
+.live-auction-alert-confetti-piece.is-square {
+  width: 15px;
+  height: 15px;
+}
+
+@keyframes float-countdown-critical {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  48% {
+    transform: scale(1.12);
+  }
+}
+
+@keyframes quick-countdown-warning {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(255, 138, 0, 0);
+    transform: translateY(0);
+  }
+  48% {
+    box-shadow: 0 0 16px rgba(255, 138, 0, 0.38);
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes quick-countdown-critical {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(255, 49, 88, 0);
+    transform: scale(1);
+  }
+  45% {
+    box-shadow: 0 0 18px rgba(255, 49, 88, 0.52);
+    transform: scale(1.12);
+  }
+}
+
+@keyframes countdown-alert-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  46% {
+    transform: scale(1.045);
+  }
+}
+
+@keyframes countdown-alert-critical {
+  0%,
+  100% {
+    filter: saturate(1);
+    transform: translateX(0) scale(1);
+  }
+  30% {
+    transform: translateX(-3px) scale(1.075);
+  }
+  62% {
+    filter: saturate(1.22);
+    transform: translateX(3px) scale(1.04);
+  }
+}
+
+@keyframes countdown-alert-extended {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.84);
+  }
+  28% {
+    opacity: 1;
+    transform: translateY(0) scale(1.1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes auction-alert-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 16px) scale(0.9);
+  }
+  12% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1.04);
+  }
+  20%,
+  78% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -10px) scale(0.96);
+  }
+}
+
+@keyframes auction-alert-shake {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 16px) scale(0.9);
+  }
+  12% {
+    opacity: 1;
+    transform: translate(calc(-50% - 6px), 0) scale(1.04);
+  }
+  18% {
+    transform: translate(calc(-50% + 6px), 0) scale(1.04);
+  }
+  24%,
+  78% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -10px) scale(0.96);
+  }
+}
+
+@keyframes auction-alert-win {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.98);
+  }
+  12%,
+  84% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) scale(1.02);
+  }
+}
+
+@keyframes auction-alert-cannon-left {
+  0% {
+    opacity: 0;
+    transform: translateX(-78px) rotate(28deg) scale(0.86);
+  }
+  42%,
+  100% {
+    opacity: 1;
+    transform: translateX(0) rotate(28deg) scale(1);
+  }
+}
+
+@keyframes auction-alert-cannon-right {
+  0% {
+    opacity: 0;
+    transform: translateX(78px) rotate(-28deg) scale(0.86);
+  }
+  42%,
+  100% {
+    opacity: 1;
+    transform: translateX(0) rotate(-28deg) scale(1);
+  }
+}
+
+@keyframes auction-alert-spark {
+  0% {
+    opacity: 0;
+    transform: scale(0);
+  }
+  34% {
+    opacity: 1;
+    transform: scale(1.45);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.28);
+  }
+}
+
+@keyframes auction-alert-confetti-left {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(0.72);
+  }
+  14%,
+  76% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(var(--confetti-x), var(--confetti-y), 0) rotate(var(--confetti-rotate)) scale(1);
+  }
+}
+
+@keyframes auction-alert-confetti-right {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(0.72);
+  }
+  14%,
+  76% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(calc(-1 * var(--confetti-x)), var(--confetti-y), 0) rotate(calc(-1 * var(--confetti-rotate))) scale(1);
+  }
+}
+
 .winning-celebration {
   position: fixed;
   top: 0;
@@ -4766,6 +5259,14 @@ button {
   .live-ranking-ghost.is-divider-to-first,
   .live-ranking-ghost.is-current-row-to-first,
   .live-ranking-exit-row,
+  .auction-float-countdown.is-critical,
+  .quick-bid-countdown.is-warning .quick-bid-countdown-unit,
+  .quick-bid-countdown.is-critical .quick-bid-countdown-unit,
+  .live-auction-alert,
+  .live-auction-alert.is-countdown .live-auction-alert-card,
+  .live-auction-alert-cannon,
+  .live-auction-alert-cannon-spark,
+  .live-auction-alert-confetti-piece,
   .comment-like-burst span {
     animation-duration: 1ms;
   }
