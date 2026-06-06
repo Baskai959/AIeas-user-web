@@ -25,6 +25,8 @@ import {
   Trophy,
   Users,
   VideoOff,
+  Volume2,
+  VolumeX,
   WalletCards,
   Wifi,
   X
@@ -47,6 +49,7 @@ import {
   type BidRuleInput
 } from '../services/bidding';
 import { ApiClient, defaultApiClient } from '../services/api';
+import { buildDigitalHumanWsUrl, DigitalHumanAudioClient } from '../services/digitalHuman';
 import { demoCategories, demoLiveRoom, demoLiveRoomPage, demoLiveRoomStats, demoLotPage, findDemoLiveRoom } from '../services/mockData';
 import {
   isFreshRealtimeMessage,
@@ -2948,6 +2951,7 @@ function LiveRoomPage({
   const [commentsOpen, setCommentsOpen] = useState(true);
   const [commentComposerOpen, setCommentComposerOpen] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
+  const [soundEnabled, setSoundEnabled] = useState(false);
   const [chatMessages, setChatMessages] = useState<LiveChatMessage[]>(() => initialLiveChatMessages(roomId));
   const [ranking, setRanking] = useState<RankingItem[]>([]);
   const [enrolledAuctions, setEnrolledAuctions] = useState<Set<string>>(() => new Set());
@@ -3595,6 +3599,10 @@ function LiveRoomPage({
   const liveLikeCount = (room.likeCount ?? 0) + roomLocalLikeCount;
   const hasLikedRoom = roomLocalLikeCount > 0;
   const liveShopMetaText = t('live.likes', { count: formatCompactNumber(liveLikeCount) });
+  const handleSoundBlocked = useCallback(() => {
+    setSoundEnabled(false);
+    Toast.show({ content: t('live.soundBlocked') });
+  }, []);
 
   if (room.status === 'ENDED') {
     return <RoomStatePage room={room} lots={lots} status="ended" onBack={onBack} onPay={(auctionId) => onPay('ord_2001', auctionId)} />;
@@ -3606,7 +3614,7 @@ function LiveRoomPage({
 
   return (
     <section className="live-page">
-      <LiveRoomVideoSurface room={room} initialMediaPosition={initialMediaPosition} />
+      <LiveRoomVideoSurface room={room} initialMediaPosition={initialMediaPosition} soundEnabled={soundEnabled} onSoundBlocked={handleSoundBlocked} />
       <div className="live-gradient" />
       <header className="live-header">
         <button className="live-back" onClick={onBack} aria-label={t('common.back')} type="button">
@@ -3623,6 +3631,15 @@ function LiveRoomPage({
           </button>
         </div>
         <div className="live-header-right">
+          <button
+            className={soundEnabled ? 'live-sound-toggle is-on' : 'live-sound-toggle'}
+            type="button"
+            aria-label={soundEnabled ? t('live.soundDisable') : t('live.soundEnable')}
+            aria-pressed={soundEnabled}
+            onClick={() => setSoundEnabled((value) => !value)}
+          >
+            {soundEnabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
+          </button>
           <span className="live-watcher-count live-header-watchers" aria-label={t('live.statsOnline', { count: liveStats.watcherCount })}>
             <Users size={12} /> {liveStats.watcherCount}
           </span>
@@ -3795,23 +3812,41 @@ function WinningCelebration({ message, onComplete }: { message: string; onComple
   );
 }
 
-function LiveRoomVideoSurface({ room, initialMediaPosition }: { room: LiveRoom; initialMediaPosition?: PreviewMediaSnapshot }) {
+function LiveRoomVideoSurface({
+  room,
+  initialMediaPosition,
+  soundEnabled,
+  onSoundBlocked
+}: {
+  room: LiveRoom;
+  initialMediaPosition?: PreviewMediaSnapshot;
+  soundEnabled: boolean;
+  onSoundBlocked: () => void;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const appliedInitialMediaKeyRef = useRef<string>();
   const initialMediaKey = useMemo(() => previewMediaSnapshotKey(initialMediaPosition), [initialMediaPosition]);
 
   const syncRecordedVideoPosition = useCallback(() => {
     const video = videoRef.current;
-    forceMutedVideo(video);
+    if (soundEnabled) {
+      enableAudibleVideo(video);
+    } else {
+      forceMutedVideo(video);
+    }
     if (initialMediaPosition && initialMediaKey && appliedInitialMediaKeyRef.current !== initialMediaKey) {
       const applied = applyInitialMediaPosition(video, initialMediaPosition);
       if (applied) {
         appliedInitialMediaKeyRef.current = initialMediaKey;
-        return;
       }
     }
-    void playVideo(video);
-  }, [initialMediaPosition, initialMediaKey]);
+    void playVideo(video).then((played) => {
+      if (played || !soundEnabled) return;
+      forceMutedVideo(video);
+      void playVideo(video);
+      onSoundBlocked();
+    });
+  }, [initialMediaPosition, initialMediaKey, onSoundBlocked, soundEnabled]);
 
   useEffect(() => {
     appliedInitialMediaKeyRef.current = undefined;
@@ -3820,7 +3855,7 @@ function LiveRoomVideoSurface({ room, initialMediaPosition }: { room: LiveRoom; 
   useEffect(() => {
     if (room.videoSource !== 'recorded') return;
     syncRecordedVideoPosition();
-  }, [room.videoSource, room.videoUrl, syncRecordedVideoPosition]);
+  }, [room.videoSource, room.videoUrl, soundEnabled, syncRecordedVideoPosition]);
 
   if (room.videoSource === 'recorded' && room.videoUrl) {
     return (
@@ -3830,7 +3865,7 @@ function LiveRoomVideoSurface({ room, initialMediaPosition }: { room: LiveRoom; 
         data-testid="live-room-video"
         src={room.videoUrl}
         poster={room.coverUrl}
-        muted
+        muted={!soundEnabled}
         autoPlay
         loop
         playsInline
@@ -3845,7 +3880,10 @@ function LiveRoomVideoSurface({ room, initialMediaPosition }: { room: LiveRoom; 
       <DigitalHumanLiveStage
         idleVideoUrl={room.digitalHuman.idleVideoUrl}
         talkVideoUrl={room.digitalHuman.speakingVideoUrl}
+        ttsWsUrl={room.digitalHuman.ttsWsUrl}
         initialMediaPosition={initialMediaPosition}
+        soundEnabled={soundEnabled}
+        onSoundBlocked={onSoundBlocked}
       />
     );
   }
@@ -5254,12 +5292,37 @@ function BidSheet({
   );
 }
 
-function DigitalHumanLiveStage({ idleVideoUrl, talkVideoUrl, initialMediaPosition }: { idleVideoUrl: string; talkVideoUrl: string; initialMediaPosition?: PreviewMediaSnapshot }) {
+function DigitalHumanLiveStage({
+  idleVideoUrl,
+  talkVideoUrl,
+  ttsWsUrl,
+  initialMediaPosition,
+  soundEnabled,
+  onSoundBlocked
+}: {
+  idleVideoUrl: string;
+  talkVideoUrl: string;
+  ttsWsUrl?: string;
+  initialMediaPosition?: PreviewMediaSnapshot;
+  soundEnabled: boolean;
+  onSoundBlocked: () => void;
+}) {
   const idleVideoRef = useRef<HTMLVideoElement>(null);
   const talkVideoRef = useRef<HTMLVideoElement>(null);
+  const audioClientRef = useRef<DigitalHumanAudioClient>();
   const appliedInitialMediaKeyRef = useRef<string>();
   const initialMediaKey = useMemo(() => previewMediaSnapshotKey(initialMediaPosition), [initialMediaPosition]);
   const [mediaError, setMediaError] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const resolvedTtsWsUrl = useMemo(
+    () =>
+      buildDigitalHumanWsUrl({
+        configuredUrl: ttsWsUrl || import.meta.env.VITE_TTS_WS_URL,
+        hostname: window.location.hostname,
+        protocol: window.location.protocol
+      }),
+    [ttsWsUrl]
+  );
 
   const syncIdleVideoPosition = useCallback(() => {
     const idleVideo = idleVideoRef.current;
@@ -5285,8 +5348,43 @@ function DigitalHumanLiveStage({ idleVideoUrl, talkVideoUrl, initialMediaPositio
     resetVideoToStart(talkVideo);
   }, [idleVideoUrl, talkVideoUrl, syncIdleVideoPosition]);
 
+  useEffect(() => {
+    if (!soundEnabled) {
+      audioClientRef.current?.disconnect();
+      audioClientRef.current = undefined;
+      setSpeaking(false);
+      return undefined;
+    }
+    const client = new DigitalHumanAudioClient({
+      wsUrl: resolvedTtsWsUrl,
+      onAudioStart: () => setSpeaking(true),
+      onPlaybackDrained: () => setSpeaking(false),
+      onError: () => setSpeaking(false)
+    });
+    audioClientRef.current = client;
+    client.connect();
+    void client.unlockAudio().then((unlocked) => {
+      if (!unlocked) onSoundBlocked();
+    });
+    return () => {
+      client.disconnect();
+      if (audioClientRef.current === client) audioClientRef.current = undefined;
+    };
+  }, [onSoundBlocked, resolvedTtsWsUrl, soundEnabled]);
+
+  useEffect(() => {
+    const talkVideo = talkVideoRef.current;
+    forceMutedVideo(talkVideo);
+    if (!speaking) {
+      resetVideoToStart(talkVideo);
+      return;
+    }
+    resetVideoToStart(talkVideo);
+    void playVideo(talkVideo);
+  }, [speaking]);
+
   return (
-    <div className="digital-human-stage" data-testid="digital-human-stage">
+    <div className={speaking ? 'digital-human-stage is-speaking' : 'digital-human-stage'} data-testid="digital-human-stage">
       <video
         ref={idleVideoRef}
         className="digital-human-video idle"
@@ -5645,12 +5743,20 @@ function forceMutedVideo(video?: HTMLVideoElement | null): void {
   video.volume = 0;
 }
 
-async function playVideo(video?: HTMLVideoElement | null): Promise<void> {
+function enableAudibleVideo(video?: HTMLVideoElement | null): void {
   if (!video) return;
+  video.muted = false;
+  video.defaultMuted = false;
+  video.volume = 1;
+}
+
+async function playVideo(video?: HTMLVideoElement | null): Promise<boolean> {
+  if (!video) return false;
   try {
     await video.play();
+    return true;
   } catch {
-    return;
+    return false;
   }
 }
 

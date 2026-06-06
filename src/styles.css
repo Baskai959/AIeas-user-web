@@ -483,6 +483,10 @@ button {
   transition: opacity 420ms ease;
 }
 
+.digital-human-stage.is-speaking .digital-human-video.talk {
+  opacity: 1;
+}
+
 .digital-human-placeholder {
   position: absolute;
   inset: 0;
@@ -610,10 +614,30 @@ button {
 .live-header-right {
   display: flex;
   flex: 0 0 auto;
+  gap: 5px;
   align-items: center;
   justify-content: flex-end;
   margin-left: auto;
   min-width: 0;
+}
+
+.live-sound-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: rgba(255, 255, 255, 0.82);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  opacity: 0.82;
+}
+
+.live-sound-toggle.is-on {
+  color: #fff;
+  opacity: 1;
 }
 
 .live-watcher-count {

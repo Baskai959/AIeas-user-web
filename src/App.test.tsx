@@ -541,7 +541,14 @@ describe('App flow', () => {
     expect(headerWatchers).toHaveClass('live-header-watchers');
     expect(headerWatchers.querySelector('svg')).toBeInTheDocument();
     expect(document.querySelector('.live-header-bidders')).not.toBeInTheDocument();
-    expect(screen.getByTestId('live-room-video')).toHaveAttribute('src', '/media/live-room-demo.mp4');
+    const liveVideo = screen.getByTestId('live-room-video') as HTMLVideoElement;
+    expect(liveVideo).toHaveAttribute('src', '/media/live-room-demo.mp4');
+    expect(liveVideo.muted).toBe(true);
+    expect(liveVideo.volume).toBe(0);
+    await user.click(screen.getByRole('button', { name: getMessage('live.soundEnable') }));
+    await waitFor(() => expect(liveVideo.muted).toBe(false));
+    expect(liveVideo.volume).toBe(1);
+    expect(screen.getByRole('button', { name: getMessage('live.soundDisable') })).toBeInTheDocument();
     expect(window.location.pathname).toBe('/live/room_1001');
     expect(window.location.search).toBe('?from=home');
 
@@ -2807,6 +2814,7 @@ describe('App flow', () => {
   });
 
   it('renders the digital human source from the live-room REST configuration without a user source switch', async () => {
+    const sockets: Array<{ url: string; emit: (message: unknown) => void }> = [];
     class MockWebSocket extends EventTarget {
       static readonly OPEN = 1;
       static readonly CLOSED = 3;
@@ -2814,14 +2822,28 @@ describe('App flow', () => {
       readyState = MockWebSocket.OPEN;
       constructor(public readonly url: string) {
         super();
+        sockets.push(this);
         window.setTimeout(() => this.dispatchEvent(new Event('open')), 0);
       }
       send = vi.fn();
       close = vi.fn(() => {
         this.readyState = MockWebSocket.CLOSED;
       });
+      emit(message: unknown) {
+        this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
+      }
     }
     vi.stubGlobal('WebSocket', MockWebSocket);
+    class MockAudioContext {
+      state = 'running';
+      currentTime = 0;
+      destination = {};
+      resume = vi.fn(async () => undefined);
+      createBuffer = vi.fn(() => ({ duration: 0.1, copyToChannel: vi.fn() }));
+      createBufferSource = vi.fn(() => ({ connect: vi.fn(), start: vi.fn(), stop: vi.fn(), onended: undefined as (() => void) | undefined }));
+    }
+    vi.stubGlobal('AudioContext', MockAudioContext);
+    const user = userEvent.setup();
     seedSession();
     window.history.pushState(null, '', '/live/room_1001');
     vi.mocked(api.getLiveRoom).mockResolvedValueOnce({
@@ -2845,6 +2867,12 @@ describe('App flow', () => {
     expect(await screen.findByTestId('digital-human-stage')).toBeInTheDocument();
     expect(screen.queryByRole('group', { name: getMessage('live.videoSource') })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: getMessage('live.sourceRecorded') })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: getMessage('live.soundEnable') }));
+    await waitFor(() => expect(sockets.some((socket) => socket.url === 'ws://127.0.0.1:8876/tts')).toBe(true));
+    act(() => {
+      sockets[sockets.length - 1].emit({ type: 'audio_start', text: 'demo', sample_rate: 24000, channels: 1, audio_format: 'pcm_s16le' });
+    });
+    expect(screen.getByTestId('digital-human-stage')).toHaveClass('is-speaking');
     expect(screen.queryByRole('button', { name: getMessage('digitalHuman.enableAudio') })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: getMessage('digitalHuman.send') })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: getMessage('digitalHuman.stop') })).not.toBeInTheDocument();
