@@ -31,11 +31,10 @@ describe('bidding helpers', () => {
   });
 
   it('builds bid.place payload with expected current price', () => {
-    expect(buildBidPlacePayload({ auctionId: '1001', price: 5800, expectedCurrentPrice: 5600, requestId: 'req-1' })).toEqual({
+    expect(buildBidPlacePayload({ auctionId: '1001', price: 5800, expectedCurrentPrice: 5600 })).toEqual({
       auctionId: '1001',
       price: 5800,
-      expectedCurrentPrice: 5600,
-      requestId: 'req-1'
+      expectedCurrentPrice: 5600
     });
   });
 

@@ -108,7 +108,6 @@ export interface Merchant {
   followerCount: number;
   fansCount?: number;
   rating?: number;
-  liveRoomId?: string;
   location?: string;
 }
 
@@ -252,12 +251,15 @@ export interface PageResult<T> {
 }
 
 export interface EnrollResult {
+  id: string;
   auctionId: string;
   userId: string;
-  enrolled: boolean;
-  depositLedgerId: string;
-  depositAmount: number;
-  depositStatus: string;
+  amount: number;
+  status: string;
+  relatedOrderId?: string;
+  remark?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ListOrderOptions {

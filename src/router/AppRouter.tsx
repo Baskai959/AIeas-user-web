@@ -1222,13 +1222,17 @@ function MerchantPage({ apiClient, merchantId, onBack, onOpenRoom, onOpenLot }: 
   const [lotStatus, setLotStatus] = useState<LotStatusFilter>('all');
   const [categoryId, setCategoryId] = useState('all');
   const merchant = useQuery({ queryKey: ['merchant', merchantId], queryFn: () => apiClient.getMerchant(merchantId) });
-  const liveRoom = useQuery({ queryKey: ['merchant-live-room', merchant.data?.liveRoomId], queryFn: () => apiClient.getLiveRoom(merchant.data?.liveRoomId ?? ''), enabled: Boolean(merchant.data?.liveRoomId) });
+  const liveSessions = useQuery({
+    queryKey: ['merchant-live-sessions', merchantId],
+    queryFn: () => apiClient.listMerchantLiveSessions(merchantId, { status: 'live', sort: 'openedAtDesc' })
+  });
   const categories = useQuery({ queryKey: ['categories'], queryFn: () => apiClient.listCategories(), placeholderData: { items: demoCategories, total: demoCategories.length, page: 1, page_size: 20 } });
   const lots = useQuery({
     queryKey: ['merchant-lots', merchantId, lotSort, lotStatus, categoryId],
     queryFn: () => apiClient.searchLots({ merchantId, sort: lotSort, status: lotStatus, categoryId })
   });
   const data = merchant.data;
+  const liveSession = liveSessions.data?.items[0];
 
   return (
     <section className="merchant-page">
@@ -1257,8 +1261,8 @@ function MerchantPage({ apiClient, merchantId, onBack, onOpenRoom, onOpenLot }: 
       </header>
 
       <div className="merchant-body">
-        <SectionTitle eyebrow={t('merchant.liveWindow')} title={liveRoom.data?.title ?? t('merchant.noLive')} />
-        {liveRoom.data ? <LiveRoomCard room={liveRoom.data} onOpen={() => onOpenRoom(liveRoom.data.id)} compact /> : null}
+        <SectionTitle eyebrow={t('merchant.liveWindow')} title={liveSession?.title ?? t('merchant.noLive')} />
+        {liveSession ? <LiveRoomCard room={liveSession} onOpen={() => onOpenRoom(liveSession.id)} compact /> : null}
 
         <SectionTitle eyebrow={t('merchant.title')} title={t('merchant.allLots')} />
         <FilterRow>
@@ -3545,7 +3549,6 @@ function LiveRoomPage({
         auctionId: lot.auctionId,
         price: validation.price,
         expectedCurrentPrice: state.currentPrice,
-        requestId
       })
     });
   };

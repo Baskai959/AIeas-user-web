@@ -123,12 +123,11 @@ const api = {
     participantCount: 128
   })),
   enrollAuction: vi.fn(async () => ({
+    id: 'dep1',
     auctionId: 'auc_2001',
     userId: 'u1',
-    enrolled: true,
-    depositLedgerId: 'dep1',
-    depositAmount: 5000,
-    depositStatus: 'FROZEN'
+    amount: 5000,
+    status: 'READY'
   })),
   listMyOrders: vi.fn(async () => ({ items: [{ id: 'ord_2001', auctionId: 'auc_2001', buyerId: 'u1', amount: 150100, status: 'PENDING_PAY' }], total: 1, page: 1, page_size: 20 })),
   getOrder: vi.fn(async () => ({ id: 'ord_2001', auctionId: 'auc_2001', buyerId: 'u1', amount: 150100, status: 'PENDING_PAY' })),
@@ -173,13 +172,19 @@ const api = {
     page: 1,
     page_size: 20
   })),
-  searchMerchants: vi.fn(async () => ({
-    items: [{ id: 'merchant_01', name: '云上珠宝', description: '珠宝直播拍卖商家', followerCount: 128000, rating: 4.9, liveRoomId: 'room_1001' }],
+  listMerchantLiveSessions: vi.fn(async () => ({
+    items: [{ id: 'room_1001', title: '珠宝严选直播间', merchantId: 'merchant_01', merchantName: '云上珠宝', status: 'LIVE', videoSource: 'recorded', onlineCount: 328, watcherCount: 1208 }],
     total: 1,
     page: 1,
     page_size: 20
   })),
-  getMerchant: vi.fn(async () => ({ id: 'merchant_01', name: '云上珠宝', description: '珠宝直播拍卖商家', followerCount: 128000, rating: 4.9, liveRoomId: 'room_1001' })),
+  searchMerchants: vi.fn(async () => ({
+    items: [{ id: 'merchant_01', name: '云上珠宝', description: '珠宝直播拍卖商家', followerCount: 128000, rating: 4.9 }],
+    total: 1,
+    page: 1,
+    page_size: 20
+  })),
+  getMerchant: vi.fn(async () => ({ id: 'merchant_01', name: '云上珠宝', description: '珠宝直播拍卖商家', followerCount: 128000, rating: 4.9 })),
   getLot: vi.fn(async (lotId: string) => {
     if (lotId === 'lot_3001') {
       return {

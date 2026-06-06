@@ -210,7 +210,6 @@ function normalizeMerchant(raw: Record<string, unknown>): Merchant {
     followerCount: Number(raw.followerCount ?? 0),
     fansCount: raw.fansCount === undefined ? undefined : Number(raw.fansCount),
     rating: raw.rating === undefined ? undefined : Number(raw.rating),
-    liveRoomId: raw.liveRoomId === undefined ? undefined : String(raw.liveRoomId),
     location: optionalString(raw.location)
   };
 }
@@ -280,6 +279,20 @@ function normalizeAuctionRecord(raw: Record<string, unknown>): UserAuctionRecord
     depositAmount: Number(raw.depositAmount ?? 0),
     depositStatus: String(raw.depositStatus),
     enrolledAt: optionalString(raw.enrolledAt)
+  };
+}
+
+function normalizeEnrollResult(raw: Record<string, unknown>): EnrollResult {
+  return {
+    id: String(raw.id),
+    auctionId: String(raw.auctionId),
+    userId: String(raw.userId),
+    amount: Number(raw.amount ?? 0),
+    status: String(raw.status),
+    relatedOrderId: optionalNumberString(raw.relatedOrderId),
+    remark: optionalString(raw.remark),
+    createdAt: optionalString(raw.createdAt),
+    updatedAt: optionalString(raw.updatedAt)
   };
 }
 
@@ -404,6 +417,11 @@ export class ApiClient {
     return normalizePage(data, 'sessions', normalizeLiveRoom);
   }
 
+  async listMerchantLiveSessions(merchantId: string, options: SearchLiveRoomsOptions = {}): Promise<PageResult<LiveRoom>> {
+    const data = await this.request(`/api/v1/merchants/${encodeURIComponent(merchantId)}/live-sessions?${liveRoomSearchQuery(options)}`);
+    return normalizePage(data, 'sessions', normalizeLiveRoom);
+  }
+
   async searchMerchants(options: SearchMerchantsOptions = {}): Promise<PageResult<Merchant>> {
     const data = await this.request(`/api/v1/search/merchants?${merchantSearchQuery(options)}`);
     return normalizePage(data, 'merchants', normalizeMerchant);
@@ -430,9 +448,10 @@ export class ApiClient {
   }
 
   async enrollAuction(id: string): Promise<EnrollResult> {
-    return this.request(`/api/v1/auctions/${id}/enroll`, {
+    const data = await this.request(`/api/v1/auctions/${id}/enroll`, {
       method: 'POST'
     });
+    return normalizeEnrollResult(data as Record<string, unknown>);
   }
 
   async listMyOrders(options: ListOrderOptions = {}): Promise<PageResult<Order>> {
@@ -542,6 +561,17 @@ export class DemoApiClient extends ApiClient {
     return searchDemoLiveRooms(options);
   }
 
+  override async listMerchantLiveSessions(merchantId: string, options: SearchLiveRoomsOptions = {}): Promise<PageResult<LiveRoom>> {
+    const rooms = await searchDemoLiveRooms(options);
+    const items = rooms.items.filter((room) => room.merchantId === merchantId);
+    return {
+      items,
+      total: items.length,
+      page: 1,
+      page_size: 20
+    };
+  }
+
   override async searchMerchants(options: SearchMerchantsOptions = {}): Promise<PageResult<Merchant>> {
     return searchDemoMerchants(options);
   }
@@ -578,7 +608,7 @@ export class DemoApiClient extends ApiClient {
     return {
       ...demoEnrollResult,
       auctionId: id,
-      depositAmount: lot.depositAmount ?? demoEnrollResult.depositAmount
+      amount: lot.depositAmount ?? demoEnrollResult.amount
     };
   }
 

@@ -90,7 +90,6 @@ export const demoMerchants: Merchant[] = [
     followerCount: 128_000,
     fansCount: 128_000,
     rating: 4.9,
-    liveRoomId: 'room_1001',
     location: '杭州'
   },
   {
@@ -101,7 +100,6 @@ export const demoMerchants: Merchant[] = [
     followerCount: 68_400,
     fansCount: 68_400,
     rating: 4.8,
-    liveRoomId: 'room_1002',
     location: '上海'
   },
   {
@@ -112,7 +110,6 @@ export const demoMerchants: Merchant[] = [
     followerCount: 42_900,
     fansCount: 42_900,
     rating: 4.7,
-    liveRoomId: 'room_1003',
     location: '深圳'
   }
 ];
@@ -649,12 +646,13 @@ export const demoAuctionState: AuctionState = {
 };
 
 export const demoEnrollResult: EnrollResult = {
+  id: 'deposit_2001',
   auctionId: demoLots[0].auctionId,
   userId: demoLoginResult.user.id,
-  enrolled: true,
-  depositLedgerId: 'deposit_2001',
-  depositAmount: demoLots[0].depositAmount ?? 5000,
-  depositStatus: 'FROZEN'
+  amount: demoLots[0].depositAmount ?? 5000,
+  status: 'READY',
+  createdAt: new Date(now - 20 * 60_000).toISOString(),
+  updatedAt: new Date(now - 20 * 60_000).toISOString()
 };
 
 export const demoOrderPage: PageResult<Order> = {

@@ -14,7 +14,6 @@ export interface BidInput {
   auctionId: string;
   price: number;
   expectedCurrentPrice: number;
-  requestId?: string;
 }
 
 export interface ChatSendInput {
@@ -367,7 +366,6 @@ export class MockRealtimeClient implements RealtimeClient {
       type: 'live_session.ended',
       payload: {
         liveSessionId: this.options.liveSessionId,
-        liveRoomId: this.options.roomId,
         closedAt: new Date().toISOString(),
         lotsTotal: 4,
         lotsSold: 2,

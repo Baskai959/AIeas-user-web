@@ -128,7 +128,8 @@ describe('ApiClient', () => {
       .mockImplementationOnce(() => ok({ lots: [{ auctionId: 1001, liveSessionId: 9001, sellerId: 'merchant_1', category: '珠宝玉石', categoryId: 'jewelry', title: '钻石项链', imageUrl: 'https://cdn.example.com/lot.jpg', status: 'RUNNING', startPrice: 0, currentPrice: 1000, participantCount: 12, endTime: '2026-06-04T12:00:00+08:00' }] }))
       .mockImplementationOnce(() => ok({ sessions: [{ id: 9001, merchantId: 'merchant_1', merchantName: '云上珠宝', title: '珠宝直播间', status: 'LIVE', onlineCount: 12, viewerTotal: 99 }] }))
       .mockImplementationOnce(() => ok({ merchants: [{ id: 'merchant_1', name: '云上珠宝', followerCount: 1200 }] }))
-      .mockImplementationOnce(() => ok({ id: 'merchant_1', name: '云上珠宝', followerCount: 1200, liveRoomId: 'room_1' }))
+      .mockImplementationOnce(() => ok({ id: 'merchant_1', name: '云上珠宝', followerCount: 1200 }))
+      .mockImplementationOnce(() => ok({ sessions: [{ id: 9002, merchantId: 'merchant_1', merchantName: '云上珠宝', title: '商家直播中', status: 'LIVE', onlineCount: 8, viewerTotal: 18 }] }))
       .mockImplementationOnce(() => ok({ auctionId: 1001, liveSessionId: 9001, sellerId: 'merchant_1', category: 'jewelry', title: '钻石项链', status: 'RUNNING', startPrice: 0, currentPrice: 1000, endTime: '2026-06-04T12:00:00+08:00' }));
     const api = new ApiClient('http://mock.local', fetcher);
 
@@ -137,16 +138,19 @@ describe('ApiClient', () => {
     const rooms = await api.searchLiveRooms({ keyword: '珠宝', sort: 'viewerDesc', status: 'live' });
     const merchants = await api.searchMerchants({ keyword: '云上' });
     const merchant = await api.getMerchant('merchant_1');
+    const merchantRooms = await api.listMerchantLiveSessions('merchant_1', { sort: 'openedAtDesc', status: 'live' });
     const lot = await api.getLot('lot_1');
 
     expect(categories.items[0].name).toBe('珠宝玉石');
     expect(lots.items[0]).toMatchObject({ id: '1001', merchantId: 'merchant_1', categoryId: 'jewelry', imageUrl: 'https://cdn.example.com/lot.jpg', participantCount: 12 });
     expect(rooms.items[0]).toMatchObject({ merchantName: '云上珠宝', onlineCount: 12, watcherCount: 99 });
     expect(merchants.items[0].name).toBe('云上珠宝');
-    expect(merchant.liveRoomId).toBe('room_1');
+    expect(merchant.id).toBe('merchant_1');
+    expect(merchantRooms.items[0]).toMatchObject({ id: '9002', merchantId: 'merchant_1', status: 'LIVE' });
     expect(lot.title).toBe('钻石项链');
     expect(fetcher).toHaveBeenNthCalledWith(2, 'http://mock.local/api/v1/search/lots?limit=20&offset=0&keyword=%E9%92%BB%E7%9F%B3&sort=priceDesc&status=RUNNING&categoryId=jewelry', expect.any(Object));
     expect(fetcher).toHaveBeenNthCalledWith(3, 'http://mock.local/api/v1/live-sessions?limit=20&offset=0&keyword=%E7%8F%A0%E5%AE%9D&sort=viewerDesc&status=LIVE', expect.any(Object));
+    expect(fetcher).toHaveBeenNthCalledWith(6, 'http://mock.local/api/v1/merchants/merchant_1/live-sessions?limit=20&offset=0&sort=openedAtDesc&status=LIVE', expect.any(Object));
   });
 
   it('normalizes profile and my auction participation resources', async () => {
@@ -237,6 +241,7 @@ describe('ApiClient', () => {
     const merchants = await api.searchMerchants({ keyword: '云上' });
     const liveRooms = await api.searchLiveRooms({ sort: 'viewerDesc', status: 'live' });
     const merchant = await api.getMerchant(merchants.items[0].id);
+    const merchantRooms = await api.listMerchantLiveSessions(merchant.id, { status: 'live' });
     const profile = await api.updateMyProfile({ nickname: 'Demo Buyer' });
     const records = await api.listMyAuctionRecords();
 
@@ -244,7 +249,7 @@ describe('ApiClient', () => {
     expect(runningJewelry.items[0].title).toContain('钻石');
     expect(merchants.items[0].name).toContain('云上');
     expect(liveRooms.items.every((room) => room.status === 'LIVE')).toBe(true);
-    expect(merchant.liveRoomId).toBeTruthy();
+    expect(merchantRooms.items.every((room) => room.merchantId === merchant.id)).toBe(true);
     expect(profile.nickname).toBe('Demo Buyer');
     expect(records.items.map((record) => record.depositStatus).every(Boolean)).toBe(true);
     expect(records.items.some((record) => record.order?.fulfillmentStatus === 'UNSHIPPED')).toBe(true);

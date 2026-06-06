@@ -10,7 +10,6 @@ export interface BidPlacePayload {
   auctionId: string;
   price: number;
   expectedCurrentPrice: number;
-  requestId?: string;
 }
 
 export type BidValidationResult =
@@ -93,7 +92,6 @@ export function buildBidPlacePayload(input: BidPlacePayload): BidPlacePayload {
   return {
     auctionId: input.auctionId,
     price: input.price,
-    expectedCurrentPrice: input.expectedCurrentPrice,
-    requestId: input.requestId
+    expectedCurrentPrice: input.expectedCurrentPrice
   };
 }
