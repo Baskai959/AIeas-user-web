@@ -3,11 +3,18 @@ export interface BidRuleInput {
   minIncrement: number;
   startPrice?: number;
   capPrice?: number;
+  maxBidSteps?: number;
   minBidIntervalMs?: number;
 }
 
-export interface BidPlacePayload {
+export interface BidPlacePayloadInput {
   auctionId: string;
+  price: number;
+  expectedCurrentPrice: number;
+}
+
+export interface BidPlacePayload {
+  auctionId: string | number;
   price: number;
   expectedCurrentPrice: number;
 }
@@ -17,7 +24,8 @@ export type BidValidationResult =
   | { valid: false; reason: 'invalidAmount' }
   | { valid: false; reason: 'belowMinimum'; minPrice: number }
   | { valid: false; reason: 'invalidStep'; step: number }
-  | { valid: false; reason: 'aboveCap'; capPrice: number };
+  | { valid: false; reason: 'aboveCap'; capPrice: number }
+  | { valid: false; reason: 'aboveMaxBidSteps'; maxPrice: number };
 
 export const QUICK_BID_MAX_STEPS = 3;
 export const DEFAULT_MIN_BID_INTERVAL_MS = 1000;
@@ -55,6 +63,11 @@ export function validateBidPrice(price: number | undefined, rule: BidRuleInput):
     return { valid: false, reason: 'aboveCap', capPrice: rule.capPrice };
   }
 
+  const maxBidPrice = getMaxBidPrice(rule);
+  if (price > maxBidPrice) {
+    return { valid: false, reason: 'aboveMaxBidSteps', maxPrice: maxBidPrice };
+  }
+
   if (rule.capPrice !== undefined && price === rule.capPrice && rule.capPrice > rule.currentPrice) {
     return { valid: true, price };
   }
@@ -67,12 +80,25 @@ export function validateBidPrice(price: number | undefined, rule: BidRuleInput):
 }
 
 export function getQuickBidPrice(rule: BidRuleInput, stepCount: number): number {
-  const steps = Math.max(1, Math.min(QUICK_BID_MAX_STEPS, Math.floor(stepCount)));
+  const steps = Math.max(1, Math.min(getQuickBidMaxSteps(rule), Math.floor(stepCount)));
   const nextPrice = rule.currentPrice + rule.minIncrement * steps;
   if (rule.capPrice !== undefined && rule.capPrice > rule.currentPrice) {
     return Math.min(nextPrice, rule.capPrice);
   }
   return nextPrice;
+}
+
+export function getQuickBidMaxSteps(rule: BidRuleInput): number {
+  const maxBidSteps = Math.floor(rule.maxBidSteps ?? QUICK_BID_MAX_STEPS);
+  return Math.max(1, Math.min(QUICK_BID_MAX_STEPS, maxBidSteps));
+}
+
+function getMaxBidPrice(rule: BidRuleInput): number {
+  const maxPrice = rule.currentPrice + rule.minIncrement * getQuickBidMaxSteps(rule);
+  if (rule.capPrice !== undefined && rule.capPrice > rule.currentPrice) {
+    return Math.min(maxPrice, rule.capPrice);
+  }
+  return maxPrice;
 }
 
 export function getMinBidIntervalMs(rule: BidRuleInput): number {
@@ -88,10 +114,17 @@ export function isQuickBidOutdated(price: number | undefined, rule: BidRuleInput
   return price === undefined || price <= rule.currentPrice;
 }
 
-export function buildBidPlacePayload(input: BidPlacePayload): BidPlacePayload {
+export function buildBidPlacePayload(input: BidPlacePayloadInput): BidPlacePayload {
   return {
-    auctionId: input.auctionId,
+    auctionId: normalizeBidAuctionId(input.auctionId),
     price: input.price,
     expectedCurrentPrice: input.expectedCurrentPrice
   };
+}
+
+function normalizeBidAuctionId(auctionId: string): string | number {
+  const normalized = auctionId.trim();
+  if (!/^\d+$/.test(normalized)) return auctionId;
+  const numericAuctionId = Number(normalized);
+  return Number.isSafeInteger(numericAuctionId) && numericAuctionId > 0 ? numericAuctionId : auctionId;
 }

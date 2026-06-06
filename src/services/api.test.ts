@@ -9,6 +9,14 @@ const ok = (data: unknown) =>
     })
   );
 
+const apiError = (status: number, code: number, message: string) =>
+  Promise.resolve(
+    new Response(JSON.stringify({ code, message, data: null, trace_id: 'trc_error' }), {
+      status,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  );
+
 describe('ApiClient', () => {
   it('logs in through the REST envelope', async () => {
     const fetcher = vi.fn(() =>
@@ -30,8 +38,8 @@ describe('ApiClient', () => {
   it('uses the live-session REST resources registered by the backend', async () => {
     const fetcher = vi
       .fn()
-      .mockImplementationOnce(() => ok({ sessions: [{ id: 1001, merchantId: 'merchant_01', title: '珠宝严选直播间', status: 'LIVE', viewerTotal: 1208 }] }))
-      .mockImplementationOnce(() => ok({ id: 1001, merchantId: 'merchant_01', title: '珠宝严选直播间', status: 'LIVE', activeAuctionId: 2001 }))
+      .mockImplementationOnce(() => ok({ sessions: [{ id: 1001, merchantId: 'merchant_01', title: '珠宝严选直播间', status: 'LIVE', viewerTotal: 1208, aiAssistantEnabled: false }] }))
+      .mockImplementationOnce(() => ok({ id: 1001, merchantId: 'merchant_01', title: '珠宝严选直播间', status: 'LIVE', activeAuctionId: 2001, aiAssistantEnabled: true }))
       .mockImplementationOnce(() =>
         ok({
           lots: [
@@ -44,6 +52,7 @@ describe('ApiClient', () => {
               status: 'RUNNING',
               startPrice: 0,
               currentPrice: 150100,
+              startTime: '2026-06-04T12:00:00+08:00',
               endTime: '2026-06-04T12:00:00+08:00',
               incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 }
             }
@@ -58,9 +67,17 @@ describe('ApiClient', () => {
     const lots = await api.listLiveRoomLots('1001');
     const stats = await api.getLiveRoomStats('1001');
 
-    expect(rooms.items[0]).toMatchObject({ id: '1001', title: '珠宝严选直播间', merchantId: 'merchant_01', status: 'LIVE', watcherCount: 1208 });
-    expect(room.activeAuctionId).toBe('2001');
-    expect(lots.items[0]).toMatchObject({ auctionId: '2001', currentPrice: 150100 });
+    expect(rooms.items[0]).toMatchObject({ id: '1001', title: '珠宝严选直播间', merchantId: 'merchant_01', status: 'LIVE', watcherCount: 1208, videoSource: 'recorded', aiAssistantEnabled: false });
+    expect(room).toMatchObject({
+      activeAuctionId: '2001',
+      videoSource: 'digitalHuman',
+      aiAssistantEnabled: true,
+      digitalHuman: {
+        idleVideoUrl: '/media/AI_Presenter_Silent.mp4',
+        speakingVideoUrl: '/media/AI_Presenter_Speaking.mp4'
+      }
+    });
+    expect(lots.items[0]).toMatchObject({ auctionId: '2001', currentPrice: 150100, startTsMs: Date.parse('2026-06-04T12:00:00+08:00') });
     expect(stats).toMatchObject({ roomId: '1001', onlineCount: 328, watcherCount: 1208, bidCount: 36 });
     expect(fetcher).toHaveBeenNthCalledWith(1, 'http://mock.local/api/v1/live-sessions?limit=20&offset=0', expect.any(Object));
     expect(fetcher).toHaveBeenNthCalledWith(3, 'http://mock.local/api/v1/live-sessions/1001/lots', expect.any(Object));
@@ -119,6 +136,48 @@ describe('ApiClient', () => {
     const api = new ApiClient('http://mock.local', fetcher);
 
     await expect(api.getAuctionState('2001')).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it('refreshes an expired access token and retries the original request once', async () => {
+    const fetcher = vi
+      .fn()
+      .mockImplementationOnce(() => apiError(401, 10002, '访问令牌无效或已过期'))
+      .mockImplementationOnce(() => ok({ accessToken: 'jwt_new', expiresIn: 43200 }))
+      .mockImplementationOnce(() => ok({ auctionId: 2001, status: 'RUNNING', currentPrice: 150100, endTime: '2026-06-04T12:00:00+08:00' }));
+    const refreshed = vi.fn();
+    const api = new ApiClient('http://mock.local', fetcher);
+    api.setToken('jwt_old');
+    api.configureAuthRefresh({
+      getRefreshToken: () => 'rft_1',
+      onAccessTokenRefreshed: refreshed
+    });
+
+    const state = await api.getAuctionState('2001');
+
+    expect(state.currentPrice).toBe(150100);
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      'http://mock.local/api/v1/auctions/2001/state',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer jwt_old' })
+      })
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      'http://mock.local/api/v1/auth/refresh',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ refreshToken: 'rft_1' })
+      })
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      'http://mock.local/api/v1/auctions/2001/state',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer jwt_new' })
+      })
+    );
+    expect(refreshed).toHaveBeenCalledWith({ accessToken: 'jwt_new', expiresIn: 43200 });
   });
 
   it('normalizes the new search, merchant, and category REST resources', async () => {

@@ -20,6 +20,7 @@ import {
   searchDemoMerchants,
   updateDemoUserProfile
 } from './mockData';
+import { defaultDigitalHumanMedia } from './digitalHuman';
 import type {
   AuctionState,
   Category,
@@ -33,6 +34,7 @@ import type {
   Merchant,
   Order,
   PageResult,
+  RefreshResult,
   SearchLiveRoomsOptions,
   SearchLotsOptions,
   SearchMerchantsOptions,
@@ -48,6 +50,15 @@ interface ApiEnvelope<T> {
 }
 
 type Fetcher = typeof fetch;
+type RequestOptions = { method?: string; body?: unknown; idempotencyKey?: string; omitAuth?: boolean; skipAuthRefresh?: boolean };
+
+interface AuthRefreshOptions {
+  getRefreshToken: () => string;
+  onAccessTokenRefreshed?: (result: RefreshResult) => void;
+  onRefreshFailed?: () => void;
+}
+
+const defaultFetcher: Fetcher = (...args: Parameters<Fetcher>) => fetch(...args);
 
 export class ApiError extends Error {
   constructor(
@@ -99,6 +110,15 @@ function normalizeVideoSource(value: unknown): LiveRoom['videoSource'] | undefin
   return value === 'recorded' || value === 'digitalHuman' ? value : undefined;
 }
 
+function normalizeAIAssistantEnabled(raw: Record<string, unknown>): boolean | undefined {
+  const value = raw.aiAssistantEnabled ?? raw.digitalHumanEnabled;
+  if (typeof value === 'boolean') return value;
+  const videoSource = normalizeVideoSource(raw.videoSource);
+  if (videoSource === 'digitalHuman') return true;
+  if (videoSource === 'recorded') return false;
+  return undefined;
+}
+
 function normalizePage<T>(data: unknown, itemKey: string, normalizer: (raw: Record<string, unknown>) => T): PageResult<T> {
   const source = (data ?? {}) as Record<string, unknown>;
   const items = Array.isArray(source[itemKey]) ? (source[itemKey] as Record<string, unknown>[]) : [];
@@ -113,6 +133,9 @@ function normalizePage<T>(data: unknown, itemKey: string, normalizer: (raw: Reco
 function normalizeLiveRoom(raw: Record<string, unknown>): LiveRoom {
   const id = String(raw.id);
   const merchantId = String(raw.merchantId ?? '');
+  const aiAssistantEnabled = normalizeAIAssistantEnabled(raw);
+  const videoSource = normalizeVideoSource(raw.videoSource) ?? (aiAssistantEnabled === true ? 'digitalHuman' : aiAssistantEnabled === false ? 'recorded' : undefined);
+  const digitalHuman = normalizeDigitalHuman(raw.digitalHuman) ?? (videoSource === 'digitalHuman' ? defaultDigitalHumanMedia : undefined);
   return {
     id,
     title: String(raw.title),
@@ -120,10 +143,11 @@ function normalizeLiveRoom(raw: Record<string, unknown>): LiveRoom {
     merchantId,
     merchantName: optionalString(raw.merchantName) ?? merchantId,
     status: String(raw.status) as LiveRoom['status'],
-    videoSource: normalizeVideoSource(raw.videoSource),
+    videoSource,
     coverUrl: optionalString(raw.coverUrl),
     videoUrl: optionalString(raw.videoUrl),
-    digitalHuman: normalizeDigitalHuman(raw.digitalHuman),
+    digitalHuman,
+    aiAssistantEnabled,
     onlineCount: Number(raw.onlineCount ?? 0),
     watcherCount: Number(raw.viewerTotal ?? 0),
     likeCount: raw.likeCount === undefined ? undefined : Number(raw.likeCount),
@@ -354,18 +378,33 @@ function merchantSearchQuery(options: SearchMerchantsOptions = {}): string {
 
 export class ApiClient {
   private token = '';
+  private authRefresh?: AuthRefreshOptions;
+  private refreshPromise?: Promise<RefreshResult>;
 
   constructor(
     private readonly baseUrl: string,
-    private readonly fetcher: Fetcher = fetch
+    private readonly fetcher: Fetcher = defaultFetcher
   ) {}
 
   setToken(token: string) {
     this.token = token;
   }
 
+  configureAuthRefresh(options?: AuthRefreshOptions) {
+    this.authRefresh = options;
+  }
+
   async login(body: LoginRequest): Promise<LoginResult> {
-    return this.request<LoginResult>('/api/v1/auth/login', { method: 'POST', body });
+    return this.request<LoginResult>('/api/v1/auth/login', { method: 'POST', body, omitAuth: true, skipAuthRefresh: true });
+  }
+
+  async refreshAccessToken(refreshToken: string): Promise<RefreshResult> {
+    return this.performRequest<RefreshResult>('/api/v1/auth/refresh', {
+      method: 'POST',
+      body: { refreshToken },
+      omitAuth: true,
+      skipAuthRefresh: true
+    });
   }
 
   async getMe(): Promise<LoginResult['user']> {
@@ -482,16 +521,31 @@ export class ApiClient {
 
   private async request<T = unknown>(
     path: string,
-    options: { method?: string; body?: unknown; idempotencyKey?: string } = {}
+    options: RequestOptions = {}
+  ): Promise<T> {
+    try {
+      return await this.performRequest<T>(path, options);
+    } catch (error) {
+      if (!this.shouldRefreshAccessToken(error, options)) throw error;
+      await this.refreshAccessTokenOnce();
+      return this.performRequest<T>(path, { ...options, skipAuthRefresh: true });
+    }
+  }
+
+  private async performRequest<T = unknown>(
+    path: string,
+    options: RequestOptions = {}
   ): Promise<T> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json; charset=utf-8'
     };
-    if (this.token) headers.Authorization = `Bearer ${this.token}`;
+    if (!options.omitAuth && this.token) headers.Authorization = `Bearer ${this.token}`;
     if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
+    const url = joinUrl(this.baseUrl, path);
+    const method = options.method ?? 'GET';
 
-    const response = await this.fetcher(joinUrl(this.baseUrl, path), {
-      method: options.method ?? 'GET',
+    const response = await this.fetcher(url, {
+      method,
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body)
     });
@@ -502,10 +556,41 @@ export class ApiClient {
     }
     return envelope.data;
   }
+
+  private shouldRefreshAccessToken(error: unknown, options: RequestOptions): boolean {
+    if (options.skipAuthRefresh || !(error instanceof ApiError)) return false;
+    if (!isAuthExpiredError(error)) return false;
+    return Boolean(this.authRefresh?.getRefreshToken().trim());
+  }
+
+  private async refreshAccessTokenOnce(): Promise<RefreshResult> {
+    if (!this.authRefresh) throw new ApiError('访问令牌无效或已过期', 10002, undefined, 401);
+    if (!this.refreshPromise) {
+      const refreshToken = this.authRefresh.getRefreshToken().trim();
+      this.refreshPromise = this.refreshAccessToken(refreshToken)
+        .then((result) => {
+          this.token = result.accessToken;
+          this.authRefresh?.onAccessTokenRefreshed?.(result);
+          return result;
+        })
+        .catch((error) => {
+          if (isAuthExpiredError(error)) this.authRefresh?.onRefreshFailed?.();
+          throw error;
+        })
+        .finally(() => {
+          this.refreshPromise = undefined;
+        });
+    }
+    return this.refreshPromise;
+  }
+}
+
+function isAuthExpiredError(error: unknown): error is ApiError {
+  return error instanceof ApiError && (error.status === 401 || error.code === 10001 || error.code === 10002);
 }
 
 export class DemoApiClient extends ApiClient {
-  constructor(fetcher: Fetcher = fetch) {
+  constructor(fetcher: Fetcher = defaultFetcher) {
     super('demo://local', fetcher);
   }
 

@@ -49,6 +49,11 @@ export interface LoginResult {
   user: User;
 }
 
+export interface RefreshResult {
+  accessToken: string;
+  expiresIn: number;
+}
+
 export interface AuctionRuleSnapshot {
   startPrice?: number;
   reservePrice?: number;
@@ -70,6 +75,7 @@ export interface LiveRoom {
   merchantName: string;
   status: LiveRoomStatus;
   videoSource?: LiveRoomVideoSource;
+  aiAssistantEnabled?: boolean;
   coverUrl?: string;
   videoUrl?: string;
   digitalHuman?: {

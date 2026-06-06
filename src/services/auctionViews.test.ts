@@ -32,6 +32,7 @@ describe('auction view helpers', () => {
       record('pending_shipment', 'CLOSED_WON', { order: order('pending_shipment', 'PAID', 'PAID', 'UNSHIPPED') }),
       record('pending_receipt', 'SETTLED', { order: order('pending_receipt', 'PAID', 'PAID', 'SHIPPED') }),
       record('completed', 'SETTLED', { order: order('completed', 'PAID', 'PAID', 'RECEIVED') }),
+      record('zero_deposit_ready', 'RUNNING', { depositAmount: 0, depositStatus: 'READY', lotDepositAmount: 0 }),
       record('no_deposit_ignored', 'RUNNING', { depositAmount: 0, depositStatus: '' })
     ];
 
@@ -44,9 +45,10 @@ describe('auction view helpers', () => {
       'pending_pay',
       'pending_shipment',
       'pending_receipt',
-      'completed'
+      'completed',
+      'zero_deposit_ready'
     ]);
-    expect(grouped.pendingBid.map((item) => item.id)).toEqual(['pending_bid_ready', 'pending_bid_running']);
+    expect(grouped.pendingBid.map((item) => item.id)).toEqual(['pending_bid_ready', 'pending_bid_running', 'zero_deposit_ready']);
     expect(grouped.pendingPay.map((item) => item.id)).toEqual(['pending_pay']);
     expect(grouped.pendingShipment.map((item) => item.id)).toEqual(['pending_shipment']);
     expect(grouped.pendingReceipt.map((item) => item.id)).toEqual(['pending_receipt']);
@@ -94,6 +96,7 @@ function record(
   lotStatus: LiveRoomLot['status'],
   options: {
     depositAmount?: number;
+    lotDepositAmount?: number;
     depositStatus?: string;
     order?: Order;
   } = {}
@@ -101,7 +104,7 @@ function record(
   return {
     id,
     userId: 'u1',
-    lot: lot(`lot_${id}`, lotStatus),
+    lot: { ...lot(`lot_${id}`, lotStatus), depositAmount: options.lotDepositAmount },
     order: options.order,
     depositAmount: options.depositAmount ?? 5000,
     depositStatus: options.depositStatus ?? 'FROZEN'

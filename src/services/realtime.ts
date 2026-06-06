@@ -1,5 +1,5 @@
 import { validateBidPrice } from './bidding';
-import type { LiveChatMessage, RankingItem } from './types';
+import type { LiveChatMessage } from './types';
 
 export interface RealtimeMessage<TPayload = unknown> {
   type: string;
@@ -11,7 +11,7 @@ export interface RealtimeMessage<TPayload = unknown> {
 }
 
 export interface BidInput {
-  auctionId: string;
+  auctionId: string | number;
   price: number;
   expectedCurrentPrice: number;
 }
@@ -28,7 +28,7 @@ type NativeReconnectTimer = number | ReturnType<typeof setTimeout>;
 export interface RealtimeClient {
   connect(): void;
   disconnect(): void;
-  send(message: RealtimeMessage): void;
+  send(message: RealtimeMessage): boolean;
   onMessage(handler: MessageHandler): () => void;
 }
 
@@ -48,6 +48,7 @@ interface MockOptions {
 interface NativeOptions {
   baseUrl: string;
   roomId: string;
+  accessToken?: string;
   lastSeq?: number;
   storage?: Storage;
   reconnect?: {
@@ -65,9 +66,19 @@ interface MockControlOptions {
   roomId: string;
 }
 
-export function buildLiveRoomWsUrl(baseUrl: string, roomId: string, lastSeq?: number): string {
+interface BackendRankingEntry {
+  rank: number;
+  bidderId: string;
+  bidderNickname: string;
+  price: number;
+}
+
+export function buildLiveRoomWsUrl(baseUrl: string, roomId: string, lastSeq?: number, accessToken?: string): string {
   const base = baseUrl.replace(/\/$/, '');
-  const query = lastSeq === undefined ? '' : `?lastSeq=${encodeURIComponent(String(lastSeq))}`;
+  const params = new URLSearchParams();
+  if (lastSeq !== undefined) params.set('lastSeq', String(lastSeq));
+  if (accessToken) params.set('token', accessToken);
+  const query = params.toString() ? `?${params.toString()}` : '';
   return `${base}/ws/live-rooms/${encodeURIComponent(roomId)}${query}`;
 }
 
@@ -116,6 +127,7 @@ export class MockRealtimeClient implements RealtimeClient {
   private participantCount: number;
   private onlineCount: number;
   private bidCount = 0;
+  private extendCount = 0;
   private timers: number[] = [];
 
   constructor(private readonly options: MockOptions) {
@@ -156,13 +168,12 @@ export class MockRealtimeClient implements RealtimeClient {
         type: 'timer.extended',
         payload: {
           auctionId: this.options.auctionId,
-          reason: 'ANTI_SNIPE',
-          oldEndTsMs: this.endTsMs,
-          newEndTsMs: this.endTsMs + 10_000,
-          extendMs: 10_000
+          endTime: new Date(this.endTsMs + 10_000).toISOString(),
+          extendCount: this.extendCount + 1
         }
       });
       this.endTsMs += 10_000;
+      this.extendCount += 1;
       this.schedule(10, () => this.closeAuction());
     });
   }
@@ -173,7 +184,7 @@ export class MockRealtimeClient implements RealtimeClient {
     this.handlers.clear();
   }
 
-  send(message: RealtimeMessage): void {
+  send(message: RealtimeMessage): boolean {
     if (message.type === 'heartbeat') {
       this.schedule(0, () =>
         this.emit({
@@ -185,7 +196,7 @@ export class MockRealtimeClient implements RealtimeClient {
           }
         })
       );
-      return;
+      return true;
     }
 
     if (message.type === 'ping') {
@@ -199,7 +210,7 @@ export class MockRealtimeClient implements RealtimeClient {
           }
         })
       );
-      return;
+      return true;
     }
 
     if (message.type === 'room.subscribe') {
@@ -213,7 +224,7 @@ export class MockRealtimeClient implements RealtimeClient {
           }
         })
       );
-      return;
+      return true;
     }
 
     if (message.type === 'room.unsubscribe') {
@@ -227,15 +238,15 @@ export class MockRealtimeClient implements RealtimeClient {
           }
         })
       );
-      return;
+      return true;
     }
 
     if (message.type === 'chat.send') {
       this.handleChatSend(message);
-      return;
+      return true;
     }
 
-    if (message.type !== 'bid.place') return;
+    if (message.type !== 'bid.place') return false;
 
     const bid = message.payload as unknown as BidInput;
     const validation = validateBidPrice(Number(bid.price), {
@@ -244,7 +255,7 @@ export class MockRealtimeClient implements RealtimeClient {
       capPrice: this.options.capPrice
     });
 
-    if (this.closed || bid.auctionId !== this.options.auctionId || !validation.valid) {
+    if (this.closed || String(bid.auctionId) !== this.options.auctionId || !validation.valid) {
       const minNextPrice = this.currentPrice + this.options.minIncrement;
       this.schedule(0, () =>
         this.emit({
@@ -259,7 +270,7 @@ export class MockRealtimeClient implements RealtimeClient {
           }
         })
       );
-      return;
+      return true;
     }
 
     this.currentPrice = validation.price;
@@ -292,12 +303,15 @@ export class MockRealtimeClient implements RealtimeClient {
           bidId: `bid_${this.seq}`,
           bidderId: this.options.userId,
           price: this.currentPrice,
-          bidTsMs: Date.now(),
+          accepted: true,
           currentPrice: this.currentPrice,
           leaderBidderId: this.options.userId,
           bidCount: this.bidCount,
           participantCount: this.participantCount,
-          endTsMs: this.endTsMs
+          endTime: new Date(this.endTsMs).toISOString(),
+          extendCount: this.extendCount,
+          seq: this.seq,
+          event: 'bid.accepted'
         }
       });
       this.emitRanking();
@@ -305,6 +319,7 @@ export class MockRealtimeClient implements RealtimeClient {
         this.schedule(200, () => this.closeAuction());
       }
     });
+    return true;
   }
 
   onMessage(handler: MessageHandler): () => void {
@@ -343,7 +358,7 @@ export class MockRealtimeClient implements RealtimeClient {
       type: 'ranking.updated',
       payload: {
         auctionId: this.options.auctionId,
-        items: this.ranking()
+        ranking: this.ranking()
       }
     });
   }
@@ -356,10 +371,10 @@ export class MockRealtimeClient implements RealtimeClient {
       payload: {
         auctionId: this.options.auctionId,
         status: 'CLOSED_WON',
-        winnerBidderId: this.leaderBidderId,
-        finalPrice: this.currentPrice,
+        winnerId: this.leaderBidderId,
+        price: this.currentPrice,
         orderId: 'ord_2001',
-        closedTsMs: Date.now()
+        closedAt: new Date().toISOString()
       }
     });
     this.emit({
@@ -427,17 +442,14 @@ export class MockRealtimeClient implements RealtimeClient {
     );
   }
 
-  private ranking(): RankingItem[] {
+  private ranking(): BackendRankingEntry[] {
     const leaderIsUser = this.leaderBidderId === this.options.userId;
-    const now = Date.now();
-    const items: RankingItem[] = [
+    const items: BackendRankingEntry[] = [
       {
         rank: 1,
         bidderId: this.leaderBidderId,
-        nicknameMask: leaderIsUser ? '我' : '用户**02',
-        avatarUrl: leaderIsUser ? '/logo.png' : undefined,
-        price: this.currentPrice,
-        bidTsMs: now
+        bidderNickname: leaderIsUser ? '我' : '用户**02',
+        price: this.currentPrice
       }
     ];
     const lastVisibleRank = leaderIsUser ? 9 : 8;
@@ -446,20 +458,16 @@ export class MockRealtimeClient implements RealtimeClient {
       items.push({
         rank,
         bidderId: `u${demoUserNumber}`,
-        nicknameMask: `用户**${String(demoUserNumber).padStart(2, '0')}`,
-        avatarUrl: demoUserNumber <= 4 ? '/logo.png' : undefined,
-        price: Math.max(0, this.currentPrice - this.options.minIncrement * (rank - 1)),
-        bidTsMs: now - (rank - 1) * 1000
+        bidderNickname: `用户**${String(demoUserNumber).padStart(2, '0')}`,
+        price: Math.max(0, this.currentPrice - this.options.minIncrement * (rank - 1))
       });
     }
     if (!leaderIsUser) {
       items.push({
         rank: 9,
         bidderId: this.options.userId,
-        nicknameMask: '我',
-        avatarUrl: '/logo.png',
-        price: Math.max(0, this.currentPrice - this.options.minIncrement * 8),
-        bidTsMs: now - 8000
+        bidderNickname: '我',
+        price: Math.max(0, this.currentPrice - this.options.minIncrement * 8)
       });
     }
     return items;
@@ -492,9 +500,14 @@ export class NativeWebSocketClient implements RealtimeClient {
     this.handlers.clear();
   }
 
-  send(message: RealtimeMessage): void {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
-    this.socket.send(JSON.stringify(message));
+  send(message: RealtimeMessage): boolean {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return false;
+    try {
+      this.socket.send(JSON.stringify(message));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   onMessage(handler: MessageHandler): () => void {
@@ -509,7 +522,7 @@ export class NativeWebSocketClient implements RealtimeClient {
     if (this.socket && (this.socket.readyState === WebSocket.CONNECTING || this.socket.readyState === WebSocket.OPEN)) return;
 
     const socket = new WebSocket(
-      buildLiveRoomWsUrl(this.options.baseUrl, this.options.roomId, this.lastSeq > 0 ? this.lastSeq : undefined)
+      buildLiveRoomWsUrl(this.options.baseUrl, this.options.roomId, this.lastSeq > 0 ? this.lastSeq : undefined, this.options.accessToken)
     );
     this.socket = socket;
 
@@ -635,8 +648,9 @@ export class MockRealtimeControlClient implements RealtimeClient {
     this.socket = undefined;
   }
 
-  send(): void {
+  send(): boolean {
     // Development control bridge is receive-only from the browser's perspective.
+    return false;
   }
 
   onMessage(handler: MessageHandler): () => void {

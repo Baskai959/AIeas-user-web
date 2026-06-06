@@ -32,4 +32,27 @@ describe('session store', () => {
     expect(stored.state?.refreshToken).toBe('refresh');
     expect(stored.state?.user?.id).toBe('u1');
   });
+
+  it('updates only the access token after refresh', () => {
+    act(() => {
+      useSessionStore.getState().setSession({
+        accessToken: 'jwt_old',
+        refreshToken: 'refresh',
+        expiresIn: 43_200,
+        user: {
+          id: 'u1',
+          nickname: '竞拍用户',
+          role: 'buyer'
+        }
+      });
+      useSessionStore.getState().refreshAccessToken({
+        accessToken: 'jwt_new',
+        expiresIn: 43_200
+      });
+    });
+
+    expect(useSessionStore.getState().accessToken).toBe('jwt_new');
+    expect(useSessionStore.getState().refreshToken).toBe('refresh');
+    expect(useSessionStore.getState().user?.id).toBe('u1');
+  });
 });

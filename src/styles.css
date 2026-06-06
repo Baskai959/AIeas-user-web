@@ -521,6 +521,66 @@ button {
   padding: 6px 10px 0;
 }
 
+.live-voice-permission {
+  position: absolute;
+  top: 52px;
+  left: 50%;
+  z-index: 34;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: min(calc(100% - 24px), 520px);
+  padding: 10px 12px;
+  color: #fff;
+  background: rgba(16, 24, 40, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.32);
+  transform: translateX(-50%);
+  backdrop-filter: blur(14px);
+}
+
+.live-voice-permission-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.live-voice-permission-copy strong {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-voice-permission-copy span {
+  color: rgba(255, 255, 255, 0.74);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.live-voice-permission-button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  min-width: 104px;
+  height: 34px;
+  padding: 0 12px;
+  color: #111827;
+  font-weight: 700;
+  font-size: 13px;
+  background: #fdb022;
+  border: 0;
+  border-radius: 8px;
+}
+
+.live-voice-permission-button:active {
+  transform: translateY(1px);
+}
+
 .live-back,
 .sheet-header button,
 .bid-stepper button {
@@ -679,6 +739,14 @@ button {
     min-width: 34px;
     padding: 0 3px;
     font-size: 11px;
+  }
+
+  .live-voice-permission {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .live-voice-permission-button {
+    width: 100%;
   }
 }
 
@@ -1809,6 +1877,7 @@ button {
 
 .lot-list {
   display: grid;
+  align-content: start;
   gap: 10px;
   height: calc(100% - 52px);
   max-height: none;
@@ -1944,6 +2013,31 @@ button {
 
 .lot-price-line strong {
   color: #dc2626;
+}
+
+.lot-schedule-line {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 0 8px;
+  margin-top: 6px;
+  overflow: hidden;
+  color: #b45309;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+}
+
+.detail-schedule-line,
+.product-schedule-line {
+  margin-bottom: 12px;
 }
 
 .lot-list-sheet {
@@ -3407,6 +3501,13 @@ button {
   font-size: 14px;
   font-weight: 900;
   text-align: right;
+}
+
+.discover-lot-schedule {
+  grid-column: 2 / -1;
+  color: #fef3c7;
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .discover-slide .discover-enter-button.adm-button {

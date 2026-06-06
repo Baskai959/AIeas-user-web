@@ -36,12 +36,12 @@ import closeCommentIconUrl from '../../Icon/close_comment.svg';
 import likeIconUrl from '../../Icon/like.svg';
 import logoUrl from '../../logo.png';
 import { createTranslator, defaultLocale, type Locale, type MessageKey } from '../i18n/messages';
-import { classifyAuctionRecord, groupAuctionRecords, hasPaidDeposit, myAuctionTabKeys, previewLotStatusKind, selectCurrentRunningLot, selectPreviewLot } from '../services/auctionViews';
+import { classifyAuctionRecord, groupAuctionRecords, hasPaidDeposit, hasZeroDepositEnrollment, myAuctionTabKeys, previewLotStatusKind, selectCurrentRunningLot, selectPreviewLot } from '../services/auctionViews';
 import {
-  QUICK_BID_MAX_STEPS,
   buildBidPlacePayload,
   getMinBidIntervalMs,
   getQuickBidIntervalRemainingMs,
+  getQuickBidMaxSteps,
   getQuickBidPrice,
   isQuickBidOutdated,
   validateBidPrice,
@@ -49,8 +49,8 @@ import {
   type BidRuleInput
 } from '../services/bidding';
 import { ApiClient, defaultApiClient } from '../services/api';
-import { buildDigitalHumanWsUrl, DigitalHumanAudioClient } from '../services/digitalHuman';
-import { demoCategories, demoLiveRoom, demoLiveRoomPage, demoLiveRoomStats, demoLotPage, findDemoLiveRoom } from '../services/mockData';
+import { defaultDigitalHumanMedia, getLiveVoiceBroadcastAudioPlayer, LiveVoiceBroadcastAudioPlayer, type LiveVoiceBroadcastAudioPayload } from '../services/digitalHuman';
+import { demoCategories, demoLiveRoom, demoLiveRoomPage, demoLiveRoomStats, demoLotPage, findDemoLiveRoom, listDemoLots } from '../services/mockData';
 import {
   isFreshRealtimeMessage,
   MockRealtimeClient,
@@ -137,7 +137,8 @@ const feedTapMaxDurationMs = 250;
 const feedTapMaxMovePx = 8;
 const previewMediaSnapshotMaxAgeMs = 30_000;
 const likeBurstParticles = Array.from({ length: 15 }, (_, index) => index);
-
+const liveVoiceUnlockEvents = ['pointerdown', 'touchend', 'keydown', 'click'] as const;
+const liveSessionLotListChangedEvents = new Set(['live_session.lot_mounted', 'live_session.lot_unmounted', 'live_session.lot_changed']);
 function feedTrackTransform(trackIndex: number, offsetPx = 0): string {
   const percent = trackIndex === 0 ? 0 : -trackIndex * 100;
   return offsetPx === 0 ? `translate3d(0, ${percent}%, 0)` : `translate3d(0, calc(${percent}% + ${offsetPx}px), 0)`;
@@ -212,6 +213,18 @@ function livePath(roomId: string, lotId?: string, from?: MainTab): string {
   if (from) params.set('from', from);
   const query = params.toString();
   return query ? `/live/${roomId}?${query}` : `/live/${roomId}`;
+}
+
+function payPath(orderId: string, returnTo?: string): string {
+  const params = new URLSearchParams();
+  if (returnTo) params.set('returnTo', returnTo);
+  const query = params.toString();
+  return query ? `/pay/${orderId}?${query}` : `/pay/${orderId}`;
+}
+
+function parsePayReturnTo(value: string | null): string | undefined {
+  if (!value || !value.startsWith('/live/') || value.startsWith('//')) return undefined;
+  return value;
 }
 
 function ordersPath(tab: MyAuctionTabKey, orderId?: string): string {
@@ -289,12 +302,34 @@ export default function AppRoutes({ apiClient = defaultApiClient }: AppProps) {
   const locale = usePreferencesStore((state) => state.locale);
   const accessToken = useSessionStore((state) => state.accessToken);
   const location = useLocation();
+  const authAwareApiClient = apiClient as ApiClient & {
+    setToken?: (token: string) => void;
+    configureAuthRefresh?: ApiClient['configureAuthRefresh'];
+  };
   activeLocale = locale;
   t = createTranslator(locale);
+  authAwareApiClient.setToken?.(accessToken);
 
   useEffect(() => {
-    (apiClient as ApiClient & { setToken?: (token: string) => void }).setToken?.(accessToken);
-  }, [accessToken, apiClient]);
+    authAwareApiClient.setToken?.(accessToken);
+    authAwareApiClient.configureAuthRefresh?.({
+      getRefreshToken: () => useSessionStore.getState().refreshToken,
+      onAccessTokenRefreshed: (session) => useSessionStore.getState().refreshAccessToken(session),
+      onRefreshFailed: () => useSessionStore.getState().clearSession()
+    });
+    return () => authAwareApiClient.configureAuthRefresh?.(undefined);
+  }, [accessToken, authAwareApiClient]);
+
+  useEffect(() => {
+    const unlockLiveVoiceAudio = () => {
+      void getLiveVoiceBroadcastAudioPlayer().unlockAudio();
+    };
+    liveVoiceUnlockEvents.forEach((eventName) => window.addEventListener(eventName, unlockLiveVoiceAudio, true));
+    return () => {
+      liveVoiceUnlockEvents.forEach((eventName) => window.removeEventListener(eventName, unlockLiveVoiceAudio, true));
+      getLiveVoiceBroadcastAudioPlayer().close();
+    };
+  }, []);
 
   return (
     <main className={location.pathname.startsWith('/live/') ? 'app-shell live-shell' : 'app-shell'}>
@@ -451,6 +486,7 @@ function LiveRoutePage({ apiClient }: { apiClient: ApiClient }) {
   const { roomId = demoLiveRoom.id } = useParams();
   const [searchParams] = useSearchParams();
   const user = useSessionStore((state) => state.user);
+  const accessToken = useSessionStore((state) => state.accessToken);
   const navigate = useNavigate();
   const location = useLocation() as Location<AppLocationState | null>;
   const from = parseMainTab(searchParams.get('from'));
@@ -464,8 +500,9 @@ function LiveRoutePage({ apiClient }: { apiClient: ApiClient }) {
       initialLotId={searchParams.get('lotId') ?? undefined}
       initialPreviewMedia={location.state?.previewMedia}
       userId={user?.id ?? 'u1'}
+      accessToken={accessToken}
       onBack={() => navigateWithTransition(navigate, returnTo, returnState ? { state: returnState } : undefined)}
-      onPay={(orderId) => navigateWithTransition(navigate, `/pay/${orderId}`)}
+      onPay={(orderId) => navigateWithTransition(navigate, payPath(orderId, currentPath(location)))}
       onOpenOrder={(orderId, tab) => navigateWithTransition(navigate, ordersPath(tab, orderId))}
     />
   );
@@ -479,8 +516,20 @@ function ResultRoutePage({ apiClient }: { apiClient: ApiClient }) {
 
 function PayRoutePage({ apiClient }: { apiClient: ApiClient }) {
   const { orderId = 'ord_2001' } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  return <PayPage apiClient={apiClient} orderId={orderId} onBack={(auctionId) => navigateWithTransition(navigate, `/result/${auctionId}`)} />;
+  const returnTo = parsePayReturnTo(searchParams.get('returnTo'));
+  const backTarget = (auctionId: string) => returnTo ?? `/result/${auctionId}`;
+  return (
+    <PayPage
+      apiClient={apiClient}
+      orderId={orderId}
+      onBack={(auctionId) => navigateWithTransition(navigate, backTarget(auctionId))}
+      onPaid={() => {
+        if (returnTo) navigateWithTransition(navigate, returnTo, { replace: true });
+      }}
+    />
+  );
 }
 
 function SettingsRoutePage({ apiClient }: { apiClient: ApiClient }) {
@@ -1000,6 +1049,7 @@ function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiCl
           const room = slide.room;
           const activeLot = selectPreviewLot(room.id, previewLots);
           const activeLotStatusKind = activeLot ? previewLotStatusKind(activeLot) : undefined;
+          const activeLotScheduleText = activeLot ? scheduledStartText(activeLot) : undefined;
           const isActive = slideIndex === trackIndex;
           return (
             <article className={isActive ? 'discover-slide is-active is-focused' : 'discover-slide'} aria-current={isActive ? 'true' : undefined} data-room-id={room.id} key={slide.key}>
@@ -1035,6 +1085,7 @@ function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiCl
                       {activeLotStatusKind === 'running' ? t('auction.running') : t('auction.upcoming')}
                     </span>
                     <span className="discover-lot-price">{formatMoney(priceValue(activeLot, stateFromLot(activeLot)))}</span>
+                    {activeLotScheduleText ? <span className="discover-lot-schedule">{activeLotScheduleText}</span> : null}
                   </div>
                 ) : null}
               </div>
@@ -1060,6 +1111,133 @@ function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiCl
 function liveRoomPreviewVideoUrl(room: LiveRoom): string | undefined {
   if (room.videoSource === 'digitalHuman') return room.digitalHuman?.idleVideoUrl;
   return room.videoUrl;
+}
+
+function realtimeDigitalHumanConfig(value: unknown): LiveRoom['digitalHuman'] | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const idleVideoUrl = typeof raw.idleVideoUrl === 'string' && raw.idleVideoUrl.trim() ? raw.idleVideoUrl.trim() : undefined;
+  const speakingVideoUrl = typeof raw.speakingVideoUrl === 'string' && raw.speakingVideoUrl.trim() ? raw.speakingVideoUrl.trim() : undefined;
+  if (!idleVideoUrl || !speakingVideoUrl) return undefined;
+  const ttsWsUrl = typeof raw.ttsWsUrl === 'string' && raw.ttsWsUrl.trim() ? raw.ttsWsUrl.trim() : undefined;
+  return { idleVideoUrl, speakingVideoUrl, ttsWsUrl };
+}
+
+function realtimeAIAssistantSwitchEnabled(payload: unknown): boolean | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+  const raw = payload as Record<string, unknown>;
+  if (typeof raw.enabled === 'boolean') return raw.enabled;
+  const liveRoom = raw.liveRoom && typeof raw.liveRoom === 'object' ? (raw.liveRoom as Record<string, unknown>) : undefined;
+  if (typeof liveRoom?.aiAssistantEnabled === 'boolean') return liveRoom.aiAssistantEnabled;
+  if (typeof raw.status === 'string') {
+    const status = raw.status.trim().toLowerCase();
+    if (status === 'enabled') return true;
+    if (status === 'disabled') return false;
+  }
+  return undefined;
+}
+
+function liveRoomWithAIAssistantSwitch(room: LiveRoom, payload: unknown, enabled: boolean): LiveRoom {
+  const raw = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : undefined;
+  const liveRoom = raw?.liveRoom && typeof raw.liveRoom === 'object' ? (raw.liveRoom as Record<string, unknown>) : undefined;
+  const digitalHuman = realtimeDigitalHumanConfig(liveRoom?.digitalHuman) ?? realtimeDigitalHumanConfig(raw?.digitalHuman) ?? room.digitalHuman ?? defaultDigitalHumanMedia;
+  const videoSource = liveRoom?.videoSource === 'digitalHuman' || raw?.videoSource === 'digitalHuman'
+    ? 'digitalHuman'
+    : liveRoom?.videoSource === 'recorded' || raw?.videoSource === 'recorded'
+      ? 'recorded'
+      : enabled
+        ? 'digitalHuman'
+        : 'recorded';
+  if (!enabled) {
+    return {
+      ...room,
+      aiAssistantEnabled: false,
+      videoSource
+    };
+  }
+  return {
+    ...room,
+    aiAssistantEnabled: true,
+    videoSource,
+    digitalHuman
+  };
+}
+
+function realtimeLiveVoiceBroadcastAudioPayload(payload: unknown): LiveVoiceBroadcastAudioPayload | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+  const raw = payload as Record<string, unknown>;
+  const audioBase64 = typeof raw.audioBase64 === 'string' && raw.audioBase64.trim() ? raw.audioBase64.trim() : undefined;
+  if (!audioBase64) return undefined;
+  const sampleRate = Number(raw.sampleRate ?? raw.sample_rate);
+  const channels = Number(raw.channels);
+  return {
+    audioBase64,
+    audioFormat: typeof raw.audioFormat === 'string' ? raw.audioFormat : typeof raw.audio_format === 'string' ? raw.audio_format : undefined,
+    encoding: typeof raw.encoding === 'string' ? raw.encoding : undefined,
+    sampleRate: Number.isFinite(sampleRate) ? sampleRate : undefined,
+    channels: Number.isFinite(channels) ? channels : undefined
+  };
+}
+
+function estimateLiveVoiceAudioBytes(audioBase64: string | undefined): number | undefined {
+  if (!audioBase64) return undefined;
+  const value = (audioBase64.includes(',') ? audioBase64.slice(audioBase64.indexOf(',') + 1) : audioBase64).replace(/\s/g, '');
+  if (!value) return undefined;
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((value.length * 3) / 4) - padding);
+}
+
+function liveVoiceAudioDebugSummary(payload: LiveVoiceBroadcastAudioPayload | undefined): Record<string, unknown> {
+  const audioBase64 = typeof payload?.audioBase64 === 'string' ? payload.audioBase64.trim() : '';
+  return {
+    audioBase64Length: audioBase64.length,
+    audioBytesApprox: estimateLiveVoiceAudioBytes(audioBase64),
+    audioFormat: payload?.audioFormat ?? payload?.encoding,
+    sampleRate: payload?.sampleRate,
+    channels: payload?.channels
+  };
+}
+
+function liveVoiceMessageDebugSummary(message: RealtimeMessage, room: LiveRoom, payload: LiveVoiceBroadcastAudioPayload | undefined): Record<string, unknown> {
+  const raw = message.payload && typeof message.payload === 'object' ? (message.payload as Record<string, unknown>) : undefined;
+  const rawAudioBase64 = typeof raw?.audioBase64 === 'string' ? raw.audioBase64.trim() : undefined;
+  const audioBase64 = payload?.audioBase64 ?? rawAudioBase64;
+  return {
+    requestId: message.requestId,
+    messageLiveSessionId: message.liveSessionId,
+    payloadLiveSessionId: raw?.liveSessionId ?? raw?.live_session_id,
+    roomId: room.id,
+    roomLiveSessionId: room.liveSessionId,
+    audioBase64Length: audioBase64?.length ?? 0,
+    audioBytesApprox: estimateLiveVoiceAudioBytes(audioBase64),
+    audioFormat: payload?.audioFormat ?? payload?.encoding ?? raw?.audioFormat ?? raw?.audio_format ?? raw?.encoding,
+    sampleRate: payload?.sampleRate ?? raw?.sampleRate ?? raw?.sample_rate,
+    channels: payload?.channels ?? raw?.channels
+  };
+}
+
+function realtimeLiveVoiceMatchesRoom(message: RealtimeMessage, room: LiveRoom): boolean {
+  const payload = message.payload && typeof message.payload === 'object' ? (message.payload as Record<string, unknown>) : undefined;
+  const eventLiveSessionId = Number(message.liveSessionId ?? payload?.liveSessionId ?? payload?.live_session_id);
+  if (!Number.isFinite(eventLiveSessionId) || !room.liveSessionId) return true;
+  return eventLiveSessionId === room.liveSessionId;
+}
+
+function isLiveSessionLotListChangedMessage(message: RealtimeMessage): boolean {
+  return liveSessionLotListChangedEvents.has(message.type);
+}
+
+function realtimeLiveSessionMessageMatchesRoom(message: RealtimeMessage, room: LiveRoom): boolean {
+  const payload = message.payload && typeof message.payload === 'object' ? (message.payload as Record<string, unknown>) : undefined;
+  const rawLiveSessionId = message.liveSessionId ?? payload?.liveSessionId ?? payload?.live_session_id ?? payload?.sessionId;
+  if (rawLiveSessionId === undefined || rawLiveSessionId === null || rawLiveSessionId === '') return true;
+  const eventLiveSessionId = Number(rawLiveSessionId);
+  if (Number.isFinite(eventLiveSessionId) && room.liveSessionId) return eventLiveSessionId === room.liveSessionId;
+  return String(rawLiveSessionId) === room.id;
+}
+
+function isBackendAuctionId(value: string | undefined): value is string {
+  return typeof value === 'string' && /^[1-9]\d*$/.test(value);
 }
 
 function discoverPreviewVideoUrl(room: LiveRoom): string {
@@ -1294,6 +1472,7 @@ function ProductPage({ apiClient, lotId, onBack, onOpenRoom }: { apiClient: ApiC
   const categories = useQuery({ queryKey: ['categories'], queryFn: () => apiClient.listCategories(), placeholderData: { items: demoCategories, total: demoCategories.length, page: 1, page_size: 20 } });
   const item = lot.data;
   const state = item ? stateFromLot(item) : undefined;
+  const scheduleText = item && state ? scheduledStartText(item, state) : undefined;
   const category = categories.data?.items.find((candidate) => candidate.id === item?.categoryId);
 
   return (
@@ -1323,6 +1502,7 @@ function ProductPage({ apiClient, lotId, onBack, onOpenRoom }: { apiClient: ApiC
               <Metric label={t('auction.increment')} value={formatMoney(minIncrementForLot(item, state))} icon={<Plus size={16} />} />
               <Metric label={t('auction.deposit')} value={formatMoney(item.depositAmount ?? 0)} icon={<WalletCards size={16} />} />
             </div>
+            {scheduleText ? <div className="lot-schedule-line product-schedule-line">{scheduleText}</div> : null}
             <Button block color="danger" disabled={state.status !== 'RUNNING' && state.status !== 'EXTENDED'} onClick={() => onOpenRoom(item.roomId, item.id)}>
               {state.status === 'RUNNING' || state.status === 'EXTENDED' ? t('product.goLive') : t('product.liveUnavailable')}
             </Button>
@@ -1815,6 +1995,7 @@ function LiveRoomResultCard({ room, onOpen }: { room: LiveRoom; onOpen: () => vo
 function LotResultCard({ lot, action, onOpen, onOpenMerchant }: { lot: LiveRoomLot; action?: LotListAction; onOpen: () => void; onOpenMerchant?: (merchantId: string) => void }) {
   const state = stateFromLot(lot);
   const buttonAction = action ?? deriveFallbackLotResultAction(state.status);
+  const scheduleText = scheduledStartText(lot, state);
   return (
     <article className="search-result-card lot-result-card">
       <button className="result-media" type="button" onClick={onOpen}>
@@ -1828,6 +2009,7 @@ function LotResultCard({ lot, action, onOpen, onOpenMerchant }: { lot: LiveRoomL
           <span>{priceLabel(lot, state)}</span>
           <strong>{formatMoney(priceValue(lot, state))}</strong>
         </div>
+        {scheduleText ? <div className="lot-schedule-line">{scheduleText}</div> : null}
         {lot.merchantId && onOpenMerchant ? (
           <button className="text-link" type="button" onClick={() => onOpenMerchant(lot.merchantId ?? '')}>
             {t('product.merchant')} <ChevronRight size={13} />
@@ -2354,6 +2536,7 @@ function AuctionRecordCard({
           <span>{t('auction.deposit')}</span>
           <strong>{formatMoney(record.depositAmount)}</strong>
         </div>
+        {scheduledStartText(record.lot, state) ? <div className="lot-schedule-line">{scheduledStartText(record.lot, state)}</div> : null}
         <div className="result-meta">
           <span>{priceLabel(record.lot, state)} {formatMoney(priceValue(record.lot, state))}</span>
         </div>
@@ -2811,6 +2994,10 @@ function formatDate(value?: string): string {
   return new Intl.DateTimeFormat(activeLocale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 }
 
+function formatDateMs(value: number): string {
+  return new Intl.DateTimeFormat(activeLocale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+}
+
 type QuickBidFeedback =
   | { status: 'idle' }
   | { status: 'submitting'; requestId: string; message: string }
@@ -2828,6 +3015,8 @@ const AUCTION_ENDED_HOLD_MS = 5000;
 const AUCTION_CARD_ANIMATION_MS = 380;
 const WIN_CELEBRATION_DURATION_MS = 4200;
 const LIVE_SHEET_Z_INDEX_BASE = 110;
+const BID_CONFIRM_TIMEOUT_MS = 8000;
+const SCHEDULED_AUCTION_REFRESH_RETRY_DELAYS_MS = [0, 1000, 3000, 8000, 15000] as const;
 
 type LiveSheetVariant = keyof typeof LIVE_SHEET_ANIMATION_MS;
 type LiveSheetType = 'lotList' | 'detail' | 'quickBid';
@@ -3028,6 +3217,7 @@ function LiveRoomPage({
   initialLotId,
   initialPreviewMedia,
   userId,
+  accessToken,
   onBack,
   onPay,
   onOpenOrder
@@ -3037,10 +3227,12 @@ function LiveRoomPage({
   initialLotId?: string;
   initialPreviewMedia?: PreviewMediaSnapshot;
   userId: string;
+  accessToken?: string;
   onBack: () => void;
   onPay: (orderId: string, auctionId: string) => void;
   onOpenOrder: (orderId: string, tab: MyAuctionTabKey) => void;
 }) {
+  const queryClient = useQueryClient();
   const [selectedLotId, setSelectedLotId] = useState<string | undefined>(initialLotId);
   const [liveSheets, setLiveSheets] = useState<LiveSheetInstance[]>([]);
   const [floatingAuctionCard, setFloatingAuctionCard] = useState<FloatingAuctionCardState | undefined>();
@@ -3061,9 +3253,14 @@ function LiveRoomPage({
   const [countdownExtensionPulse, setCountdownExtensionPulse] = useState<{ auctionId: string; id: number } | undefined>();
   const [likeBurstId, setLikeBurstId] = useState(0);
   const [likeBurstVisible, setLikeBurstVisible] = useState(false);
+  const [winningCelebrationId, setWinningCelebrationId] = useState<string>();
+  const [digitalHumanSpeaking, setDigitalHumanSpeaking] = useState(false);
+  const [liveVoicePermissionPromptVisible, setLiveVoicePermissionPromptVisible] = useState(false);
   const [now, setNow] = useState(Date.now());
   const { alerts: auctionAlerts, pushAlert: pushAuctionAlert } = useLiveAuctionAlerts();
   const realtimeRef = useRef<RealtimeClient>();
+  const liveVoicePlayerRef = useRef<LiveVoiceBroadcastAudioPlayer>();
+  const pendingLiveVoicePayloadRef = useRef<LiveVoiceBroadcastAudioPayload>();
   const lastSeqRef = useRef(0);
   const lastRankingBidRef = useRef<RankingBidHint>();
   const sheetTimersRef = useRef<number[]>([]);
@@ -3072,6 +3269,8 @@ function LiveRoomPage({
   const floatingAuctionCardRef = useRef<FloatingAuctionCardState>();
   const pendingFloatingAuctionCardRef = useRef<FloatingAuctionCardState>();
   const countdownExtensionTimerRef = useRef<number>();
+  const scheduledAuctionRefreshAttemptsRef = useRef<Set<string>>(new Set());
+  const bidConfirmTimerRef = useRef<number>();
   const likeBurstTimerRef = useRef<number>();
   const commentsViewportRef = useRef<HTMLDivElement>(null);
   const commentsEndRef = useRef<HTMLDivElement>(null);
@@ -3093,7 +3292,7 @@ function LiveRoomPage({
   const lotsQuery = useQuery({
     queryKey: ['live-room-lots', roomId],
     queryFn: () => apiClient.listLiveRoomLots(roomId),
-    placeholderData: demoLotPage
+    placeholderData: listDemoLots(roomId)
   });
   const statsQuery = useQuery({
     queryKey: ['live-room-stats', roomId],
@@ -3112,7 +3311,7 @@ function LiveRoomPage({
   });
 
   const room = roomQuery.data ?? findDemoLiveRoom(roomId);
-  const lots = lotsQuery.data?.items.length ? lotsQuery.data.items : demoLotPage.items;
+  const lots = lotsQuery.data?.items ?? listDemoLots(roomId).items;
   const myAuctionRecordItems = myAuctionRecordsQuery.data?.items;
   const myOrderItems = myOrdersQuery.data?.items;
   const orderByAuctionId = useMemo(() => buildOrderByAuctionId(myAuctionRecordItems, myOrderItems), [myAuctionRecordItems, myOrderItems]);
@@ -3122,14 +3321,17 @@ function LiveRoomPage({
   const selectedLot = lots.find((lot) => lot.id === selectedLotId) ?? activeLot ?? lots[0];
   const isFollowingRoom = followedRooms.some((item) => item.roomId === room.id);
   const activeLotInitialState = useMemo(() => (activeLot ? stateFromLot(activeLot) : undefined), [activeLot]);
+  const canFetchActiveAuctionState =
+    Boolean(activeLot?.auctionId) && (import.meta.env.MODE === 'test' || import.meta.env.VITE_API_MODE !== 'remote' || isBackendAuctionId(activeLot?.auctionId));
+  const activeAuctionIdForState = canFetchActiveAuctionState ? activeLot?.auctionId : undefined;
 
   const stateQuery = useQuery({
-    queryKey: ['auction-state', activeLot?.auctionId],
+    queryKey: ['auction-state', activeAuctionIdForState],
     queryFn: () => {
-      if (!activeLot) throw new Error('No active auction');
-      return apiClient.getAuctionState(activeLot.auctionId);
+      if (!activeAuctionIdForState) throw new Error('No active auction');
+      return apiClient.getAuctionState(activeAuctionIdForState);
     },
-    enabled: Boolean(activeLot),
+    enabled: Boolean(activeAuctionIdForState),
     placeholderData: activeLotInitialState
   });
 
@@ -3152,6 +3354,10 @@ function LiveRoomPage({
     setCommentComposerOpen(false);
     setLikeBurstId(0);
     setLikeBurstVisible(false);
+    setDigitalHumanSpeaking(false);
+    setLiveVoicePermissionPromptVisible(false);
+    pendingLiveVoicePayloadRef.current = undefined;
+    liveVoicePlayerRef.current?.stop();
     commentsShouldStickRef.current = true;
   }, [roomId]);
 
@@ -3195,6 +3401,52 @@ function LiveRoomPage({
     (lot: LiveRoomLot) => lotStates[lot.auctionId] ?? (lot.auctionId === activeLot?.auctionId ? currentState : stateFromLot(lot)),
     [activeLot?.auctionId, currentState, lotStates]
   );
+
+  useEffect(() => {
+    const timers: number[] = [];
+    const currentMs = Date.now();
+    const attempts = scheduledAuctionRefreshAttemptsRef.current;
+
+    lots.forEach((lot) => {
+      const startTsMs = lot.startTsMs;
+      if (!isValidScheduledStartMs(startTsMs)) return;
+      const state = stateForLot(lot);
+      if (!isUpcomingAuctionStatus(state.status)) return;
+
+      SCHEDULED_AUCTION_REFRESH_RETRY_DELAYS_MS.forEach((delayMs, attemptIndex) => {
+        const attemptKey = `${roomId}:${lot.auctionId}:${startTsMs}:${attemptIndex}`;
+        if (attempts.has(attemptKey)) return;
+        const timeoutMs = Math.max(0, startTsMs + delayMs - currentMs);
+        const timer = window.setTimeout(() => {
+          attempts.add(attemptKey);
+          void queryClient.invalidateQueries({ queryKey: ['live-room', roomId] });
+          void queryClient.invalidateQueries({ queryKey: ['live-room-lots', roomId] });
+          void queryClient.invalidateQueries({ queryKey: ['live-room-stats', roomId] });
+          if (lot.auctionId === activeAuctionIdForState) {
+            void refetchAuctionStateRef.current();
+          }
+        }, timeoutMs);
+        timers.push(timer);
+      });
+    });
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [activeAuctionIdForState, lots, queryClient, roomId, stateForLot]);
+
+  useEffect(() => {
+    const restoredIds = new Set<string>();
+    (myAuctionRecordItems ?? []).forEach((record) => {
+      if (hasZeroDepositEnrollment(record)) restoredIds.add(record.lot.auctionId);
+    });
+    if (!restoredIds.size) return;
+    setEnrolledAuctions((prev) => {
+      const next = new Set(prev);
+      restoredIds.forEach((auctionId) => next.add(auctionId));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [myAuctionRecordItems]);
 
   useEffect(() => {
     liveSheetsRef.current = liveSheets;
@@ -3371,6 +3623,93 @@ function LiveRoomPage({
   const refetchAuctionStateRef = useRef(stateQuery.refetch);
   refetchAuctionStateRef.current = stateQuery.refetch;
 
+  const clearBidConfirmTimer = useCallback(() => {
+    if (bidConfirmTimerRef.current === undefined) return;
+    window.clearTimeout(bidConfirmTimerRef.current);
+    bidConfirmTimerRef.current = undefined;
+  }, []);
+
+  const scheduleBidConfirmTimeout = useCallback(
+    (requestId: string) => {
+      clearBidConfirmTimer();
+      bidConfirmTimerRef.current = window.setTimeout(() => {
+        bidConfirmTimerRef.current = undefined;
+        console.warn('[bid.place] confirmation timeout', { requestId });
+        setQuickBidFeedback((prev) =>
+          prev.status === 'submitting' && prev.requestId === requestId
+            ? { status: 'error', requestId, message: t('auction.bidRealtimeTimeout') }
+            : prev
+        );
+        void refetchAuctionStateRef.current();
+      }, BID_CONFIRM_TIMEOUT_MS);
+    },
+    [clearBidConfirmTimer]
+  );
+
+  useEffect(() => clearBidConfirmTimer, [clearBidConfirmTimer]);
+
+  const stopDigitalHumanSpeaking = useCallback(() => {
+    setDigitalHumanSpeaking(false);
+  }, []);
+
+  const playLiveVoiceBroadcast = useCallback(
+    (payload: LiveVoiceBroadcastAudioPayload) => {
+      const player = liveVoicePlayerRef.current ?? getLiveVoiceBroadcastAudioPlayer();
+      liveVoicePlayerRef.current = player;
+      pendingLiveVoicePayloadRef.current = undefined;
+      const audioSummary = liveVoiceAudioDebugSummary(payload);
+      console.info('[live.voice_broadcast] playback requested', audioSummary);
+      stopDigitalHumanSpeaking();
+      void player.play(payload, { onEnded: stopDigitalHumanSpeaking }).then((result) => {
+        console.info('[live.voice_broadcast] playback result', { ...audioSummary, ...result });
+        if (result.played) {
+          setLiveVoicePermissionPromptVisible(false);
+          setDigitalHumanSpeaking(true);
+          return;
+        }
+        if (result.blocked) {
+          console.warn('[live.voice_broadcast] playback blocked; waiting for the next user gesture to unlock audio', { ...audioSummary, ...result });
+          pendingLiveVoicePayloadRef.current = payload;
+          setLiveVoicePermissionPromptVisible(true);
+          Toast.show({ content: t('live.voiceAudioBlocked') });
+        } else {
+          console.warn('[live.voice_broadcast] playback skipped', { ...audioSummary, ...result });
+        }
+      }).catch((error) => {
+        console.error('[live.voice_broadcast] playback failed', audioSummary, error);
+        stopDigitalHumanSpeaking();
+      });
+    },
+    [stopDigitalHumanSpeaking]
+  );
+
+  const unlockAndPlayPendingLiveVoice = useCallback(() => {
+    const player = liveVoicePlayerRef.current ?? getLiveVoiceBroadcastAudioPlayer();
+    liveVoicePlayerRef.current = player;
+    void player.unlockAudio().then((unlocked) => {
+      const pendingPayload = pendingLiveVoicePayloadRef.current;
+      if (!pendingPayload) return;
+      console.info('[live.voice_broadcast] user gesture unlock attempt', { unlocked, ...liveVoiceAudioDebugSummary(pendingPayload) });
+      if (!unlocked) {
+        setLiveVoicePermissionPromptVisible(true);
+        return;
+      }
+      setLiveVoicePermissionPromptVisible(false);
+      playLiveVoiceBroadcast(pendingPayload);
+    });
+  }, [playLiveVoiceBroadcast]);
+
+  useEffect(() => {
+    liveVoiceUnlockEvents.forEach((eventName) => window.addEventListener(eventName, unlockAndPlayPendingLiveVoice, true));
+    return () => {
+      liveVoiceUnlockEvents.forEach((eventName) => window.removeEventListener(eventName, unlockAndPlayPendingLiveVoice, true));
+      pendingLiveVoicePayloadRef.current = undefined;
+      setLiveVoicePermissionPromptVisible(false);
+      const player = liveVoicePlayerRef.current ?? getLiveVoiceBroadcastAudioPlayer();
+      player.stop();
+    };
+  }, [unlockAndPlayPendingLiveVoice]);
+
   const appendChatMessage = useCallback((message: LiveChatMessage) => {
     setChatMessages((prev) => upsertChatMessage(prev, message).slice(-80));
   }, []);
@@ -3436,31 +3775,55 @@ function LiveRoomPage({
 
   const handleBidAck = useCallback((requestId: string | undefined, payload: Record<string, unknown>) => {
     if (payload.accepted === false) {
+      logBidRejectedDebug('bid.ack', requestId, payload);
+      clearBidConfirmTimer();
       setQuickBidFeedback((prev) => (prev.status === 'submitting' && (!requestId || prev.requestId === requestId) ? { status: 'error', requestId, message: formatBidRejectedMessage(payload) } : prev));
       return;
     }
+    if (payload.accepted === true) {
+      const bidderId = String(payload.bidderId ?? payload.leaderBidderId ?? '');
+      const auctionId = String(payload.auctionId ?? '');
+      if (bidderId === userId && auctionId) {
+        setLastBidAtByAuction((prev) => ({ ...prev, [auctionId]: Date.now() }));
+      }
+      setQuickBidFeedback((prev) => {
+        if (prev.status !== 'submitting') return prev;
+        if (requestId && prev.requestId !== requestId && bidderId !== userId) return prev;
+        clearBidConfirmTimer();
+        return { status: 'success', requestId: requestId ?? prev.requestId, message: t('auction.bidAccepted') };
+      });
+      return;
+    }
     setQuickBidFeedback((prev) => (prev.status === 'submitting' && (!requestId || prev.requestId === requestId) ? { ...prev, message: t('auction.bidSubmitted') } : prev));
-  }, []);
+  }, [clearBidConfirmTimer, userId]);
 
   const handleBidAcceptedFeedback = useCallback(
     (requestId: string | undefined, payload: Record<string, unknown>) => {
       const bidderId = String(payload.bidderId ?? payload.leaderBidderId ?? '');
+      const auctionId = String(payload.auctionId ?? '');
+      if (bidderId === userId && auctionId) {
+        setLastBidAtByAuction((prev) => ({ ...prev, [auctionId]: Date.now() }));
+      }
       setQuickBidFeedback((prev) => {
-        if (prev.status === 'submitting' && (!requestId || prev.requestId === requestId)) {
+        if (prev.status === 'submitting' && requestId && prev.requestId === requestId) {
+          clearBidConfirmTimer();
           return { status: 'success', requestId, message: t('auction.bidAccepted') };
         }
         if (bidderId === userId) {
+          clearBidConfirmTimer();
           return { status: 'success', requestId, message: t('auction.bidAccepted') };
         }
         return prev;
       });
     },
-    [userId]
+    [clearBidConfirmTimer, userId]
   );
 
   const handleBidRejectedFeedback = useCallback((requestId: string | undefined, payload: Record<string, unknown>) => {
+    logBidRejectedDebug('bid.rejected', requestId, payload);
+    clearBidConfirmTimer();
     setQuickBidFeedback((prev) => (prev.status === 'submitting' && (!requestId || prev.requestId === requestId) ? { status: 'error', requestId, message: formatBidRejectedMessage(payload) } : prev));
-  }, []);
+  }, [clearBidConfirmTimer]);
 
   const sendComment = useCallback(() => {
     const content = commentDraft.trim();
@@ -3519,15 +3882,20 @@ function LiveRoomPage({
     const context = latestContext.current;
     const hasActiveAuction = Boolean(context.activeLot && context.currentState);
     const minIncrement = context.activeLot && context.currentState ? minIncrementForLot(context.activeLot, context.currentState) : 100;
+    const isTestMode = import.meta.env.MODE === 'test';
+    const wsBaseUrl = import.meta.env.VITE_WS_URL;
+    const useNativeRealtime = !isTestMode && import.meta.env.VITE_REALTIME_MODE === 'websocket' && Boolean(wsBaseUrl);
+    const useRemoteApiMode = !isTestMode && import.meta.env.VITE_API_MODE === 'remote';
     const client: RealtimeClient | undefined =
-      import.meta.env.VITE_REALTIME_MODE === 'websocket' && import.meta.env.VITE_WS_URL
+      useNativeRealtime
         ? new NativeWebSocketClient({
-            baseUrl: import.meta.env.VITE_WS_URL,
+            baseUrl: wsBaseUrl ?? '',
             roomId,
+            accessToken,
             lastSeq: lastSeqRef.current,
             storage: window.localStorage
           })
-        : hasActiveAuction && context.activeLot && context.currentState
+        : !useRemoteApiMode && hasActiveAuction && context.activeLot && context.currentState
           ? new MockRealtimeClient({
               roomId,
               auctionId: context.activeLot.auctionId,
@@ -3588,7 +3956,7 @@ function LiveRoomPage({
         }
       }
       if (message.type === 'auction.started') {
-        const payload = message.payload as Record<string, unknown>;
+        const payload = realtimePayloadWithState(message.payload);
         const auctionId = String(payload.auctionId ?? '');
         if (auctionId) {
           const context = latestContext.current;
@@ -3599,12 +3967,12 @@ function LiveRoomPage({
             ...baseStartedState,
             auctionId,
             status: 'RUNNING' as const,
-            currentPrice: Number(payload.currentPrice ?? baseStartedState.currentPrice ?? 0),
+            currentPrice: realtimeNumber(payload.currentPrice, baseStartedState.currentPrice ?? 0),
             leaderBidderId: payload.leaderBidderId === undefined ? baseStartedState.leaderBidderId : String(payload.leaderBidderId),
-            endTsMs: parseRealtimeTimestampMs(payload.endTsMs ?? payload.endTime, baseStartedState.endTsMs ?? Date.now()),
+            endTsMs: parseRealtimeTimestampMs(payload.endTime, baseStartedState.endTsMs ?? Date.now()),
             serverTsMs: Date.now(),
-            bidCount: payload.bidCount === undefined ? baseStartedState.bidCount : Number(payload.bidCount),
-            participantCount: payload.participantCount === undefined ? baseStartedState.participantCount : Number(payload.participantCount)
+            bidCount: payload.bidCount === undefined ? baseStartedState.bidCount : realtimeNumber(payload.bidCount, baseStartedState.bidCount ?? 0),
+            participantCount: payload.participantCount === undefined ? baseStartedState.participantCount : realtimeNumber(payload.participantCount, baseStartedState.participantCount ?? 0)
           };
           if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
           setCountdownExtensionPulse(undefined);
@@ -3626,6 +3994,9 @@ function LiveRoomPage({
             next[auctionId] = startedState;
             return next;
           });
+          void queryClient.invalidateQueries({ queryKey: ['live-room', roomId] });
+          void queryClient.invalidateQueries({ queryKey: ['live-room-lots', roomId] });
+          void queryClient.invalidateQueries({ queryKey: ['live-room-stats', roomId] });
           if (startedLot && !context.hasBlockingLiveSheet) {
             requestFloatingAuctionCard({
               auctionId,
@@ -3642,10 +4013,10 @@ function LiveRoomPage({
         }
       }
       if (message.type === 'auction.closed') {
-        const payload = message.payload as Record<string, unknown>;
+        const payload = realtimePayloadRecord(message.payload);
         const context = latestContext.current;
         const closingAuctionId = String(payload.auctionId ?? context.activeLot?.auctionId ?? '');
-        const winnerBidderId = String(payload.winnerBidderId ?? '');
+        const winnerBidderId = String(payload.winnerBidderId ?? payload.winnerId ?? '');
         const isCurrentUserWinner = String(payload.status ?? 'CLOSED_WON') === 'CLOSED_WON' && winnerBidderId === userId;
         if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
         setCountdownExtensionPulse(undefined);
@@ -3655,6 +4026,9 @@ function LiveRoomPage({
             lot: context.activeLot,
             price: Number(payload.finalPrice ?? context.currentState?.currentPrice ?? 0)
           });
+        }
+        if (isCurrentUserWinner) {
+          setWinningCelebrationId(`${closingAuctionId || 'auction'}-${Date.now()}`);
         }
         const visibleCard = floatingAuctionCardRef.current;
         if (
@@ -3666,7 +4040,7 @@ function LiveRoomPage({
           !context.hasBlockingLiveSheet &&
           context.activeLot.auctionId === closingAuctionId
         ) {
-          const closedAtMs = Number(payload.closedTsMs ?? Date.now());
+          const closedAtMs = parseRealtimeTimestampMs(payload.closedAt, Date.now());
           pendingFloatingAuctionCardRef.current = undefined;
           setFloatingAuctionCard({
             auctionId: closingAuctionId,
@@ -3675,8 +4049,8 @@ function LiveRoomPage({
               ...context.currentState,
               auctionId: closingAuctionId,
               status: String(payload.status ?? 'CLOSED_WON') as AuctionState['status'],
-              currentPrice: Number(payload.finalPrice ?? context.currentState.currentPrice ?? 0),
-              leaderBidderId: payload.winnerBidderId === undefined ? context.currentState.leaderBidderId : String(payload.winnerBidderId),
+              currentPrice: realtimeNumber(payload.price, context.currentState.currentPrice ?? 0),
+              leaderBidderId: payload.winnerId === undefined ? context.currentState.leaderBidderId : String(payload.winnerId),
               endTsMs: closedAtMs,
               serverTsMs: Date.now()
             },
@@ -3686,6 +4060,53 @@ function LiveRoomPage({
             phase: 'holding',
             retireAtMs: closedAtMs + AUCTION_ENDED_HOLD_MS
           });
+        }
+        void queryClient.invalidateQueries({ queryKey: ['live-room', roomId] });
+        void queryClient.invalidateQueries({ queryKey: ['live-room-lots', roomId] });
+        void queryClient.invalidateQueries({ queryKey: ['live-room-stats', roomId] });
+        void queryClient.invalidateQueries({ queryKey: ['my-orders'] });
+        void queryClient.invalidateQueries({ queryKey: ['my-auction-records'] });
+        if (closingAuctionId) {
+          void queryClient.invalidateQueries({ queryKey: ['result-order', closingAuctionId] });
+        }
+      }
+      if (isLiveSessionLotListChangedMessage(message) && realtimeLiveSessionMessageMatchesRoom(message, latestContext.current.room)) {
+        const payload = message.payload && typeof message.payload === 'object' ? (message.payload as Record<string, unknown>) : undefined;
+        const auctionId = payload?.auctionId === undefined ? '' : String(payload.auctionId);
+        if (auctionId && message.type === 'live_session.lot_unmounted') {
+          setLotStates((prev) => {
+            if (!(auctionId in prev)) return prev;
+            const next = { ...prev };
+            delete next[auctionId];
+            return next;
+          });
+        }
+        void queryClient.invalidateQueries({ queryKey: ['live-room', roomId] });
+        void queryClient.invalidateQueries({ queryKey: ['live-room-lots', roomId] });
+        void queryClient.invalidateQueries({ queryKey: ['live-room-stats', roomId] });
+      }
+      if (message.type === 'ai.assistant.switch') {
+        const enabled = realtimeAIAssistantSwitchEnabled(message.payload);
+        if (enabled !== undefined) {
+          queryClient.setQueryData<LiveRoom>(['live-room', roomId], (current) =>
+            liveRoomWithAIAssistantSwitch(current ?? latestContext.current.room, message.payload, enabled)
+          );
+          void queryClient.invalidateQueries({ queryKey: ['live-room', roomId] });
+        }
+      }
+      if (message.type === 'live.voice_broadcast') {
+        const voicePayload = realtimeLiveVoiceBroadcastAudioPayload(message.payload);
+        const messageSummary = liveVoiceMessageDebugSummary(message, latestContext.current.room, voicePayload);
+        console.info('[live.voice_broadcast] received', messageSummary);
+        if (!realtimeLiveVoiceMatchesRoom(message, latestContext.current.room)) {
+          console.warn('[live.voice_broadcast] ignored: liveSessionId mismatch', messageSummary);
+        } else if (!voicePayload) {
+          console.warn('[live.voice_broadcast] ignored: missing or invalid audioBase64 payload', messageSummary);
+        } else {
+          queryClient.setQueryData<LiveRoom>(['live-room', roomId], (current) =>
+            liveRoomWithAIAssistantSwitch(current ?? latestContext.current.room, message.payload, true)
+          );
+          playLiveVoiceBroadcast(voicePayload);
         }
       }
       handleRealtimeMessage(message, {
@@ -3708,7 +4129,7 @@ function LiveRoomPage({
       });
     };
     const controlClient =
-      import.meta.env.VITE_REALTIME_MODE !== 'websocket' && import.meta.env.VITE_MOCK_CONTROL_URL
+      (isTestMode || import.meta.env.VITE_REALTIME_MODE !== 'websocket') && import.meta.env.VITE_MOCK_CONTROL_URL
         ? new MockRealtimeControlClient({ url: import.meta.env.VITE_MOCK_CONTROL_URL, roomId })
         : undefined;
     if (!client && !controlClient) return undefined;
@@ -3723,7 +4144,7 @@ function LiveRoomPage({
       controlClient?.disconnect();
       client?.disconnect();
     };
-  }, [acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, pushAuctionAtmosphereAlert, pushNotice, requestFloatingAuctionCard, roomId, userId]);
+  }, [accessToken, acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, playLiveVoiceBroadcast, pushAuctionAtmosphereAlert, pushNotice, queryClient, requestFloatingAuctionCard, roomId, userId]);
 
   const enrollMutation = useMutation({
     mutationFn: (auctionId: string) => apiClient.enrollAuction(auctionId),
@@ -3741,9 +4162,8 @@ function LiveRoomPage({
       return;
     }
     const requestId = makeRequestId('bid');
-    setLastBidAtByAuction((prev) => ({ ...prev, [lot.auctionId]: Date.now() }));
     setQuickBidFeedback({ status: 'submitting', requestId, message: t('auction.bidSubmitted') });
-    realtimeRef.current?.send({
+    const sent = realtimeRef.current?.send({
       type: 'bid.place',
       requestId,
       payload: buildBidPlacePayload({
@@ -3751,7 +4171,16 @@ function LiveRoomPage({
         price: validation.price,
         expectedCurrentPrice: state.currentPrice,
       })
-    });
+    }) ?? false;
+    if (!sent) {
+      clearBidConfirmTimer();
+      console.warn('[bid.place] send skipped: realtime socket is not ready', { requestId, auctionId: lot.auctionId });
+      setQuickBidFeedback({ status: 'error', requestId, message: t('auction.bidRealtimeUnavailable') });
+      pushNotice(t('auction.bidRealtimeUnavailable'));
+      void refetchAuctionStateRef.current();
+      return;
+    }
+    scheduleBidConfirmTimeout(requestId);
   };
 
   const openLot = (lot: LiveRoomLot) => {
@@ -3811,7 +4240,7 @@ function LiveRoomPage({
 
   return (
     <section className="live-page">
-      <LiveRoomVideoSurface room={room} initialMediaPosition={initialMediaPosition} soundEnabled={soundEnabled} onSoundBlocked={handleSoundBlocked} />
+      <LiveRoomVideoSurface room={room} initialMediaPosition={initialMediaPosition} soundEnabled={soundEnabled} onSoundBlocked={handleSoundBlocked} digitalHumanSpeaking={digitalHumanSpeaking} />
       <div className="live-gradient" />
       <header className="live-header">
         <button className="live-back" onClick={onBack} aria-label={t('common.back')} type="button">
@@ -3837,11 +4266,24 @@ function LiveRoomPage({
           >
             {soundEnabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
           </button>
-          <span className="live-watcher-count live-header-watchers" aria-label={t('live.statsOnline', { count: liveStats.watcherCount })}>
-            <Users size={12} /> {liveStats.watcherCount}
+          <span className="live-watcher-count live-header-watchers" aria-label={t('live.statsOnline', { count: liveStats.onlineCount })}>
+            <Users size={12} /> {liveStats.onlineCount}
           </span>
         </div>
       </header>
+
+      {liveVoicePermissionPromptVisible ? (
+        <div className="live-voice-permission" role="alert">
+          <div className="live-voice-permission-copy">
+            <strong>{t('live.voiceAudioBlockedTitle')}</strong>
+            <span>{t('live.voiceAudioBlocked')}</span>
+          </div>
+          <button className="live-voice-permission-button" type="button" onClick={unlockAndPlayPendingLiveVoice}>
+            <Volume2 size={16} />
+            <span>{t('live.voiceAudioAllow')}</span>
+          </button>
+        </div>
+      ) : null}
 
       {activeLot && currentState ? <LiveRankingRail items={ranking} userId={userId} collapsed={rankingCollapsed} lastBid={lastRankingBidRef.current} onToggle={() => setRankingCollapsed((value) => !value)} /> : null}
 
@@ -4032,12 +4474,14 @@ function LiveRoomVideoSurface({
   room,
   initialMediaPosition,
   soundEnabled,
-  onSoundBlocked
+  onSoundBlocked,
+  digitalHumanSpeaking
 }: {
   room: LiveRoom;
   initialMediaPosition?: PreviewMediaSnapshot;
   soundEnabled: boolean;
   onSoundBlocked: () => void;
+  digitalHumanSpeaking?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const appliedInitialMediaKeyRef = useRef<string>();
@@ -4096,10 +4540,8 @@ function LiveRoomVideoSurface({
       <DigitalHumanLiveStage
         idleVideoUrl={room.digitalHuman.idleVideoUrl}
         talkVideoUrl={room.digitalHuman.speakingVideoUrl}
-        ttsWsUrl={room.digitalHuman.ttsWsUrl}
         initialMediaPosition={initialMediaPosition}
-        soundEnabled={soundEnabled}
-        onSoundBlocked={onSoundBlocked}
+        speaking={Boolean(digitalHumanSpeaking)}
       />
     );
   }
@@ -4718,6 +5160,7 @@ function RoomStatePage({ room, lots, status, onBack, onPay }: { room: LiveRoom; 
                   <span>{priceLabel(lot, state)}</span>
                   <strong>{formatMoney(priceValue(lot, state))}</strong>
                 </div>
+                {scheduledStartText(lot, state) ? <div className="lot-schedule-line">{scheduledStartText(lot, state)}</div> : null}
               </div>
               {status === 'ended' && state.status === 'CLOSED_WON' && onPay ? (
                 <Button size="small" color="primary" onClick={() => onPay(lot.auctionId)}>
@@ -4752,10 +5195,36 @@ interface RealtimeHandlerOptions {
 function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandlerOptions) {
   if (message.type === 'room.online') {
     const payload = message.payload as Record<string, unknown>;
-    options.setLiveStats((prev) => ({
-      ...prev,
-      onlineCount: Number(payload.online ?? prev.onlineCount)
-    }));
+    options.setLiveStats((prev) => {
+      const onlineCount = Number(payload.online ?? payload.count ?? prev.onlineCount);
+      return {
+        ...prev,
+        onlineCount: Number.isFinite(onlineCount) ? onlineCount : prev.onlineCount
+      };
+    });
+  }
+  if (message.type === 'room.snapshot') {
+    const payload = realtimePayloadRecord(message.payload);
+    const auctionId = String(payload.auctionId ?? options.activeAuctionId ?? '');
+    if (auctionId) {
+      options.setLotStates((prev) => {
+        const previous = prev[auctionId] ?? fallbackAuctionState(auctionId);
+        return {
+          ...prev,
+          [auctionId]: {
+            ...previous,
+            auctionId,
+            status: String(payload.status ?? previous.status) as AuctionState['status'],
+            currentPrice: realtimeNumber(payload.currentPrice, previous.currentPrice ?? 0),
+            leaderBidderId: payload.leaderBidderId === undefined ? previous.leaderBidderId : String(payload.leaderBidderId),
+            bidCount: payload.bidCount === undefined ? previous.bidCount : realtimeNumber(payload.bidCount, previous.bidCount ?? 0),
+            participantCount: payload.participantCount === undefined ? previous.participantCount : realtimeNumber(payload.participantCount, previous.participantCount ?? 0),
+            endTsMs: parseRealtimeTimestampMs(payload.endTime, previous.endTsMs ?? Date.now()),
+            serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now())
+          }
+        };
+      });
+    }
   }
   if (message.type === 'room.snapshot_required') {
     options.setNotice(t('live.snapshotRequired'));
@@ -4763,8 +5232,12 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
   }
   if (message.type === 'bid.ack') {
     const payload = message.payload as Record<string, unknown>;
-    options.onBidAck?.(message.requestId, payload);
-    options.setNotice(t('auction.bidSubmitted'));
+    const requestId = realtimeMessageRequestId(message, payload);
+    if (payload.accepted === true) {
+      updateLotStateFromBidPayload(payload, options, false);
+    }
+    options.onBidAck?.(requestId, payload);
+    options.setNotice(payload.accepted === false ? formatBidRejectedMessage(payload) : payload.accepted === true ? t('auction.bidAccepted') : t('auction.bidSubmitted'));
   }
   if (message.type === 'chat.ack') {
     options.onChatAck(message.payload as Record<string, unknown>);
@@ -4778,35 +5251,18 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
   }
   if (message.type === 'bid.rejected') {
     const payload = message.payload as Record<string, unknown>;
-    options.onBidRejected?.(message.requestId, payload);
+    options.onBidRejected?.(realtimeMessageRequestId(message, payload), payload);
     options.setNotice(formatBidRejectedMessage(payload));
   }
   if (message.type === 'bid.accepted') {
     const payload = message.payload as Record<string, unknown>;
-    const auctionId = String(payload.auctionId ?? options.activeAuctionId ?? '');
-    options.setLotStates((prev) => {
-      const previous = prev[auctionId] ?? (auctionId === options.activeAuctionId ? options.activeAuctionState : undefined) ?? fallbackAuctionState(auctionId);
-      return {
-        ...prev,
-        [auctionId]: {
-          ...previous,
-          auctionId,
-          status: 'RUNNING',
-          currentPrice: Number(payload.currentPrice ?? payload.price ?? previous.currentPrice ?? 0),
-          leaderBidderId: String(payload.leaderBidderId ?? payload.bidderId ?? ''),
-          bidCount: payload.bidCount === undefined ? (previous.bidCount ?? 0) + 1 : Number(payload.bidCount),
-          participantCount: payload.participantCount === undefined ? previous.participantCount : Number(payload.participantCount),
-          endTsMs: Number(payload.endTsMs ?? previous.endTsMs ?? Date.now()),
-          serverTsMs: Date.now()
-        }
-      };
-    });
-    options.onBidAccepted?.(message.requestId, payload);
+    updateLotStateFromBidPayload(payload, options, true);
+    options.onBidAccepted?.(realtimeMessageRequestId(message, payload), payload);
     options.setNotice(String(payload.bidderId ?? payload.leaderBidderId) === options.userId ? t('auction.bidAccepted') : t('live.chat.bid'));
   }
   if (message.type === 'ranking.updated') {
-    const payload = message.payload as { items?: RankingItem[] };
-    options.setRanking(payload.items ?? []);
+    const payload = realtimePayloadRecord(message.payload);
+    options.setRanking(normalizeRealtimeRankingItems(payload.ranking));
   }
   if (message.type === 'timer.extended') {
     const payload = message.payload as Record<string, unknown>;
@@ -4817,14 +5273,14 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
         ...(prev[auctionId] ?? fallbackAuctionState(auctionId)),
         auctionId,
         status: 'EXTENDED',
-        endTsMs: Number(payload.newEndTsMs ?? prev[auctionId]?.endTsMs ?? Date.now()),
+        endTsMs: parseRealtimeTimestampMs(payload.endTime, prev[auctionId]?.endTsMs ?? Date.now()),
         serverTsMs: Date.now()
       }
     }));
     options.setNotice(t('auction.extended'));
   }
   if (message.type === 'auction.started') {
-    const payload = message.payload as Record<string, unknown>;
+    const payload = realtimePayloadWithState(message.payload);
     const auctionId = String(payload.auctionId ?? options.activeAuctionId ?? '');
     options.setLotStates((prev) => {
       const previous = prev[auctionId] ?? fallbackAuctionState(auctionId);
@@ -4834,18 +5290,18 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
           ...previous,
           auctionId,
           status: 'RUNNING',
-          currentPrice: Number(payload.currentPrice ?? previous.currentPrice ?? 0),
+          currentPrice: realtimeNumber(payload.currentPrice, previous.currentPrice ?? 0),
           leaderBidderId: payload.leaderBidderId === undefined ? previous.leaderBidderId : String(payload.leaderBidderId),
-          endTsMs: parseRealtimeTimestampMs(payload.endTsMs ?? payload.endTime, previous.endTsMs ?? Date.now()),
+          endTsMs: parseRealtimeTimestampMs(payload.endTime, previous.endTsMs ?? Date.now()),
           serverTsMs: Date.now(),
-          bidCount: payload.bidCount === undefined ? previous.bidCount : Number(payload.bidCount),
-          participantCount: payload.participantCount === undefined ? previous.participantCount : Number(payload.participantCount)
+          bidCount: payload.bidCount === undefined ? previous.bidCount : realtimeNumber(payload.bidCount, previous.bidCount ?? 0),
+          participantCount: payload.participantCount === undefined ? previous.participantCount : realtimeNumber(payload.participantCount, previous.participantCount ?? 0)
         }
       };
     });
   }
   if (message.type === 'auction.closed') {
-    const payload = message.payload as Record<string, unknown>;
+    const payload = realtimePayloadRecord(message.payload);
     const auctionId = String(payload.auctionId ?? options.activeAuctionId ?? '');
     options.setLotStates((prev) => ({
       ...prev,
@@ -4853,9 +5309,9 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
         ...(prev[auctionId] ?? fallbackAuctionState(auctionId)),
         auctionId,
         status: String(payload.status ?? 'CLOSED_WON') as AuctionState['status'],
-        currentPrice: Number(payload.finalPrice ?? prev[auctionId]?.currentPrice ?? 0),
-        leaderBidderId: payload.winnerBidderId === undefined ? prev[auctionId]?.leaderBidderId : String(payload.winnerBidderId),
-        endTsMs: Number(payload.closedTsMs ?? Date.now()),
+        currentPrice: realtimeNumber(payload.price, prev[auctionId]?.currentPrice ?? 0),
+        leaderBidderId: payload.winnerId === undefined ? prev[auctionId]?.leaderBidderId : String(payload.winnerId),
+        endTsMs: parseRealtimeTimestampMs(payload.closedAt, Date.now()),
         serverTsMs: Date.now()
       }
     }));
@@ -5067,6 +5523,7 @@ function LotListSheet({
                     <span>{priceLabel(lot, state)}</span>
                     <strong>{formatMoney(priceValue(lot, state))}</strong>
                   </div>
+                  {scheduledStartText(lot, state) ? <div className="lot-schedule-line">{scheduledStartText(lot, state)}</div> : null}
                 </div>
                 <Button
                   size="small"
@@ -5302,6 +5759,7 @@ function LotDetailSheet({
             <h2>{formatMoney(priceValue(lot, state))}</h2>
             <h3>{lot.title}</h3>
             <p className={description ? 'detail-description' : 'detail-description is-empty'}>{description || t('product.noDescription')}</p>
+            {scheduledStartText(lot, state) ? <div className="lot-schedule-line detail-schedule-line">{scheduledStartText(lot, state)}</div> : null}
             <div className="price-grid compact detail-rule-grid">
               <Metric label={t('auction.participants')} value={String(state.participantCount ?? lot.participantCount ?? 0)} icon={<Users size={16} />} />
               <Metric label={t('auction.bidCount')} value={String(state.bidCount ?? lot.bidCount ?? 0)} icon={<Gavel size={16} />} />
@@ -5384,12 +5842,13 @@ function BidSheet({
   const [closedAtMs, setClosedAtMs] = useState<number | undefined>(() => (isClosed ? nowMs : undefined));
   const remainMs = msUntil(state.endTsMs, nowMs);
   const minBidIntervalMs = getMinBidIntervalMs(rule);
+  const maxBidSteps = getQuickBidMaxSteps(rule);
   const intervalRemainingMs = getQuickBidIntervalRemainingMs(lastBidAtMs, nowMs, minBidIntervalMs);
   const outdated = isQuickBidOutdated(selectedPrice, rule);
   const validation = validateBidPrice(selectedPrice, rule);
   const hasLeader = Boolean(state.leaderBidderId);
-  const leader = hasLeader ? (ranking[0]?.nicknameMask ?? defaultRanking(state)[0]?.nicknameMask ?? t('bid.startPriceBidder')) : t('bid.startPriceBidder');
   const isUserLeader = state.leaderBidderId === userId;
+  const leader = hasLeader ? (isUserLeader ? t('live.commentMe') : (ranking[0]?.nicknameMask ?? defaultRanking(state)[0]?.nicknameMask ?? t('bid.startPriceBidder'))) : t('bid.startPriceBidder');
   const currentBidPrice = priceValue(lot, state);
   const myBid = isUserLeader ? formatMoney(state.currentPrice) : t('bid.noMyBid');
   const quickBidNotice = isUserLeader
@@ -5419,13 +5878,13 @@ function BidSheet({
   }, [closedCountdown, isClosed, onClose]);
 
   const setPriceBySteps = (steps: number) => {
-    const nextSteps = Math.max(1, Math.min(QUICK_BID_MAX_STEPS, steps));
+    const nextSteps = Math.max(1, Math.min(maxBidSteps, steps));
     setStepCount(nextSteps);
     setSelectedPrice(getQuickBidPrice(rule, nextSteps));
   };
 
   const canDecrease = stepCount > 1 && !isClosed && feedback.status !== 'submitting';
-  const canIncrease = stepCount < QUICK_BID_MAX_STEPS && selectedPrice < (rule.capPrice ?? Number.MAX_SAFE_INTEGER) && !isClosed && feedback.status !== 'submitting';
+  const canIncrease = stepCount < maxBidSteps && selectedPrice < (rule.capPrice ?? Number.MAX_SAFE_INTEGER) && !isClosed && feedback.status !== 'submitting';
   const disabledReason =
     isClosed
       ? t('bid.currentAuctionEnded')
@@ -5433,7 +5892,7 @@ function BidSheet({
         ? t('bid.priceOutdated')
         : !validation.valid
           ? formatBidValidationNotice(validation)
-          : intervalRemainingMs > 0
+          : !isUserLeader && intervalRemainingMs > 0
             ? t('bid.intervalWaiting', { seconds: Math.ceil(intervalRemainingMs / 1000) })
             : '';
   const canSubmit = !disabledReason && feedback.status !== 'submitting';
@@ -5516,37 +5975,12 @@ function BidSheet({
   );
 }
 
-function DigitalHumanLiveStage({
-  idleVideoUrl,
-  talkVideoUrl,
-  ttsWsUrl,
-  initialMediaPosition,
-  soundEnabled,
-  onSoundBlocked
-}: {
-  idleVideoUrl: string;
-  talkVideoUrl: string;
-  ttsWsUrl?: string;
-  initialMediaPosition?: PreviewMediaSnapshot;
-  soundEnabled: boolean;
-  onSoundBlocked: () => void;
-}) {
+function DigitalHumanLiveStage({ idleVideoUrl, talkVideoUrl, initialMediaPosition, speaking = false }: { idleVideoUrl: string; talkVideoUrl: string; initialMediaPosition?: PreviewMediaSnapshot; speaking?: boolean }) {
   const idleVideoRef = useRef<HTMLVideoElement>(null);
   const talkVideoRef = useRef<HTMLVideoElement>(null);
-  const audioClientRef = useRef<DigitalHumanAudioClient>();
   const appliedInitialMediaKeyRef = useRef<string>();
   const initialMediaKey = useMemo(() => previewMediaSnapshotKey(initialMediaPosition), [initialMediaPosition]);
   const [mediaError, setMediaError] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
-  const resolvedTtsWsUrl = useMemo(
-    () =>
-      buildDigitalHumanWsUrl({
-        configuredUrl: ttsWsUrl || import.meta.env.VITE_TTS_WS_URL,
-        hostname: window.location.hostname,
-        protocol: window.location.protocol
-      }),
-    [ttsWsUrl]
-  );
 
   const syncIdleVideoPosition = useCallback(() => {
     const idleVideo = idleVideoRef.current;
@@ -5573,42 +6007,20 @@ function DigitalHumanLiveStage({
   }, [idleVideoUrl, talkVideoUrl, syncIdleVideoPosition]);
 
   useEffect(() => {
-    if (!soundEnabled) {
-      audioClientRef.current?.disconnect();
-      audioClientRef.current = undefined;
-      setSpeaking(false);
-      return undefined;
-    }
-    const client = new DigitalHumanAudioClient({
-      wsUrl: resolvedTtsWsUrl,
-      onAudioStart: () => setSpeaking(true),
-      onPlaybackDrained: () => setSpeaking(false),
-      onError: () => setSpeaking(false)
-    });
-    audioClientRef.current = client;
-    client.connect();
-    void client.unlockAudio().then((unlocked) => {
-      if (!unlocked) onSoundBlocked();
-    });
-    return () => {
-      client.disconnect();
-      if (audioClientRef.current === client) audioClientRef.current = undefined;
-    };
-  }, [onSoundBlocked, resolvedTtsWsUrl, soundEnabled]);
-
-  useEffect(() => {
     const talkVideo = talkVideoRef.current;
     forceMutedVideo(talkVideo);
-    if (!speaking) {
+    if (speaking) {
       resetVideoToStart(talkVideo);
+      void playVideo(talkVideo);
       return;
     }
+    talkVideo?.pause();
     resetVideoToStart(talkVideo);
-    void playVideo(talkVideo);
-  }, [speaking]);
+    syncIdleVideoPosition();
+  }, [speaking, syncIdleVideoPosition]);
 
   return (
-    <div className={speaking ? 'digital-human-stage is-speaking' : 'digital-human-stage'} data-testid="digital-human-stage">
+    <div className={joinClassNames('digital-human-stage', speaking && 'is-speaking')} data-testid="digital-human-stage">
       <video
         ref={idleVideoRef}
         className="digital-human-video idle"
@@ -5759,7 +6171,19 @@ function PaymentStatusAnimation({ status }: { status: PaymentVisualStatus }) {
   );
 }
 
-function PayPage({ apiClient, orderId, auctionId, onBack }: { apiClient: ApiClient; orderId: string; auctionId?: string; onBack: (auctionId: string) => void }) {
+function PayPage({
+  apiClient,
+  orderId,
+  auctionId,
+  onBack,
+  onPaid
+}: {
+  apiClient: ApiClient;
+  orderId: string;
+  auctionId?: string;
+  onBack: (auctionId: string) => void;
+  onPaid?: (order: Order) => void;
+}) {
   const [paid, setPaid] = useState(false);
   const order = useQuery({
     queryKey: ['order', orderId],
@@ -5767,7 +6191,10 @@ function PayPage({ apiClient, orderId, auctionId, onBack }: { apiClient: ApiClie
   });
   const pay = useMutation({
     mutationFn: () => apiClient.payOrder(orderId),
-    onSuccess: () => setPaid(true)
+    onSuccess: (paidOrder) => {
+      setPaid(true);
+      onPaid?.(paidOrder);
+    }
   });
   const targetAuctionId = auctionId ?? order.data?.auctionId ?? 'auc_2001';
   const status: PaymentVisualStatus = paid ? 'paid' : pay.isPending ? 'paying' : pay.isError ? 'error' : 'idle';
@@ -5853,6 +6280,59 @@ function fallbackAuctionState(auctionId: string): AuctionState {
   };
 }
 
+function realtimePayloadRecord(payload: unknown): Record<string, unknown> {
+  return payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+}
+
+function realtimeMessageRequestId(message: Pick<RealtimeMessage, 'requestId'>, payload: Record<string, unknown>): string | undefined {
+  const requestId = String(message.requestId ?? payload.requestId ?? '').trim();
+  return requestId || undefined;
+}
+
+function updateLotStateFromBidPayload(payload: Record<string, unknown>, options: RealtimeHandlerOptions, incrementMissingBidCount: boolean) {
+  const auctionId = String(payload.auctionId ?? options.activeAuctionId ?? '');
+  if (!auctionId) return;
+  options.setLotStates((prev) => {
+    const previous = prev[auctionId] ?? (auctionId === options.activeAuctionId ? options.activeAuctionState : undefined) ?? fallbackAuctionState(auctionId);
+    const hasLeader = payload.leaderBidderId !== undefined || payload.bidderId !== undefined;
+    const nextBidCount =
+      payload.bidCount === undefined
+        ? previous.bidCount === undefined
+          ? undefined
+          : previous.bidCount + (incrementMissingBidCount ? 1 : 0)
+        : realtimeNumber(payload.bidCount, previous.bidCount ?? 0);
+    return {
+      ...prev,
+      [auctionId]: {
+        ...previous,
+        auctionId,
+        status: 'RUNNING',
+        currentPrice: realtimeNumber(payload.currentPrice ?? payload.price, previous.currentPrice ?? 0),
+        leaderBidderId: hasLeader ? String(payload.leaderBidderId ?? payload.bidderId) : previous.leaderBidderId,
+        bidCount: nextBidCount,
+        participantCount: payload.participantCount === undefined ? previous.participantCount : realtimeNumber(payload.participantCount, previous.participantCount ?? 0),
+        endTsMs: parseRealtimeTimestampMs(payload.endTime, previous.endTsMs ?? Date.now()),
+        serverTsMs: Date.now()
+      }
+    };
+  });
+}
+
+function realtimePayloadWithState(payload: unknown): Record<string, unknown> {
+  const raw = realtimePayloadRecord(payload);
+  const state = raw.state && typeof raw.state === 'object' ? (raw.state as Record<string, unknown>) : undefined;
+  if (!state) return {};
+  return {
+    ...state,
+    auctionId: state.auctionId ?? raw.auctionId
+  };
+}
+
+function realtimeNumber(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function parseRealtimeTimestampMs(value: unknown, fallback: number): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
@@ -5864,12 +6344,37 @@ function parseRealtimeTimestampMs(value: unknown, fallback: number): number {
   return fallback;
 }
 
+function normalizeRealtimeRankingItems(value: unknown): RankingItem[] {
+  if (!Array.isArray(value)) return [];
+  const fallbackTsMs = Date.now();
+  return value.flatMap((item, index) => {
+    if (!item || typeof item !== 'object') return [];
+    const raw = item as Record<string, unknown>;
+    const bidderId = String(raw.bidderId ?? '').trim();
+    const price = Number(raw.price);
+    if (!bidderId || !Number.isFinite(price)) return [];
+    const rank = Number(raw.rank);
+    const nicknameMask = String(raw.bidderNickname ?? bidderId).trim() || bidderId;
+    return [
+      {
+        rank: Number.isFinite(rank) && rank > 0 ? rank : index + 1,
+        bidderId,
+        nicknameMask,
+        avatarUrl: undefined,
+        price,
+        bidTsMs: fallbackTsMs
+      }
+    ];
+  });
+}
+
 function bidRuleFromLot(lot: LiveRoomLot, state: AuctionState): BidRuleInput {
   return {
     currentPrice: state.currentPrice,
     minIncrement: minIncrementForLot(lot, state),
     startPrice: lot.startPrice,
-    capPrice: capPriceForLot(lot)
+    capPrice: capPriceForLot(lot),
+    maxBidSteps: maxBidStepsForLot(lot)
   };
 }
 
@@ -5893,8 +6398,17 @@ function capPriceForLot(lot: LiveRoomLot): number | undefined {
   return typeof capPrice === 'number' && capPrice > 0 ? capPrice : undefined;
 }
 
+function maxBidStepsForLot(lot: LiveRoomLot): number | undefined {
+  const maxBidSteps = Number(lot.ruleSnapshot?.incrementRule?.maxBidSteps);
+  return Number.isFinite(maxBidSteps) && maxBidSteps > 0 ? Math.floor(maxBidSteps) : undefined;
+}
+
 function isUpcomingAuctionStatus(status: AuctionState['status']): boolean {
   return status === 'DRAFT' || status === 'PENDING_AUDIT' || status === 'READY' || status === 'WARMING_UP';
+}
+
+function isValidScheduledStartMs(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
 function formatBidValidationNotice(validation: BidValidationResult): string {
@@ -5902,6 +6416,7 @@ function formatBidValidationNotice(validation: BidValidationResult): string {
   if (validation.reason === 'belowMinimum') return t('auction.bidBelowMinimum', { min: formatMoney(validation.minPrice) });
   if (validation.reason === 'invalidStep') return t('auction.bidInvalidStep', { step: formatMoney(validation.step) });
   if (validation.reason === 'aboveCap') return t('auction.bidAboveCeiling', { ceiling: formatMoney(validation.capPrice) });
+  if (validation.reason === 'aboveMaxBidSteps') return t('auction.bidAboveMaxSteps', { max: formatMoney(validation.maxPrice) });
   return t('auction.bidInvalidAmount');
 }
 
@@ -5909,9 +6424,26 @@ function formatBidRejectedMessage(payload: Record<string, unknown>): string {
   const reason = String(payload.reason ?? '');
   if (reason === 'belowMinimum' || reason === 'BELOW_MIN_INCREMENT' || reason === 'invalidStep') return t('auction.bidTooSlow');
   if (reason === 'FREQ_LIMIT') return t('auction.bidTooFrequent');
+  if (reason === 'ABOVE_MAX_BID_STEPS' || reason === 'ABOVE_EXPECTED_MAX_BID_STEPS') return t('auction.bidAboveMaxStepsGeneric');
   if (reason === 'AUCTION_CLOSED' || reason === 'INVALID_STATE') return t('auction.closed');
   if (typeof payload.message === 'string' && payload.message.trim()) return payload.message;
   return t('auction.bidRejected');
+}
+
+function logBidRejectedDebug(source: 'bid.ack' | 'bid.rejected', requestId: string | undefined, payload: Record<string, unknown>) {
+  console.warn('[auction] bid rejected', {
+    source,
+    requestId,
+    auctionId: payload.auctionId,
+    reason: payload.reason,
+    message: payload.message,
+    code: payload.code,
+    price: payload.price,
+    currentPrice: payload.currentPrice,
+    minNextPrice: payload.minNextPrice,
+    expectedCurrentPrice: payload.expectedCurrentPrice,
+    payload
+  });
 }
 
 function formatQuickBidDeltaAmount(cents: number): string {
@@ -5950,6 +6482,12 @@ function priceValue(lot: LiveRoomLot, state: AuctionState): number {
     return lot.finalPrice ?? state.currentPrice;
   }
   return state.currentPrice > 0 ? state.currentPrice : lot.startPrice;
+}
+
+function scheduledStartText(lot: LiveRoomLot, state: AuctionState = stateFromLot(lot)): string | undefined {
+  if (!isUpcomingAuctionStatus(state.status)) return undefined;
+  if (!isValidScheduledStartMs(lot.startTsMs)) return undefined;
+  return t('auction.scheduledStartAt', { time: formatDateMs(lot.startTsMs) });
 }
 
 function statusLabel(status: LiveRoom['status']): string {

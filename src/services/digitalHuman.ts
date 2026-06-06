@@ -17,6 +17,24 @@ export interface DigitalHumanAudioClientOptions {
   onError?: (message: string) => void;
 }
 
+export interface LiveVoiceBroadcastAudioPayload {
+  audioBase64?: string;
+  audioFormat?: string;
+  encoding?: string;
+  sampleRate?: number;
+  channels?: number;
+}
+
+export interface LiveVoiceBroadcastPlaybackResult {
+  played: boolean;
+  durationMs: number;
+  blocked?: boolean;
+}
+
+export interface LiveVoiceBroadcastPlaybackOptions {
+  onEnded?: () => void;
+}
+
 interface DigitalHumanServerMessage {
   type?: string;
   text?: string;
@@ -35,6 +53,11 @@ interface BuildDigitalHumanWsUrlOptions {
 
 const DEFAULT_TTS_WS_PORT = 8876;
 const DEFAULT_TTS_WS_PATH = '/tts';
+
+export const defaultDigitalHumanMedia = {
+  idleVideoUrl: '/media/AI_Presenter_Silent.mp4',
+  speakingVideoUrl: '/media/AI_Presenter_Speaking.mp4'
+};
 
 export function buildDigitalHumanWsUrl(options: BuildDigitalHumanWsUrlOptions = {}): string {
   if (options.configuredUrl) return options.configuredUrl;
@@ -55,9 +78,148 @@ export function pcm16ToFloat32(arrayBuffer: ArrayBuffer): Float32Array<ArrayBuff
   return samples;
 }
 
+export function base64ToArrayBuffer(value: string): ArrayBuffer {
+  const base64 = value.includes(',') ? value.slice(value.indexOf(',') + 1) : value;
+  const binary = window.atob(base64.trim());
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 export function formatAudioBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+export class LiveVoiceBroadcastAudioPlayer {
+  private audioContext?: AudioContext;
+  private source?: AudioBufferSourceNode;
+  private finishTimer = 0;
+
+  async unlockAudio(): Promise<boolean> {
+    const audioContext = this.ensureAudioContext();
+    if (!audioContext) return false;
+    if (audioContext.state !== 'running') {
+      await Promise.race([audioContext.resume(), wait(700)]);
+    }
+    return audioContext.state === 'running';
+  }
+
+  async play(payload: LiveVoiceBroadcastAudioPayload, options: LiveVoiceBroadcastPlaybackOptions = {}): Promise<LiveVoiceBroadcastPlaybackResult> {
+    this.stop();
+    const audioBase64 = typeof payload.audioBase64 === 'string' ? payload.audioBase64.trim() : '';
+    if (!audioBase64) {
+      console.warn('[live.voice_broadcast] playback skipped: empty audioBase64');
+      return { played: false, durationMs: 0 };
+    }
+
+    const audioContext = this.ensureAudioContext();
+    if (!audioContext) {
+      console.warn('[live.voice_broadcast] playback blocked: AudioContext unavailable');
+      return { played: false, durationMs: 0, blocked: true };
+    }
+
+    let arrayBuffer: ArrayBuffer;
+    try {
+      arrayBuffer = base64ToArrayBuffer(audioBase64);
+    } catch (error) {
+      console.error('[live.voice_broadcast] base64 decode failed', { audioBase64Length: audioBase64.length }, error);
+      throw error;
+    }
+    const sampleRate = normalizeSampleRate(payload.sampleRate);
+    const channels = normalizeChannelCount(payload.channels);
+    const audioFormat = String(payload.audioFormat || payload.encoding || 'pcm_s16le').toLowerCase();
+    let buffer: AudioBuffer;
+    try {
+      buffer = audioFormat.includes('pcm') || audioFormat.includes('s16le')
+        ? createPcm16AudioBuffer(audioContext, arrayBuffer, sampleRate, channels)
+        : await audioContext.decodeAudioData(arrayBuffer.slice(0));
+    } catch (error) {
+      console.error('[live.voice_broadcast] audio decode failed', { bytes: arrayBuffer.byteLength, audioFormat, sampleRate, channels }, error);
+      throw error;
+    }
+    const durationMs = Math.ceil(buffer.duration * 1000);
+    console.info('[live.voice_broadcast] decoded audio', {
+      bytes: arrayBuffer.byteLength,
+      audioFormat,
+      sampleRate,
+      channels,
+      durationMs,
+      audioContextState: audioContext.state
+    });
+    if (durationMs <= 0) {
+      console.warn('[live.voice_broadcast] decoded audio has zero duration', { bytes: arrayBuffer.byteLength, audioFormat, sampleRate, channels });
+    }
+
+    const unlocked = await this.unlockAudio();
+    if (!unlocked) {
+      console.warn('[live.voice_broadcast] playback blocked: AudioContext is not running', { audioContextState: audioContext.state, durationMs });
+      return { played: false, durationMs, blocked: true };
+    }
+
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioContext.destination);
+    this.source = source;
+
+    const finish = () => {
+      if (this.source !== source) return;
+      if (this.source === source) this.source = undefined;
+      window.clearTimeout(this.finishTimer);
+      this.finishTimer = 0;
+      options.onEnded?.();
+    };
+    source.onended = finish;
+    const startAt = Math.max(audioContext.currentTime + 0.03, 0);
+    source.start(startAt);
+    this.finishTimer = window.setTimeout(finish, durationMs + 300);
+    console.info('[live.voice_broadcast] audio source started', {
+      startAt,
+      currentTime: audioContext.currentTime,
+      durationMs,
+      audioContextState: audioContext.state
+    });
+
+    return { played: true, durationMs };
+  }
+
+  stop(): void {
+    window.clearTimeout(this.finishTimer);
+    this.finishTimer = 0;
+    if (!this.source) return;
+    const source = this.source;
+    this.source = undefined;
+    source.onended = null;
+    try {
+      source.stop();
+    } catch {
+      // The source may not have started yet.
+    }
+  }
+
+  close(): void {
+    this.stop();
+    if (typeof this.audioContext?.close === 'function') {
+      void this.audioContext.close();
+    }
+    this.audioContext = undefined;
+  }
+
+  private ensureAudioContext(): AudioContext | undefined {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return undefined;
+    if (!this.audioContext) this.audioContext = new AudioContextClass();
+    return this.audioContext;
+  }
+}
+
+let sharedLiveVoiceBroadcastAudioPlayer: LiveVoiceBroadcastAudioPlayer | undefined;
+
+export function getLiveVoiceBroadcastAudioPlayer(): LiveVoiceBroadcastAudioPlayer {
+  if (!sharedLiveVoiceBroadcastAudioPlayer) sharedLiveVoiceBroadcastAudioPlayer = new LiveVoiceBroadcastAudioPlayer();
+  return sharedLiveVoiceBroadcastAudioPlayer;
 }
 
 export class DigitalHumanAudioClient {
@@ -280,6 +442,35 @@ export class DigitalHumanAudioClient {
     }
     this.sources.clear();
   }
+}
+
+function normalizeSampleRate(value: unknown): number {
+  const sampleRate = Number(value);
+  return Number.isFinite(sampleRate) && sampleRate >= 8000 && sampleRate <= 192000 ? sampleRate : 24_000;
+}
+
+function normalizeChannelCount(value: unknown): number {
+  const channels = Math.floor(Number(value));
+  return Number.isFinite(channels) && channels >= 1 ? Math.min(channels, 8) : 1;
+}
+
+function createPcm16AudioBuffer(audioContext: AudioContext, arrayBuffer: ArrayBuffer, sampleRate: number, channels: number): AudioBuffer {
+  const sampleCount = Math.floor(arrayBuffer.byteLength / 2);
+  const frameCount = Math.floor(sampleCount / channels);
+  const view = new DataView(arrayBuffer);
+  const buffer = audioContext.createBuffer(channels, frameCount, sampleRate);
+
+  for (let channel = 0; channel < channels; channel += 1) {
+    const samples = new Float32Array(frameCount);
+    for (let frame = 0; frame < frameCount; frame += 1) {
+      const sampleIndex = frame * channels + channel;
+      const value = view.getInt16(sampleIndex * 2, true);
+      samples[frame] = Math.max(-1, Math.min(1, value / 32768));
+    }
+    buffer.copyToChannel(samples, channel);
+  }
+
+  return buffer;
 }
 
 function wait(ms: number): Promise<void> {

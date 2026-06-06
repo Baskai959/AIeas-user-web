@@ -7,6 +7,7 @@ import {
   getMinBidIntervalMs,
   getNextBidPrice,
   getQuickBidIntervalRemainingMs,
+  getQuickBidMaxSteps,
   getQuickBidPrice,
   isQuickBidOutdated,
   parseBidAmountToCents,
@@ -30,9 +31,23 @@ describe('bidding helpers', () => {
     expect(validateBidPrice(5800, rule)).toEqual({ valid: true, price: 5800 });
   });
 
+  it('validates bids against the backend max bid steps rule', () => {
+    const rule = { currentPrice: 0, minIncrement: 100, maxBidSteps: 1 };
+
+    expect(getQuickBidMaxSteps(rule)).toBe(1);
+    expect(getQuickBidPrice(rule, 2)).toBe(100);
+    expect(validateBidPrice(200, rule)).toEqual({ valid: false, reason: 'aboveMaxBidSteps', maxPrice: 100 });
+    expect(validateBidPrice(100, rule)).toEqual({ valid: true, price: 100 });
+  });
+
   it('builds bid.place payload with expected current price', () => {
     expect(buildBidPlacePayload({ auctionId: '1001', price: 5800, expectedCurrentPrice: 5600 })).toEqual({
-      auctionId: '1001',
+      auctionId: 1001,
+      price: 5800,
+      expectedCurrentPrice: 5600
+    });
+    expect(buildBidPlacePayload({ auctionId: 'auc_2001', price: 5800, expectedCurrentPrice: 5600 })).toEqual({
+      auctionId: 'auc_2001',
       price: 5800,
       expectedCurrentPrice: 5600
     });

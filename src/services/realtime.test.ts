@@ -15,8 +15,10 @@ function createFakeWebSocketHarness() {
     url: string;
     closed: boolean;
     readyState: number;
+    sent: string[];
     listeners: Record<string, Listener[]>;
     addEventListener: (type: string, handler: Listener) => void;
+    send: (payload: string) => void;
     open: () => void;
     close: () => void;
     emit: (message: unknown) => void;
@@ -29,6 +31,7 @@ function createFakeWebSocketHarness() {
     url: string;
     readyState = FakeWebSocket.CONNECTING;
     closed = false;
+    sent: string[] = [];
     listeners: Record<string, Listener[]> = {};
 
     constructor(url: string) {
@@ -38,6 +41,11 @@ function createFakeWebSocketHarness() {
 
     addEventListener(type: string, handler: Listener) {
       this.listeners[type] = [...(this.listeners[type] ?? []), handler];
+    }
+
+    send(payload: string) {
+      if (this.readyState !== FakeWebSocket.OPEN) throw new Error('socket not open');
+      this.sent.push(payload);
     }
 
     open() {
@@ -74,6 +82,12 @@ describe('realtime', () => {
     );
   });
 
+  it('adds access token to live-room WebSocket URL when provided', () => {
+    expect(buildLiveRoomWsUrl('ws://127.0.0.1:8888', '9001', 18, 'jwt.token')).toBe(
+      'ws://127.0.0.1:8888/ws/live-rooms/9001?lastSeq=18&token=jwt.token'
+    );
+  });
+
   it('drops duplicate and out-of-order sequenced messages', () => {
     expect(isFreshRealtimeMessage({ type: 'bid.accepted', seq: 12, payload: {} }, 11)).toBe(true);
     expect(isFreshRealtimeMessage({ type: 'bid.accepted', seq: 12, payload: {} }, 12)).toBe(false);
@@ -99,12 +113,37 @@ describe('realtime', () => {
     client.connect();
     sockets[0].open();
     sockets[0].emit({ type: 'bid.accepted', seq: 12, payload: { auctionId: 'auc_2001' } });
-    sockets[0].emit({ type: 'ranking.updated', seq: 12, payload: { auctionId: 'auc_2001', items: [] } });
+    sockets[0].emit({ type: 'ranking.updated', seq: 12, payload: { auctionId: 'auc_2001', ranking: [] } });
     sockets[0].emit({ type: 'timer.extended', seq: 9, payload: { auctionId: 'auc_2001' } });
     sockets[0].emit({ type: 'room.online', seq: 13, payload: { roomId: 'room_1001', count: 328 } });
 
     expect(seen).toEqual(['bid.accepted', 'room.online']);
     expect(window.localStorage.getItem(realtimeLastSeqStorageKey('room_1001'))).toBe('13');
+    client.disconnect();
+  });
+
+  it('reports whether native WebSocket messages were actually sent', () => {
+    const { sockets } = createFakeWebSocketHarness();
+    const client = new NativeWebSocketClient({
+      baseUrl: 'ws://127.0.0.1:8080',
+      roomId: 'room_1001',
+      storage: window.localStorage
+    });
+
+    expect(client.send({ type: 'bid.place', requestId: 'bid-before-connect', payload: { auctionId: 1001, price: 1100 } })).toBe(false);
+    client.connect();
+    expect(client.send({ type: 'bid.place', requestId: 'bid-connecting', payload: { auctionId: 1001, price: 1100 } })).toBe(false);
+
+    sockets[0].open();
+    expect(client.send({ type: 'bid.place', requestId: 'bid-open', payload: { auctionId: 1001, price: 1100 } })).toBe(true);
+    expect(JSON.parse(sockets[0].sent[0])).toEqual({
+      type: 'bid.place',
+      requestId: 'bid-open',
+      payload: { auctionId: 1001, price: 1100 }
+    });
+
+    sockets[0].close();
+    expect(client.send({ type: 'bid.place', requestId: 'bid-closed', payload: { auctionId: 1001, price: 1100 } })).toBe(false);
     client.disconnect();
   });
 
@@ -160,8 +199,8 @@ describe('realtime', () => {
     client.onMessage((message) => {
       seen.push(message.type);
       if (message.type === 'ranking.updated') {
-        const payload = message.payload as { items: Array<{ price: number }> };
-        rankingPrices.push(...payload.items.map((item) => item.price));
+        const payload = message.payload as { ranking: Array<{ price: number }> };
+        rankingPrices.push(...payload.ranking.map((item) => item.price));
       }
     });
 

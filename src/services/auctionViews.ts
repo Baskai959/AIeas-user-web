@@ -41,7 +41,12 @@ export function classifyAuctionRecord(record: UserAuctionRecord): MyAuctionTabKe
 
 export function hasPaidDeposit(record: UserAuctionRecord): boolean {
   const status = record.depositStatus.trim().toUpperCase();
-  return record.depositAmount > 0 || paidDepositStatuses.has(status);
+  if (record.depositAmount > 0 || paidDepositStatuses.has(status)) return true;
+  return hasZeroDepositEnrollment(record);
+}
+
+export function hasZeroDepositEnrollment(record: UserAuctionRecord): boolean {
+  return record.depositAmount === 0 && (record.lot.depositAmount ?? 0) === 0 && record.depositStatus.trim().toUpperCase() === 'READY';
 }
 
 export function selectCurrentRunningLot(room: LiveRoom, lots: LiveRoomLot[], states: Record<string, AuctionState> = {}): LiveRoomLot | undefined {

@@ -1,12 +1,13 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import type { LoginResult, User } from '../services/types';
+import type { LoginResult, RefreshResult, User } from '../services/types';
 
 interface SessionState {
   accessToken: string;
   refreshToken: string;
   user?: User;
   setSession: (session: LoginResult) => void;
+  refreshAccessToken: (session: RefreshResult) => void;
   updateUser: (patch: Partial<User>) => void;
   clearSession: () => void;
 }
@@ -22,6 +23,7 @@ export const useSessionStore = create<SessionState>()(
           refreshToken: session.refreshToken,
           user: session.user
         }),
+      refreshAccessToken: (session) => set({ accessToken: session.accessToken }),
       updateUser: (patch) =>
         set((state) => ({
           user: state.user

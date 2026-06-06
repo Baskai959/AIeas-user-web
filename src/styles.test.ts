@@ -62,6 +62,8 @@ describe('mobile layout CSS', () => {
     expect(rule('.discover-lot .visual-placeholder small')).toContain('display: none');
     expect(rule('.discover-lot-status.is-running')).toContain('background: #ef4444');
     expect(rule('.discover-lot-status.is-upcoming')).toContain('border: 1px solid rgba(239, 68, 68, 0.34)');
+    expect(rule('.discover-lot-schedule')).toContain('grid-column: 2 / -1');
+    expect(rule('.discover-lot-schedule')).toContain('font-size: 11px');
     expect(rule('.discover-slide .discover-enter-button.adm-button')).toContain('background: rgba(255, 255, 255, 0.05)');
     expect(rule('.discover-slide .discover-enter-button.adm-button')).toContain('border: 1px solid rgba(255, 255, 255, 0.7)');
     expect(rule('.discover-slide .discover-enter-button.adm-button')).toContain('font-family: "Microsoft YaHei UI Light", "Microsoft YaHei", sans-serif');
@@ -99,6 +101,10 @@ describe('mobile layout CSS', () => {
     expect(rule('.live-header-watchers')).toContain('min-width: 38px');
     expect(css).toContain('@media (max-width: 360px)');
     expect(rules('.live-header-bidders')).toBe('');
+    expect(rule('.live-voice-permission')).toContain('z-index: 34');
+    expect(rule('.live-voice-permission')).toContain('grid-template-columns: minmax(0, 1fr) auto');
+    expect(rule('.live-voice-permission-button')).toContain('background: #fdb022');
+    expect(rules('.live-voice-permission-button')).toContain('width: 100%');
   });
 
   it('keeps live-room bottom controls compact', () => {
@@ -149,6 +155,8 @@ describe('mobile layout CSS', () => {
     expect(rules('.comment-list-button')).toContain('background: linear-gradient(135deg, #ff7a18 0%, #ff2d55 100%)');
     expect(rule('.auction-float-card')).toContain('width: var(--live-auction-action-width)');
     expect(rule('.auction-float-card')).toContain('bottom: calc(66px + env(safe-area-inset-bottom))');
+    expect(rule('.lot-schedule-line')).toContain('width: fit-content');
+    expect(rule('.lot-schedule-line')).toContain('background: #fff7ed');
   });
 
   it('docks the live ranking rail under the follow button with a low-alpha background', () => {
@@ -220,6 +228,7 @@ describe('mobile layout CSS', () => {
     expect(rule('.lot-list-sheet')).toContain('height: 70dvh');
     expect(rule('.lot-list-sheet')).toContain('max-height: 70dvh');
     expect(rule('.lot-list')).toContain('height: calc(100% - 52px)');
+    expect(rule('.lot-list')).toContain('align-content: start');
     expect(rule('.lot-list')).toContain('max-height: none');
     expect(rule('.lot-list')).toContain('overflow-y: auto');
     expect(rule('.lot-row')).toContain('--lot-thumb-size: 92px');
