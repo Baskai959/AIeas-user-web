@@ -665,8 +665,8 @@ function HistoryRoutePage({ apiClient }: { apiClient: ApiClient }) {
 }
 
 function LoginPage({ apiClient, onLoggedIn }: { apiClient: ApiClient; onLoggedIn: (session: LoginResult) => void }) {
-  const [account, setAccount] = useState('buyer001');
-  const [password, setPassword] = useState('Passw0rd!');
+  const [account, setAccount] = useState('');
+  const [password, setPassword] = useState('');
   const login = useMutation({
     mutationFn: () => apiClient.login({ account, password, role: 'buyer' }),
     onSuccess: onLoggedIn
@@ -676,52 +676,56 @@ function LoginPage({ apiClient, onLoggedIn }: { apiClient: ApiClient; onLoggedIn
     if (!account.trim() || !password.trim() || login.isPending) return;
     login.mutate();
   };
+  const showReservedEntry = () => {
+    Toast.show({ content: t('login.reservedUnavailable') });
+  };
 
   return (
     <section className="login-page">
+      <div className="login-aura is-red" aria-hidden="true" />
+      <div className="login-aura is-cyan" aria-hidden="true" />
       <div className="login-hero" aria-label={t('app.title')}>
         <div className="login-brand-mark">
           <img src={logoUrl} alt={t('app.title')} />
-          <span>{t('login.liveBadge')}</span>
+          <span>{t('app.title')}</span>
         </div>
         <h1>{t('login.title')}</h1>
-        <p>{t('app.subtitle')}</p>
-        <div className="login-feature-row" aria-label={t('login.demoHint')}>
-          <span><Radio size={14} /> {t('login.featureRealtime')}</span>
-          <span><Gavel size={14} /> {t('login.featureBid')}</span>
-          <span><WalletCards size={14} /> {t('login.featurePayment')}</span>
-        </div>
       </div>
       <form className="auth-form login-card" onSubmit={submitLogin}>
         <div className="login-card-header">
-          <div>
-            <p className="eyebrow">{t('common.mock')}</p>
-            <h2>{t('login.cardTitle')}</h2>
-          </div>
-          <span>{t('login.demoAccount')}</span>
+          <p className="eyebrow">{t('login.cardEyebrow')}</p>
+          <h2>{t('login.cardTitle')}</h2>
         </div>
-        <label className="field-label" htmlFor="login-account">{t('login.account')}</label>
-        <input
-          id="login-account"
-          value={account}
-          autoComplete="username"
-          placeholder={t('login.accountPlaceholder')}
-          onChange={(event) => setAccount(event.currentTarget.value)}
-        />
-        <label className="field-label" htmlFor="login-password">{t('login.password')}</label>
-        <input
-          id="login-password"
-          type="password"
-          value={password}
-          autoComplete="current-password"
-          placeholder={t('login.passwordPlaceholder')}
-          onChange={(event) => setPassword(event.currentTarget.value)}
-        />
+        <div className="login-field">
+          <label className="field-label" htmlFor="login-account">{t('login.account')}</label>
+          <input
+            id="login-account"
+            value={account}
+            autoComplete="username"
+            placeholder={t('login.accountPlaceholder')}
+            onChange={(event) => setAccount(event.currentTarget.value)}
+          />
+        </div>
+        <div className="login-field">
+          <label className="field-label" htmlFor="login-password">{t('login.password')}</label>
+          <input
+            id="login-password"
+            type="password"
+            value={password}
+            autoComplete="current-password"
+            placeholder={t('login.passwordPlaceholder')}
+            onChange={(event) => setPassword(event.currentTarget.value)}
+          />
+        </div>
         {login.isError ? <p className="login-error" role="alert">{t('login.error')}</p> : null}
-        <Button block color="primary" size="large" type="submit" loading={login.isPending} disabled={!account.trim() || !password.trim()}>
+        <Button block size="large" type="submit" loading={login.isPending} disabled={!account.trim() || !password.trim()} className="login-submit-button">
           {t('login.submit')}
         </Button>
-        <p className="helper-text">{t('login.demoHint')}</p>
+        <div className="login-reserved-actions" aria-label={t('login.reservedActions')}>
+          <button type="button" onClick={showReservedEntry}>{t('login.register')}</button>
+          <span aria-hidden="true" />
+          <button type="button" onClick={showReservedEntry}>{t('login.forgotPassword')}</button>
+        </div>
       </form>
     </section>
   );

@@ -437,6 +437,12 @@ function seedSession() {
   });
 }
 
+async function loginAsBuyer(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByLabelText(getMessage('login.account')), 'buyer001');
+  await user.type(screen.getByLabelText(getMessage('login.password')), 'Passw0rd!');
+  await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+}
+
 function firePointer(target: Element, type: 'pointerdown' | 'pointermove' | 'pointerup' | 'pointercancel', init: { pointerId: number; pointerType?: string; clientX?: number; clientY?: number; button?: number; buttons?: number }) {
   const event = new MouseEvent(type, {
     bubbles: true,
@@ -654,7 +660,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     expect(await screen.findByText('珠宝严选直播间')).toBeInTheDocument();
     expect(screen.queryByText('今日随机拍品')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: getMessage('nav.category') })).not.toBeInTheDocument();
@@ -717,29 +723,42 @@ describe('App flow', () => {
     expect(participantsMetric()).toHaveTextContent('129');
   });
 
-  it('renders a complete mobile login screen and submits with demo credentials', async () => {
+  it('renders a release-ready mobile login screen and submits credentials', async () => {
     renderApp();
     const user = userEvent.setup();
 
-    expect(screen.getByText(getMessage('login.liveBadge'))).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: getMessage('login.title') })).toBeInTheDocument();
-    expect(screen.getByText(getMessage('login.featureRealtime'))).toBeInTheDocument();
-    expect(screen.getByText(getMessage('login.featureBid'))).toBeInTheDocument();
-    expect(screen.getByLabelText(getMessage('login.account'))).toHaveValue('buyer001');
-    expect(screen.getByLabelText(getMessage('login.password'))).toHaveValue('Passw0rd!');
-    expect(screen.getByText(getMessage('login.demoAccount'))).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: getMessage('login.cardTitle') })).toBeInTheDocument();
+    expect(document.querySelector('.login-live-badge')).not.toBeInTheDocument();
+    expect(document.querySelector('.login-hero p')).not.toBeInTheDocument();
+    expect(document.querySelector('.login-card-header > span')).not.toBeInTheDocument();
+    expect(document.querySelector('.helper-text')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: getMessage('login.register') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: getMessage('login.forgotPassword') })).toBeInTheDocument();
+    expect(screen.getByLabelText(getMessage('login.account'))).toHaveValue('');
+    expect(screen.getByLabelText(getMessage('login.password'))).toHaveValue('');
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
 
     expect(await screen.findByTestId('discover-feed')).toBeInTheDocument();
     expect(api.login).toHaveBeenCalledWith({ account: 'buyer001', password: 'Passw0rd!', role: 'buyer' });
+  });
+
+  it('keeps reserved login links local and shows an unavailable hint', async () => {
+    renderApp();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: getMessage('login.register') }));
+
+    expect(window.location.pathname).toBe('/login');
+    expect(await screen.findByText(getMessage('login.reservedUnavailable'))).toBeInTheDocument();
   });
 
   it('continues a recorded preview video from its current position after entering the live room', async () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     const feed = await screen.findByTestId('discover-feed');
     const previewVideo = feed.querySelector<HTMLVideoElement>('.discover-slide.is-active .discover-video');
     expect(previewVideo).not.toBeNull();
@@ -773,7 +792,7 @@ describe('App flow', () => {
 
     expect(screen.getByRole('button', { name: getMessage('login.submit') })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
 
     expect(await screen.findByText(getMessage('orders.title'))).toBeInTheDocument();
     expect(window.location.pathname).toBe('/orders');
@@ -784,7 +803,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     const tabFrame = await screen.findByTestId('bottom-tab-frame');
     const tabBar = within(tabFrame).getByTestId('bottom-tabs');
 
@@ -806,7 +825,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
 
     const previewMeta = await screen.findByTestId('discover-preview-meta');
     expect(within(previewMeta).getByText(getMessage('home.liveNow'))).toBeInTheDocument();
@@ -844,7 +863,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     const previewMeta = await screen.findByTestId('discover-preview-meta');
 
     expect(within(previewMeta).getByText('翡翠冰种吊坠')).toBeInTheDocument();
@@ -865,7 +884,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     const feed = await screen.findByTestId('discover-feed');
     const track = feed.querySelector<HTMLElement>('.discover-track');
     expect(track).not.toBeNull();
@@ -932,7 +951,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     const feed = await screen.findByTestId('discover-feed');
     Object.defineProperty(feed, 'clientHeight', { configurable: true, value: 500 });
     const track = feed.querySelector<HTMLElement>('.discover-track');
@@ -957,7 +976,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     const feed = await screen.findByTestId('discover-feed');
 
     firePointer(feed, 'pointerdown', { pointerId: 21, pointerType: 'mouse', buttons: 1, clientX: 180, clientY: 220 });
@@ -992,7 +1011,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     const feed = await screen.findByTestId('discover-feed');
     Object.defineProperty(feed, 'clientHeight', { configurable: true, value: 500 });
     const track = feed.querySelector<HTMLElement>('.discover-track');
@@ -1051,7 +1070,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     const feed = await screen.findByTestId('discover-feed');
     const previewVideo = feed.querySelector<HTMLVideoElement>('.discover-slide.is-active .discover-video');
     expect(previewVideo).not.toBeNull();
@@ -1074,7 +1093,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     await user.click(await screen.findByRole('button', { name: getMessage('nav.discover') }));
 
     expect(await screen.findByText(getMessage('discoverLots.title'))).toBeInTheDocument();
@@ -1102,7 +1121,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     await user.click(await screen.findByRole('button', { name: getMessage('nav.discover') }));
 
     await user.selectOptions(screen.getByLabelText(getMessage('filter.sort')), 'priceDesc');
@@ -1148,7 +1167,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     await user.click(await screen.findByRole('button', { name: getMessage('nav.discover') }));
 
     const rowByTitle = (title: string) => {
@@ -1216,7 +1235,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     await user.click(await screen.findByRole('button', { name: getMessage('discover.enterLive') }));
 
     await user.click(await screen.findByRole('button', { name: `+${getMessage('live.follow')}` }));
@@ -1241,7 +1260,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     expect(useLiveActivityStore.getState().footprints).toHaveLength(0);
 
     await user.click(await screen.findByRole('button', { name: getMessage('discover.enterLive') }));
@@ -1262,7 +1281,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
 
     expect(await screen.findByText('Buyer One')).toBeInTheDocument();
@@ -1305,7 +1324,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
     await user.click(screen.getByRole('button', { name: getMessage('settings.title') }));
 
@@ -1336,7 +1355,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     await waitFor(() => expect(useSessionStore.getState().accessToken).toBe('jwt'));
     useLiveActivityStore.getState().followRoom({
       id: 'room_keep',
@@ -1374,7 +1393,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     await waitFor(() => expect(useSessionStore.getState().accessToken).toBe('jwt'));
     useLiveActivityStore.getState().followRoom({
       id: 'room_clear',
@@ -1416,7 +1435,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
     const orders = within(screen.getByLabelText(getMessage('profile.myOrders')));
     await user.click(orders.getByText(getMessage('profile.pendingPay')).closest('button') as HTMLElement);
@@ -1579,7 +1598,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
     const orders = within(screen.getByLabelText(getMessage('profile.myOrders')));
     await user.click(orders.getByText(getMessage('profile.pendingReceipt')).closest('button') as HTMLElement);
@@ -1604,7 +1623,7 @@ describe('App flow', () => {
     const { container } = renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
     await user.click(await screen.findByRole('button', { name: getMessage('profile.viewAvatar') }));
 
@@ -1668,7 +1687,7 @@ describe('App flow', () => {
     renderApp();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
+    await loginAsBuyer(user);
     await user.click(await screen.findByRole('button', { name: getMessage('discover.enterLive') }));
     expect(screen.getByLabelText(getMessage('live.statsOnline', 'zh-CN', { count: 328 }))).toBeInTheDocument();
     expect(screen.queryByText('1208')).not.toBeInTheDocument();
