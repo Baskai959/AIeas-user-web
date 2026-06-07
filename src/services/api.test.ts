@@ -35,6 +35,22 @@ describe('ApiClient', () => {
     expect(fetcher).toHaveBeenCalledWith('http://mock.local/api/v1/auth/login', expect.objectContaining({ method: 'POST' }));
   });
 
+  it('can use same-origin REST paths for reverse-proxy deployment', async () => {
+    const fetcher = vi.fn(() =>
+      ok({
+        accessToken: 'jwt',
+        refreshToken: 'rft',
+        expiresIn: 43200,
+        user: { id: 'u1', nickname: '竞拍用户', role: 'buyer' }
+      })
+    );
+    const api = new ApiClient('', fetcher);
+
+    await api.login({ account: 'buyer001', password: 'Passw0rd!', role: 'buyer' });
+
+    expect(fetcher).toHaveBeenCalledWith('/api/v1/auth/login', expect.objectContaining({ method: 'POST' }));
+  });
+
   it('uses the live-session REST resources registered by the backend', async () => {
     const fetcher = vi
       .fn()
@@ -281,6 +297,27 @@ describe('ApiClient', () => {
     expect(fetcher).not.toHaveBeenCalled();
     expect(rooms.items[0].title).toContain('直播间');
     expect(lots.items.some((lot) => lot.status === 'RUNNING')).toBe(true);
+  });
+
+  it('keeps local demo order state after payment and receipt confirmation', async () => {
+    const api = new DemoApiClient(vi.fn());
+
+    const paidOrder = await api.payOrder('ord_2001');
+    const orderAfterPay = await api.getOrder('ord_2001');
+    const ordersAfterPay = await api.listMyOrders({ auctionId: paidOrder.auctionId });
+    const recordsAfterPay = await api.listMyAuctionRecords();
+    const recordAfterPay = recordsAfterPay.items.find((record) => record.order?.id === 'ord_2001');
+
+    expect(orderAfterPay).toMatchObject({ id: 'ord_2001', status: 'PAID', payStatus: 'PAID', fulfillmentStatus: 'UNSHIPPED' });
+    expect(ordersAfterPay.items[0]).toMatchObject({ id: 'ord_2001', fulfillmentStatus: 'UNSHIPPED' });
+    expect(recordAfterPay?.order).toMatchObject({ id: 'ord_2001', fulfillmentStatus: 'UNSHIPPED' });
+
+    const receivedOrder = await api.confirmReceipt('ord_2001');
+    const recordsAfterReceipt = await api.listMyAuctionRecords();
+    const recordAfterReceipt = recordsAfterReceipt.items.find((record) => record.order?.id === 'ord_2001');
+
+    expect(receivedOrder).toMatchObject({ id: 'ord_2001', fulfillmentStatus: 'RECEIVED' });
+    expect(recordAfterReceipt?.order).toMatchObject({ id: 'ord_2001', fulfillmentStatus: 'RECEIVED' });
   });
 
   it('provides five-image galleries for selected local demo lots', async () => {

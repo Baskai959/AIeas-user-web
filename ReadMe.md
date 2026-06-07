@@ -47,25 +47,83 @@ npm run lint
 
 ## 环境配置
 
-默认 API 模式使用本地 Demo 数据。联调真实 REST 服务时配置：
+默认 API 模式使用本地 Demo 数据。联调真实 REST 服务时配置 `remote`；`VITE_API_BASE_URL` 留空表示走当前站点同源 `/api` 反代：
 
 ```env
 VITE_API_MODE=remote
-VITE_API_BASE_URL=http://127.0.0.1:4523/m1/8317345-8081123-default
+VITE_API_BASE_URL=
 ```
 
-实时通信默认使用前端内置 mock client。接入真实 WebSocket 时配置：
+实时通信默认使用前端内置 mock client。接入真实 WebSocket 时配置 `websocket`；`VITE_WS_URL` 留空表示走当前站点同源 `/ws` 反代：
 
 ```env
 VITE_REALTIME_MODE=websocket
-VITE_WS_URL=ws://127.0.0.1:8080
+VITE_WS_URL=
 ```
+
+连接当前真实后端 `47.97.82.143:8888` 时，开发期推荐使用 Vite 反代，浏览器只访问前端同源的 `/api` 与 `/ws`，由 dev server 转发到后端，避免触发跨域预检问题。
+
+PowerShell 本地反代联调：
+
+```powershell
+$env:VITE_API_MODE='remote'
+$env:VITE_API_BASE_URL=''
+$env:VITE_REALTIME_MODE='websocket'
+$env:VITE_WS_URL=''
+$env:VITE_DEV_PROXY_TARGET='http://47.97.82.143:8888'
+npm run dev -- --host 127.0.0.1 --port 5176
+```
+
+生产部署也应通过站点网关或 Nginx 将 `/api` 与 `/ws` 反代到真实后端。前端构建时保持同源路径：
+
+```powershell
+$env:VITE_API_MODE='remote'
+$env:VITE_API_BASE_URL=''
+$env:VITE_REALTIME_MODE='websocket'
+$env:VITE_WS_URL=''
+npm run build
+```
+
+Bash / Linux 部署构建：
+
+```bash
+VITE_API_MODE=remote \
+VITE_API_BASE_URL= \
+VITE_REALTIME_MODE=websocket \
+VITE_WS_URL= \
+npm run build
+```
+
+Nginx 反代示例：
+
+```nginx
+location /api/ {
+  proxy_pass http://47.97.82.143:8888/api/;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+location /ws/ {
+  proxy_pass http://47.97.82.143:8888/ws/;
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection "upgrade";
+  proxy_set_header Host $host;
+  proxy_read_timeout 3600s;
+}
+```
+
+注意：Vite 会在构建时固化 `VITE_*` 环境变量。若选择前端直连后端而不使用反代，后端仍需要允许前端域名的 CORS 预检与正式请求。
 
 真实 WebSocket 连接地址：
 
 ```text
 {VITE_WS_URL}/ws/live-rooms/{roomId}?lastSeq={lastSeq}
 ```
+
+当 `VITE_WS_URL` 留空时，前端会自动使用当前页面同源的 `ws://{host}` 或 `wss://{host}`。
 
 真实 WebSocket 客户端会按 `live-room:{roomId}:lastSeq` 将最新 `seq` 写入 `localStorage`。断线后使用 500ms 起步、最大 10s 的指数退避加 jitter 自动重连，重连时继续携带 `lastSeq`；重复或乱序的 `seq <= lastSeq` 消息会在客户端丢弃。收到 `gateway.draining` 时，客户端会按 `payload.retryAfterMs` 作为最小等待时间主动关闭并重连；收到 `room.snapshot_required` 时，页面通过 REST 状态接口兜底刷新。
 
@@ -86,11 +144,11 @@ VITE_TTS_WS_URL=ws://127.0.0.1:8876/tts
 - `/live/:roomId`：全屏直播间，包含视频画面、统一声音开关、评论、前端演示点赞、关注、观众数、竞拍清单、当前竞拍拍品小窗、拍品详情、报名、快速出价和竞价氛围弹窗提醒；最后 10 秒倒计时复用该提醒层低优先级展示。
 - `/me`：个人中心，包含头像、昵称、关注、足迹、我的订单入口和设置入口。
 - `/settings`：个人设置，支持昵称、语言设置和退出登录；退出时可选择保留或清除本机浏览数据。
-- `/orders?tab=...`：竞拍/订单记录，支持 `all / pendingBid / pendingPay / pendingShipment / pendingReceipt / completed`；待收货记录可在确认弹层中完成 `确认收货`，成功后进入 `已完成`。
+- `/orders?tab=...`：竞拍/订单记录，支持 `all / pendingBid / pendingPay / pendingShipment / pendingReceipt / completed`；待支付记录进入支付页时会携带订单页返回路径，支付成功后根据返回的订单状态回到对应页签并高亮该订单；待收货记录可在确认弹层中完成 `确认收货`，成功后进入 `已完成`。
 - `/following`：已关注直播间列表，纯前端本地持久化。
 - `/footprints`：直播间浏览足迹，纯前端本地持久化，最多保留 100 条，按 10 条渐进加载。
 - `/result/:auctionId`：成交结果。
-- `/pay/:orderId`：模拟支付，包含待支付、支付中、支付成功、支付失败四种内联 SVG 动画状态。
+- `/pay/:orderId`：模拟支付，包含待支付、支付中、支付成功、支付失败四种内联 SVG 动画状态；当 URL 携带 `returnTo=/orders?...` 时，支付成功后会按 `Order.fulfillmentStatus` 派生目标订单页签。
 - `/history`：历史订单和最近直播间。
 
 直播间内当前支持：
@@ -193,6 +251,11 @@ REST 响应统一按以下 envelope 处理：
 
 仅保留最近三次重要变更：
 
+### 2026-06-07 支付后订单状态闭环与 Demo 状态持久化
+
+- 本地 `DemoApiClient` 会在当前 SPA 会话内保存 `payOrder` 和 `confirmReceipt` 后的订单状态，并同步 `getOrder`、`listMyOrders` 与 `listMyAuctionRecords`，保证“出价中标 -> 支付 -> 订单分组 -> 确认收货”演示链路不被旧 Demo 数据覆盖。
+- 从 `/orders?tab=...` 进入 `/pay/:orderId` 时会携带 `returnTo`。支付成功后前端根据返回的 `Order` 派生目标页签并跳转到 `/orders?tab=...&orderId=...` 高亮订单；已支付且 `fulfillmentStatus=UNSHIPPED` 的订单进入 `待发货`，不会被误判为 `待收货`。本轮不修改 REST 或 WebSocket 协议。
+
 ### 2026-06-07 倒计时提醒并入竞拍提醒层
 
 - `/live/:roomId` 不再渲染独立全屏倒计时层。当前竞拍商品进入最后 10 秒时，倒计时复用 `LiveAuctionAlertLayer` 展示为低优先级提醒；有 `领先 / 被超越 / 竞拍延时 / 竞拍结束 / 竞拍成功` 等更高优先级提醒时，倒计时不会同屏出现。
@@ -202,10 +265,3 @@ REST 响应统一按以下 envelope 处理：
 
 - `/live/:roomId` 新增全局竞拍提醒层，用弹窗动画展示 `领先 / 被超越 / 竞拍延时 / 竞拍结束 / 竞拍成功`。提醒基于现有 WebSocket 事件派生，不修改 REST 或 WebSocket 协议。
 - 提醒层固定在直播间所有弹层之上，包含快速出价、拍品详情和竞拍清单，但不拦截触控事件。当前用户中标时使用新的 `竞拍成功` 提醒整合礼花和彩带效果，替代旧的独立中标庆祝，避免重复播放。
-
-### 2026-06-06 直播间声音播放修复
-
-- 直播间顶部新增统一声音开关。实景视频默认静音自动播放，用户点击声音开关后解除 `muted` 并将音量恢复为 1；若移动端浏览器阻止有声播放，前端会回退静音播放并提示再次点击开启声音。
-- 数字人直播继续保持待机/说话两层视频静音，不恢复播报文本、发送、停止、重连等观看端控制；用户点击统一声音开关后，前端通过 `digitalHuman.ttsWsUrl` 或 `VITE_TTS_WS_URL` 连接 TTS WebSocket，使用 Web Audio 播放 PCM 音频流，并根据 `audio_start` / 播放队列清空切换说话/待机视频层。
-
-- 远程接口建议新增 `POST /api/v1/orders/{id}/receive`，返回更新后的 `Order` DTO；订单履约状态继续以 `fulfillmentStatus` 为唯一依据。

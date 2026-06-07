@@ -1527,6 +1527,54 @@ describe('App flow', () => {
     expect(screen.getByRole('button', { name: getMessage('pay.closedStatus') })).toBeDisabled();
   });
 
+  it('returns to the derived order tab after payment', async () => {
+    let resolvePayment: (order: Awaited<ReturnType<ApiClient['payOrder']>>) => void = () => undefined;
+    let delayedReturn: (() => void) | undefined;
+    const originalSetTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, 'setTimeout').mockImplementation(((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+      if (timeout === 2000 && typeof handler === 'function') {
+        delayedReturn = () => handler(...args);
+        return 2_000_002;
+      }
+      return originalSetTimeout(handler, timeout, ...args);
+    }) as typeof window.setTimeout);
+    vi.mocked(api.payOrder).mockImplementationOnce(() =>
+      new Promise((resolve) => {
+        resolvePayment = resolve;
+      })
+    );
+    seedSession();
+    renderWithRouter('/orders?tab=pendingPay');
+    const user = userEvent.setup();
+
+    expect(await screen.findByText('Pending Payment Lot')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: getMessage('profile.payNow') }));
+    expect(window.location.pathname).toBe('/pay/ord_pending_pay');
+
+    await user.click(screen.getByRole('button', { name: getMessage('pay.submit') }));
+
+    await act(async () => {
+      resolvePayment({
+        id: 'ord_pending_pay',
+        auctionId: 'auc_pending_pay',
+        buyerId: 'u1',
+        amount: 46600,
+        status: 'PAID',
+        payStatus: 'PAID',
+        fulfillmentStatus: 'UNSHIPPED',
+        paidAt: '2026-06-05T12:00:00+08:00'
+      });
+    });
+
+    expect(delayedReturn).toBeDefined();
+    expect(window.location.pathname).toBe('/pay/ord_pending_pay');
+    await act(async () => {
+      delayedReturn?.();
+    });
+    await waitFor(() => expect(window.location.pathname).toBe('/orders'));
+    expect(window.location.search).toBe('?tab=pendingShipment&orderId=ord_pending_pay');
+  });
+
   it('confirms receipt and moves the order from pending receipt to completed', async () => {
     renderApp();
     const user = userEvent.setup();
@@ -1606,6 +1654,7 @@ describe('App flow', () => {
     };
     const stateAfterEnroll = { ...stateBeforeEnroll, participantCount: 129 };
     vi.mocked(api.getAuctionState)
+      .mockResolvedValueOnce(stateBeforeEnroll)
       .mockResolvedValueOnce(stateBeforeEnroll)
       .mockResolvedValueOnce(stateAfterEnroll)
       .mockResolvedValueOnce(stateAfterEnroll);

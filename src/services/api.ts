@@ -4,7 +4,6 @@ import {
   demoLiveRoomPage,
   demoLoginResult,
   demoOrderPage,
-  demoPaidOrder,
   findDemoLiveRoomStats,
   findDemoLot,
   findDemoLiveRoom,
@@ -593,9 +592,78 @@ function isAuthExpiredError(error: unknown): error is ApiError {
   return error instanceof ApiError && (error.status === 401 || error.code === 10001 || error.code === 10002);
 }
 
+function cloneOrder(order: Order): Order {
+  return { ...order };
+}
+
+function cloneLiveRoomLot(lot: LiveRoomLot): LiveRoomLot {
+  return {
+    ...lot,
+    imageUrls: lot.imageUrls ? [...lot.imageUrls] : undefined,
+    ruleSnapshot: lot.ruleSnapshot ? { ...lot.ruleSnapshot } : undefined
+  };
+}
+
+function cloneLiveRoom(room: LiveRoom): LiveRoom {
+  return {
+    ...room,
+    digitalHuman: room.digitalHuman ? { ...room.digitalHuman } : undefined
+  };
+}
+
+function cloneOptionalLiveRoom(room?: LiveRoom): LiveRoom | undefined {
+  return room ? cloneLiveRoom(room) : undefined;
+}
+
+function cloneAuctionRecord(record: UserAuctionRecord): UserAuctionRecord {
+  return {
+    ...record,
+    lot: cloneLiveRoomLot(record.lot),
+    room: cloneOptionalLiveRoom(record.room),
+    order: record.order ? cloneOrder(record.order) : undefined
+  };
+}
+
+function demoPage<T>(items: T[]): PageResult<T> {
+  return {
+    items,
+    total: items.length,
+    page: 1,
+    page_size: 20
+  };
+}
+
 export class DemoApiClient extends ApiClient {
+  private orders = demoOrderPage.items.map(cloneOrder);
+  private auctionRecords = listDemoAuctionRecords().items.map(cloneAuctionRecord);
+
   constructor(fetcher: Fetcher = defaultFetcher) {
     super('demo://local', fetcher);
+  }
+
+  private findStoredOrder(id: string): Order {
+    return this.orders.find((order) => order.id === id) ?? findDemoOrder(id);
+  }
+
+  private saveOrder(order: Order): Order {
+    const nextOrder = cloneOrder(order);
+    const orderIndex = this.orders.findIndex((item) => item.id === nextOrder.id);
+    if (orderIndex >= 0) {
+      this.orders = this.orders.map((item) => (item.id === nextOrder.id ? nextOrder : item));
+    } else {
+      this.orders = [...this.orders, nextOrder];
+    }
+    this.auctionRecords = this.auctionRecords.map((record) => {
+      const ownsOrder = record.order?.id === nextOrder.id;
+      const matchesPaidAuction = !record.order && record.lot.auctionId === nextOrder.auctionId && record.userId === nextOrder.buyerId && nextOrder.payStatus === 'PAID';
+      if (!ownsOrder && !matchesPaidAuction) return record;
+      return {
+        ...record,
+        order: cloneOrder(nextOrder),
+        depositStatus: nextOrder.payStatus === 'PAID' ? 'APPLIED' : record.depositStatus
+      };
+    });
+    return cloneOrder(nextOrder);
   }
 
   override setToken() {}
@@ -674,7 +742,7 @@ export class DemoApiClient extends ApiClient {
   }
 
   override async listMyAuctionRecords(): Promise<PageResult<UserAuctionRecord>> {
-    return listDemoAuctionRecords();
+    return demoPage(this.auctionRecords.map(cloneAuctionRecord));
   }
 
   override async getAuctionState(id: string): Promise<AuctionState> {
@@ -702,40 +770,39 @@ export class DemoApiClient extends ApiClient {
   }
 
   override async listMyOrders(options: ListOrderOptions = {}): Promise<PageResult<Order>> {
-    const items = options.auctionId ? demoOrderPage.items.filter((order) => order.auctionId === options.auctionId) : demoOrderPage.items;
-    return {
-      items,
-      total: items.length,
-      page: 1,
-      page_size: 20
-    };
+    const items = options.auctionId ? this.orders.filter((order) => order.auctionId === options.auctionId) : this.orders;
+    return demoPage(items.map(cloneOrder));
   }
 
   override async getOrder(id: string): Promise<Order> {
-    return findDemoOrder(id);
+    return cloneOrder(this.findStoredOrder(id));
   }
 
   override async payOrder(id: string): Promise<Order> {
-    return {
-      ...demoPaidOrder,
-      id
-    };
+    const order = this.findStoredOrder(id);
+    return this.saveOrder({
+      ...order,
+      status: 'PAID',
+      payStatus: 'PAID',
+      fulfillmentStatus: 'UNSHIPPED',
+      paidAt: new Date().toISOString()
+    });
   }
 
   override async confirmReceipt(id: string): Promise<Order> {
-    const order = findDemoOrder(id);
-    return {
+    const order = this.findStoredOrder(id);
+    return this.saveOrder({
       ...order,
       status: 'PAID',
       payStatus: 'PAID',
       fulfillmentStatus: 'RECEIVED',
       receivedAt: new Date().toISOString()
-    };
+    });
   }
 }
 
 const remoteApiClient = new ApiClient(
-  import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8888'
+  import.meta.env.VITE_API_BASE_URL ?? ''
 );
 
 export const defaultApiClient =

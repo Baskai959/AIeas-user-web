@@ -50,7 +50,7 @@ import {
 } from '../services/bidding';
 import { ApiClient, defaultApiClient } from '../services/api';
 import { defaultDigitalHumanMedia, getLiveVoiceBroadcastAudioPlayer, LiveVoiceBroadcastAudioPlayer, type LiveVoiceBroadcastAudioPayload } from '../services/digitalHuman';
-import { demoCategories, demoLiveRoom, demoLiveRoomPage, demoLiveRoomStats, demoLotPage, findDemoLiveRoom, listDemoLots } from '../services/mockData';
+import { demoCategories, demoLiveRoom, demoLiveRoomPage, demoLiveRoomStats, findDemoLiveRoom, listDemoLots } from '../services/mockData';
 import {
   isFreshRealtimeMessageByDomain,
   MockRealtimeClient,
@@ -191,6 +191,17 @@ function currentPath(location: Pick<Location, 'pathname' | 'search'>): string {
   return `${location.pathname}${location.search}`;
 }
 
+function sameOriginWsBaseUrl(): string {
+  if (typeof window === 'undefined') return '';
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}`;
+}
+
+function configuredWsBaseUrl(): string {
+  const explicitUrl = import.meta.env.VITE_WS_URL?.trim();
+  return explicitUrl || sameOriginWsBaseUrl();
+}
+
 function mainPath(tab: MainTab, focusRoomId?: string): string {
   if (tab === 'home') {
     if (!focusRoomId) return '/';
@@ -224,7 +235,8 @@ function payPath(orderId: string, returnTo?: string): string {
 }
 
 function parsePayReturnTo(value: string | null): string | undefined {
-  if (!value || !value.startsWith('/live/') || value.startsWith('//')) return undefined;
+  if (!value || value.startsWith('//')) return undefined;
+  if (!value.startsWith('/live/') && !value.startsWith('/orders')) return undefined;
   return value;
 }
 
@@ -547,15 +559,49 @@ function PayRoutePage({ apiClient }: { apiClient: ApiClient }) {
   const { orderId = 'ord_2001' } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const returnTo = parsePayReturnTo(searchParams.get('returnTo'));
   const backTarget = (auctionId: string) => returnTo ?? `/result/${auctionId}`;
+  const syncPaidOrder = (paidOrder: Order) => {
+    queryClient.setQueryData<Order>(['order', paidOrder.id], paidOrder);
+    queryClient.setQueryData<PageResult<Order>>(['my-orders'], (current) => {
+      if (!current) return current;
+      const exists = current.items.some((item) => item.id === paidOrder.id);
+      const items = exists ? current.items.map((item) => (item.id === paidOrder.id ? paidOrder : item)) : [paidOrder, ...current.items];
+      return {
+        ...current,
+        items,
+        total: exists ? current.total : current.total + 1
+      };
+    });
+    queryClient.setQueryData<PageResult<UserAuctionRecord>>(['my-auction-records'], (current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        items: current.items.map((record) => {
+          const ownsOrder = record.order?.id === paidOrder.id;
+          const matchesPaidAuction = !record.order && record.lot.auctionId === paidOrder.auctionId && record.userId === paidOrder.buyerId && paidOrder.payStatus === 'PAID';
+          if (!ownsOrder && !matchesPaidAuction) return record;
+          return {
+            ...record,
+            order: paidOrder,
+            depositStatus: paidOrder.payStatus === 'PAID' ? 'APPLIED' : record.depositStatus
+          };
+        })
+      };
+    });
+  };
   return (
     <PayPage
       apiClient={apiClient}
       orderId={orderId}
       onBack={(auctionId) => navigateWithTransition(navigate, backTarget(auctionId))}
-      onPaid={() => {
-        if (returnTo) navigateWithTransition(navigate, returnTo, { replace: true });
+      onPaid={(paidOrder) => {
+        syncPaidOrder(paidOrder);
+        if (returnTo) {
+          const target = returnTo.startsWith('/orders') ? ordersPath(orderTabFromOrder(paidOrder), paidOrder.id) : returnTo;
+          navigateWithTransition(navigate, target, { replace: true });
+        }
       }}
     />
   );
@@ -587,6 +633,7 @@ function SettingsRoutePage({ apiClient }: { apiClient: ApiClient }) {
 
 function OrdersRoutePage({ apiClient }: { apiClient: ApiClient }) {
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const { navigate, openLot } = useAppNavigation();
   const highlightedOrderId = searchParams.get('orderId') ?? undefined;
   return (
@@ -597,7 +644,7 @@ function OrdersRoutePage({ apiClient }: { apiClient: ApiClient }) {
       onBack={() => navigateWithTransition(navigate, '/me')}
       onTabChange={(tab) => navigateWithTransition(navigate, ordersPath(tab))}
       onOpenLot={openLot}
-      onOpenPay={(orderId) => navigateWithTransition(navigate, `/pay/${orderId}`)}
+      onOpenPay={(orderId) => navigateWithTransition(navigate, payPath(orderId, currentPath(location)))}
     />
   );
 }
@@ -3295,7 +3342,6 @@ function LiveRoomPage({
   const [countdownExtensionPulse, setCountdownExtensionPulse] = useState<{ auctionId: string; id: number } | undefined>();
   const [likeBurstId, setLikeBurstId] = useState(0);
   const [likeBurstVisible, setLikeBurstVisible] = useState(false);
-  const [winningCelebrationId, setWinningCelebrationId] = useState<string>();
   const [digitalHumanSpeaking, setDigitalHumanSpeaking] = useState(false);
   const [liveVoicePermissionPromptVisible, setLiveVoicePermissionPromptVisible] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -3970,7 +4016,7 @@ function LiveRoomPage({
     const hasActiveAuction = Boolean(context.activeLot && context.currentState);
     const minIncrement = context.activeLot && context.currentState ? minIncrementForLot(context.activeLot, context.currentState) : 100;
     const isTestMode = import.meta.env.MODE === 'test';
-    const wsBaseUrl = import.meta.env.VITE_WS_URL;
+    const wsBaseUrl = configuredWsBaseUrl();
     const useNativeRealtime = !isTestMode && import.meta.env.VITE_REALTIME_MODE === 'websocket' && Boolean(wsBaseUrl);
     const useRemoteApiMode = !isTestMode && import.meta.env.VITE_API_MODE === 'remote';
     const client: RealtimeClient | undefined =
@@ -4116,9 +4162,6 @@ function LiveRoomPage({
             lot: context.activeLot,
             price: Number(payload.finalPrice ?? context.currentState?.currentPrice ?? 0)
           });
-        }
-        if (isCurrentUserWinner) {
-          setWinningCelebrationId(`${closingAuctionId || 'auction'}-${Date.now()}`);
         }
         const visibleCard = floatingAuctionCardRef.current;
         if (
