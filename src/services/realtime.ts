@@ -24,6 +24,8 @@ export interface ChatSendInput {
 
 export type MessageHandler = (message: RealtimeMessage) => void;
 type NativeReconnectTimer = number | ReturnType<typeof setTimeout>;
+export type RealtimeSeqDomain = 'bid' | 'room';
+export type RealtimeSeqCursor = Partial<Record<RealtimeSeqDomain, number>>;
 
 export interface RealtimeClient {
   connect(): void;
@@ -48,6 +50,7 @@ interface MockOptions {
 interface NativeOptions {
   baseUrl: string;
   roomId: string;
+  auctionId?: string;
   accessToken?: string;
   lastSeq?: number;
   storage?: Storage;
@@ -82,8 +85,8 @@ export function buildLiveRoomWsUrl(baseUrl: string, roomId: string, lastSeq?: nu
   return `${base}/ws/live-rooms/${encodeURIComponent(roomId)}${query}`;
 }
 
-export function realtimeLastSeqStorageKey(roomId: string): string {
-  return `live-room:${roomId}:lastSeq`;
+export function realtimeLastSeqStorageKey(roomId: string, auctionId: string): string {
+  return `live-room:${roomId}:auction:${auctionId}:lastSeq`;
 }
 
 export function nextNativeReconnectDelay(
@@ -98,10 +101,10 @@ export function nextNativeReconnectDelay(
   return expDelay + jitter;
 }
 
-function readStoredLastSeq(roomId: string, storage?: Storage): number {
-  if (!storage) return 0;
+function readStoredLastSeq(roomId: string, auctionId: string | undefined, storage?: Storage): number {
+  if (!storage || !auctionId) return 0;
   try {
-    const raw = storage.getItem(realtimeLastSeqStorageKey(roomId));
+    const raw = storage.getItem(realtimeLastSeqStorageKey(roomId, auctionId));
     const parsed = Number(raw);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
   } catch {
@@ -110,11 +113,33 @@ function readStoredLastSeq(roomId: string, storage?: Storage): number {
 }
 
 export function isFreshRealtimeMessage(message: Pick<RealtimeMessage, 'seq'>, lastSeq: number): boolean {
-  return message.seq === undefined || message.seq > lastSeq;
+	return message.seq === undefined || message.seq > lastSeq;
 }
 
 export function nextRealtimeSeq(message: Pick<RealtimeMessage, 'seq'>, lastSeq: number): number {
-  return message.seq === undefined ? lastSeq : Math.max(lastSeq, message.seq);
+	return message.seq === undefined ? lastSeq : Math.max(lastSeq, message.seq);
+}
+
+export function realtimeMessageSeqDomain(message: Pick<RealtimeMessage, 'type' | 'seq'>): RealtimeSeqDomain | undefined {
+	if (typeof message.seq !== 'number' || message.seq <= 0) return undefined;
+	return message.type === 'bid.accepted' || message.type === 'bid.rejected' ? 'bid' : 'room';
+}
+
+export function isFreshRealtimeMessageByDomain(message: Pick<RealtimeMessage, 'type' | 'seq'>, cursor: RealtimeSeqCursor): boolean {
+	const domain = realtimeMessageSeqDomain(message);
+	if (!domain) return true;
+	return Number(message.seq) > (cursor[domain] ?? 0);
+}
+
+export function nextRealtimeSeqByDomain(message: Pick<RealtimeMessage, 'type' | 'seq'>, cursor: RealtimeSeqCursor): RealtimeSeqCursor {
+	const domain = realtimeMessageSeqDomain(message);
+	if (!domain) return cursor;
+	const seq = Number(message.seq);
+	if (!Number.isFinite(seq) || seq <= (cursor[domain] ?? 0)) return cursor;
+	return {
+		...cursor,
+		[domain]: seq
+	};
 }
 
 export class MockRealtimeClient implements RealtimeClient {
@@ -169,7 +194,8 @@ export class MockRealtimeClient implements RealtimeClient {
         payload: {
           auctionId: this.options.auctionId,
           endTime: new Date(this.endTsMs + 10_000).toISOString(),
-          extendCount: this.extendCount + 1
+          extendCount: this.extendCount + 1,
+          serverTime: new Date().toISOString()
         }
       });
       this.endTsMs += 10_000;
@@ -289,7 +315,9 @@ export class MockRealtimeClient implements RealtimeClient {
           currentPrice: this.currentPrice,
           seq: this.seq,
           streamId: `mock-stream-${this.options.roomId}`,
-          event: 'bid.accepted'
+          event: 'bid.accepted',
+          endTime: new Date(this.endTsMs).toISOString(),
+          serverTime: new Date().toISOString()
         }
       });
     });
@@ -311,7 +339,8 @@ export class MockRealtimeClient implements RealtimeClient {
           endTime: new Date(this.endTsMs).toISOString(),
           extendCount: this.extendCount,
           seq: this.seq,
-          event: 'bid.accepted'
+          event: 'bid.accepted',
+          serverTime: new Date().toISOString()
         }
       });
       this.emitRanking();
@@ -374,7 +403,8 @@ export class MockRealtimeClient implements RealtimeClient {
         winnerId: this.leaderBidderId,
         price: this.currentPrice,
         orderId: 'ord_2001',
-        closedAt: new Date().toISOString()
+        closedAt: new Date().toISOString(),
+        serverTime: new Date().toISOString()
       }
     });
     this.emit({
@@ -476,14 +506,15 @@ export class MockRealtimeClient implements RealtimeClient {
 
 export class NativeWebSocketClient implements RealtimeClient {
   private socket?: WebSocket;
-  private handlers = new Set<MessageHandler>();
-  private lastSeq: number;
-  private retryCount = 0;
-  private manualClosed = true;
-  private reconnectTimer?: NativeReconnectTimer;
+	private handlers = new Set<MessageHandler>();
+	private lastSeq: number;
+	private seqCursor: RealtimeSeqCursor = {};
+	private retryCount = 0;
+	private manualClosed = true;
+	private reconnectTimer?: NativeReconnectTimer;
 
   constructor(private readonly options: NativeOptions) {
-    this.lastSeq = Math.max(options.lastSeq ?? 0, readStoredLastSeq(options.roomId, options.storage));
+    this.lastSeq = Math.max(options.lastSeq ?? 0, readStoredLastSeq(options.roomId, options.auctionId, options.storage));
   }
 
   connect(): void {
@@ -560,18 +591,20 @@ export class NativeWebSocketClient implements RealtimeClient {
     this.socket?.close();
   }
 
-  private acceptSeq(message: RealtimeMessage): boolean {
-    if (typeof message.seq !== 'number' || message.seq <= 0) return true;
-    if (message.seq <= this.lastSeq) return false;
-    this.lastSeq = message.seq;
-    this.persistLastSeq();
-    return true;
-  }
+	private acceptSeq(message: RealtimeMessage): boolean {
+		if (!isFreshRealtimeMessageByDomain(message, this.seqCursor)) return false;
+		this.seqCursor = nextRealtimeSeqByDomain(message, this.seqCursor);
+		if (realtimeMessageSeqDomain(message) === 'bid' && typeof message.seq === 'number' && message.seq > 0) {
+			this.lastSeq = message.seq;
+			this.persistLastSeq();
+		}
+		return true;
+	}
 
   private persistLastSeq(): void {
-    if (!this.options.storage) return;
+    if (!this.options.storage || !this.options.auctionId) return;
     try {
-      this.options.storage.setItem(realtimeLastSeqStorageKey(this.options.roomId), String(this.lastSeq));
+      this.options.storage.setItem(realtimeLastSeqStorageKey(this.options.roomId, this.options.auctionId), String(this.lastSeq));
     } catch {
       // Storage can fail in private modes. Keep the in-memory cursor for this session.
     }

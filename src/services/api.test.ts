@@ -143,7 +143,7 @@ describe('ApiClient', () => {
       .fn()
       .mockImplementationOnce(() => apiError(401, 10002, '访问令牌无效或已过期'))
       .mockImplementationOnce(() => ok({ accessToken: 'jwt_new', expiresIn: 43200 }))
-      .mockImplementationOnce(() => ok({ auctionId: 2001, status: 'RUNNING', currentPrice: 150100, endTime: '2026-06-04T12:00:00+08:00' }));
+      .mockImplementationOnce(() => ok({ auctionId: 2001, status: 'RUNNING', currentPrice: 150100, participantCount: 9, endTime: '2026-06-04T12:00:00+08:00' }));
     const refreshed = vi.fn();
     const api = new ApiClient('http://mock.local', fetcher);
     api.setToken('jwt_old');
@@ -155,6 +155,7 @@ describe('ApiClient', () => {
     const state = await api.getAuctionState('2001');
 
     expect(state.currentPrice).toBe(150100);
+    expect(state.participantCount).toBe(9);
     expect(fetcher).toHaveBeenNthCalledWith(
       1,
       'http://mock.local/api/v1/auctions/2001/state',

@@ -275,7 +275,7 @@ const api = {
           auctionId: 'auc_2001',
           roomId: 'room_1001',
           title: 'Running Diamond Lot',
-          status: 'RUNNING',
+          status: 'RUNNING' as const,
           startPrice: 0,
           currentPrice: 150100,
           endTsMs: now + 120_000
@@ -692,8 +692,13 @@ describe('App flow', () => {
     seedSession();
     window.history.pushState(null, '', '/live/room_1001');
     renderApp();
+    const user = userEvent.setup();
 
     expect(await screen.findByLabelText(getMessage('live.statsOnline', undefined, { count: '328' }))).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    const participantsMetric = () => within(detailDialog).getByText(getMessage('auction.participants')).closest('.metric') as HTMLElement;
+    expect(participantsMetric()).toHaveTextContent('128');
     await waitFor(() => expect(sockets.length).toBeGreaterThan(0));
 
     await act(async () => {
@@ -703,6 +708,13 @@ describe('App flow', () => {
     const headerOnline = screen.getByLabelText(getMessage('live.statsOnline', undefined, { count: '329' }));
     expect(headerOnline).toHaveClass('live-header-watchers');
     expect(headerOnline).toHaveTextContent('329');
+    expect(participantsMetric()).toHaveTextContent('128');
+
+    await act(async () => {
+      emitLatestMockControl(sockets, { type: 'auction.participant_updated', payload: { auctionId: 'auc_2001', participantCount: 129 } });
+    });
+
+    expect(participantsMetric()).toHaveTextContent('129');
   });
 
   it('renders a complete mobile login screen and submits with demo credentials', async () => {
@@ -1447,6 +1459,74 @@ describe('App flow', () => {
     expect(screen.getByRole('button', { name: getMessage('pay.paid') })).toBeDisabled();
   });
 
+  it('waits two seconds before returning to the live room after payment succeeds', async () => {
+    let delayedReturn: (() => void) | undefined;
+    const originalSetTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, 'setTimeout').mockImplementation(((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+      if (timeout === 2000 && typeof handler === 'function') {
+        delayedReturn = () => handler(...args);
+        return 2_000_001;
+      }
+      return originalSetTimeout(handler, timeout, ...args);
+    }) as typeof window.setTimeout);
+    seedSession();
+    renderWithRouter(`/pay/ord_pending_pay?returnTo=${encodeURIComponent('/live/room_1001?from=home')}`);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: getMessage('pay.submit') }));
+    expect(await screen.findByRole('img', { name: getMessage('pay.successStatus') })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/pay/ord_pending_pay');
+    expect(delayedReturn).toBeDefined();
+    expect(window.location.pathname).toBe('/pay/ord_pending_pay');
+
+    await act(async () => {
+      delayedReturn?.();
+    });
+    await waitFor(() => expect(window.location.pathname).toBe('/live/room_1001'));
+    expect(window.location.search).toBe('?from=home');
+  });
+
+  it('disables payment when the latest backend order has timed out', async () => {
+    vi.mocked(api.listMyOrders).mockResolvedValueOnce({
+      items: [
+        {
+          id: 'ord_pending_pay',
+          auctionId: 'auc_pending_pay',
+          buyerId: 'u1',
+          amount: 46600,
+          status: 'TIMEOUT',
+          payStatus: 'UNPAID'
+        }
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20
+    });
+    seedSession();
+    renderWithRouter('/orders?tab=all');
+
+    const row = (await screen.findByText('Pending Payment Lot')).closest('.record-card') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(within(row).queryByRole('button', { name: getMessage('profile.payNow') })).not.toBeInTheDocument();
+  });
+
+  it('shows a closed payment state when the order detail has timed out', async () => {
+    vi.mocked(api.getOrder).mockResolvedValueOnce({
+      id: 'ord_pending_pay',
+      auctionId: 'auc_pending_pay',
+      buyerId: 'u1',
+      amount: 46600,
+      status: 'TIMEOUT',
+      payStatus: 'UNPAID'
+    });
+    seedSession();
+    renderWithRouter('/pay/ord_pending_pay');
+
+    expect(await screen.findByRole('img', { name: getMessage('pay.closedStatus') })).toBeInTheDocument();
+    expect(screen.getByText(getMessage('pay.closed'))).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: getMessage('pay.closedStatus') })).toBeDisabled();
+  });
+
   it('confirms receipt and moves the order from pending receipt to completed', async () => {
     renderApp();
     const user = userEvent.setup();
@@ -1514,6 +1594,28 @@ describe('App flow', () => {
   });
 
   it('opens the current lot card as detail before enrollment, then uses quick bid after deposit', async () => {
+    const stateBeforeEnroll = {
+      auctionId: 'auc_2001',
+      status: 'RUNNING' as const,
+      currentPrice: 150100,
+      leaderBidderId: 'u2',
+      endTsMs: now + 120_000,
+      serverTsMs: now,
+      bidCount: 36,
+      participantCount: 128
+    };
+    const stateAfterEnroll = { ...stateBeforeEnroll, participantCount: 129 };
+    vi.mocked(api.getAuctionState)
+      .mockResolvedValueOnce(stateBeforeEnroll)
+      .mockResolvedValueOnce(stateAfterEnroll)
+      .mockResolvedValueOnce(stateAfterEnroll);
+    vi.mocked(api.enrollAuction).mockResolvedValueOnce({
+      id: 'dep1',
+      auctionId: 'auc_2001',
+      userId: 'u1',
+      amount: 5000,
+      status: 'READY'
+    });
     renderApp();
     const user = userEvent.setup();
 
@@ -1537,8 +1639,11 @@ describe('App flow', () => {
     expect(await screen.findByRole('dialog', { name: getMessage('product.detail') })).toBeInTheDocument();
 
     const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
+    const participantsMetric = () => within(detailDialog).getByText(getMessage('auction.participants')).closest('.metric') as HTMLElement;
+    expect(participantsMetric()).toHaveTextContent('128');
     await user.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
     expect(await within(detailDialog).findByRole('button', { name: getMessage('product.bidNow') })).toBeInTheDocument();
+    await waitFor(() => expect(participantsMetric()).toHaveTextContent('129'));
     await user.click(within(detailDialog).getByRole('button', { name: getMessage('common.close') }));
     const stillOpenDrawer = screen.getByRole('dialog', { name: getMessage('live.goodsList') });
     expect(stillOpenDrawer).toBeInTheDocument();
@@ -1559,6 +1664,55 @@ describe('App flow', () => {
 
     expect(await within(bidDialog).findByText(getMessage('bid.highestPriceNotice'))).toBeInTheDocument();
     expect((await screen.findAllByText(/1503\.00/)).length).toBeGreaterThan(0);
+    vi.mocked(api.getAuctionState).mockReset();
+    vi.mocked(api.getAuctionState).mockImplementation(async () => ({
+      auctionId: 'auc_2001',
+      status: 'RUNNING',
+      currentPrice: 150100,
+      leaderBidderId: 'u2',
+      endTsMs: now + 120_000,
+      serverTsMs: now,
+      bidCount: 36,
+      participantCount: 128
+    }));
+  });
+
+  it('updates the bid sheet current price and leader from bid.accepted', async () => {
+    const sockets = installMockControlSocket();
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(sockets.length).toBeGreaterThan(0));
+    await user.click(await screen.findByRole('button', { name: getMessage('auction.lookAround') }));
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    await user.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+    await user.click(await within(detailDialog).findByRole('button', { name: getMessage('product.bidNow') }));
+    const bidDialog = await screen.findByRole('dialog', { name: getMessage('bid.confirmTitle') });
+
+    expect(within(bidDialog).getByText(/1501\.00/)).toBeInTheDocument();
+    expect(within(bidDialog).getByText(getMessage('bid.leadingBadge', 'zh-CN', { name: '用户**02' }))).toBeInTheDocument();
+
+    await act(async () => {
+      emitLatestMockControl(sockets, {
+        type: 'bid.accepted',
+        payload: {
+          auctionId: 'auc_2001',
+          bidderId: 'u5',
+          bidderNickname: '实时用户',
+          price: 150200,
+          currentPrice: 150200,
+          leaderBidderId: 'u5',
+          accepted: true,
+          bidTsMs: now + 1000,
+          endTime: new Date(now + 120_000).toISOString()
+        }
+      });
+    });
+
+    await waitFor(() => expect(within(bidDialog).getAllByText(/1502\.00/).length).toBeGreaterThan(0));
+    expect(within(bidDialog).getByText(getMessage('bid.leadingBadge', 'zh-CN', { name: '实时用户' }))).toBeInTheDocument();
   });
 
   it('does not start the quick-bid interval after a rejected first bid', async () => {
@@ -1669,7 +1823,7 @@ describe('App flow', () => {
   });
 
   it('caps quick-bid increases to the backend max bid steps rule', async () => {
-    vi.mocked(api.listLiveRoomLots).mockResolvedValueOnce({
+    const maxStepLotsPage = {
       items: [
         {
           id: 'lot_max_step_1',
@@ -1683,7 +1837,7 @@ describe('App flow', () => {
           startPrice: 0,
           currentPrice: 0,
           endTsMs: now + 120_000,
-          ruleSnapshot: { incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 1 } },
+          ruleSnapshot: { incrementRule: { type: 'fixed' as const, amount: 100, maxBidSteps: 1 } },
           depositAmount: 0,
           participantCount: 0,
           bidCount: 0
@@ -1692,7 +1846,8 @@ describe('App flow', () => {
       total: 1,
       page: 1,
       page_size: 20
-    });
+    };
+    vi.mocked(api.listLiveRoomLots).mockResolvedValueOnce(maxStepLotsPage).mockResolvedValueOnce(maxStepLotsPage);
     const maxStepAuctionState = {
       auctionId: '56742545326592',
       status: 'RUNNING',
@@ -1997,6 +2152,89 @@ describe('App flow', () => {
     expect(within(drawer).queryByText('新上架碧玺戒指')).not.toBeInTheDocument();
   });
 
+  it('hides the current lot immediately when the merchant cancels explaining', async () => {
+    const sockets = installMockControlSocket();
+    const runningLot = {
+      id: 'lot_cancel_explain',
+      auctionId: 'auc_2001',
+      roomId: 'room_1001',
+      merchantId: 'merchant_01',
+      categoryId: 'jewelry',
+      title: '取消讲解测试拍品',
+      status: 'RUNNING' as const,
+      startPrice: 0,
+      currentPrice: 150100,
+      leaderBidderId: 'u2',
+      endTsMs: now + 120_000,
+      ruleSnapshot: { incrementRule: { type: 'fixed' as const, amount: 100, maxBidSteps: 10 } }
+    };
+    const readyLot = {
+      ...runningLot,
+      status: 'READY' as const,
+      currentPrice: 0,
+      leaderBidderId: undefined
+    };
+    vi.mocked(api.getLiveRoom)
+      .mockResolvedValueOnce({
+        id: 'room_1001',
+        title: '珠宝严选直播间',
+        merchantName: '云上珠宝',
+        status: 'LIVE',
+        videoSource: 'recorded',
+        onlineCount: 328,
+        watcherCount: 1208,
+        activeAuctionId: 'auc_2001',
+        liveSessionId: 9001,
+        videoUrl: '/media/live-room-demo.mp4'
+      })
+      .mockResolvedValue({
+        id: 'room_1001',
+        title: '珠宝严选直播间',
+        merchantName: '云上珠宝',
+        status: 'LIVE',
+        videoSource: 'recorded',
+        onlineCount: 328,
+        watcherCount: 1208,
+        activeAuctionId: undefined,
+        liveSessionId: 9001,
+        videoUrl: '/media/live-room-demo.mp4'
+      });
+    vi.mocked(api.listLiveRoomLots)
+      .mockResolvedValueOnce({
+        items: [runningLot],
+        total: 1,
+        page: 1,
+        page_size: 20
+      })
+      .mockResolvedValue({
+        items: [readyLot],
+        total: 1,
+        page: 1,
+        page_size: 20
+      });
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+
+    await waitFor(() => expect(document.querySelector('.live-ranking-rail')).toBeInTheDocument());
+    await waitFor(() => expect(sockets.length).toBeGreaterThan(0));
+    await act(async () => {
+      emitLatestMockControl(sockets, {
+        type: 'live_session.lot_changed',
+        liveSessionId: 9001,
+        payload: {
+          liveSessionId: 9001,
+          auctionId: 'auc_2001',
+          action: 'cancelled'
+        }
+      });
+    });
+
+    await waitFor(() => expect(document.querySelector('.live-ranking-rail')).not.toBeInTheDocument());
+    expect(document.querySelector('.auction-float-card')).not.toBeInTheDocument();
+    await waitFor(() => expect(api.listLiveRoomLots).toHaveBeenCalledTimes(2));
+  });
+
   it('derives lot list action buttons from auction status and order state', async () => {
     vi.mocked(api.getLiveRoom).mockResolvedValueOnce({
       id: 'room_1001',
@@ -2073,8 +2311,8 @@ describe('App flow', () => {
 
     await user.click(await screen.findByRole('button', { name: getMessage('pay.submit') }));
     expect(api.payOrder).toHaveBeenCalledWith('ord_won_unpaid');
-    await waitFor(() => expect(window.location.pathname).toBe('/live/room_1001'));
-    expect(window.location.search).toBe('');
+    expect(await screen.findByRole('img', { name: getMessage('pay.successStatus') })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/pay/ord_won_unpaid');
   });
 
   it('opens the paid winning order from the lot list view-order action', async () => {
@@ -2344,6 +2582,120 @@ describe('App flow', () => {
     await user.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
     const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
     expect(within(detailDialog).getByText('后端用户')).toBeInTheDocument();
+  });
+
+  it('updates the live ranking immediately from bid.accepted while ranking snapshot is delayed', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+      await flushApp();
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.accepted',
+          payload: {
+            auctionId: 'auc_2001',
+            bidderId: 'u5',
+            bidderNickname: '实时用户',
+            price: 150200,
+            currentPrice: 150200,
+            leaderBidderId: 'u5',
+            accepted: true,
+            bidTsMs: now + 1000,
+            endTime: new Date(now + 120_000).toISOString()
+          }
+        });
+      });
+
+      const rankingRail = document.querySelector('.live-ranking-rail') as HTMLElement;
+      expect(rankingRail).toHaveTextContent('实时用户');
+      expect(rankingRail).toHaveTextContent('1502.00');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still consumes bid.accepted when room and ranking seq values are ahead', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+      await flushApp();
+
+      await act(async () => {
+        emitLatestMockControl(sockets, { type: 'room.online', seq: 1, payload: { roomId: 'room_1001', online: 329 } });
+        emitLatestMockControl(sockets, {
+          ...rankingUpdated([{ rank: 1, bidderId: 'u8', bidderNickname: '旧榜用户', price: 150100 }]),
+          seq: 2
+        });
+        emitLatestMockControl(sockets, {
+          type: 'bid.accepted',
+          seq: 1,
+          payload: {
+            auctionId: 'auc_2001',
+            bidderId: 'u5',
+            bidderNickname: '实时用户',
+            price: 150200,
+            currentPrice: 150200,
+            leaderBidderId: 'u5',
+            accepted: true,
+            bidTsMs: now + 1000,
+            endTime: new Date(now + 120_000).toISOString()
+          }
+        });
+      });
+
+      const rankingRail = document.querySelector('.live-ranking-rail') as HTMLElement;
+      expect(rankingRail).toHaveTextContent('实时用户');
+      expect(rankingRail).toHaveTextContent('1502.00');
+      fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
+      await flushApp();
+      const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
+      expect(within(detailDialog).getAllByText(/1502\.00/).length).toBeGreaterThan(0);
+      expect(within(detailDialog).getByText('实时用户')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the right ranking rail synchronized with the detail sheet after ranking.updated', async () => {
+    const sockets = installMockControlSocket();
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+    await screen.findByRole('button', { name: getMessage('auction.lookAround') });
+
+    await act(async () => {
+      emitLatestMockControl(sockets, rankingUpdated([{ rank: 1, bidderId: 'u8', bidderNickname: '旧榜用户', price: 150100 }]));
+    });
+
+    await user.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    expect(within(detailDialog).getByText('旧榜用户')).toBeInTheDocument();
+    const rankingRail = document.querySelector('.live-ranking-rail') as HTMLElement;
+    expect(rankingRail.querySelector('.live-ranking-top-list [data-bidder-id="u8"] .live-ranking-name')).toHaveTextContent('旧榜用户');
+    expect(document.querySelector('.live-ranking-ghost')).not.toBeInTheDocument();
+    expect(document.querySelector('.live-ranking-row.is-entering')).not.toBeInTheDocument();
+    expect(document.querySelector('.live-ranking-row.is-shifted-down')).not.toBeInTheDocument();
+
+    await act(async () => {
+      emitLatestMockControl(sockets, rankingUpdated([{ rank: 1, bidderId: 'u10', bidderNickname: '右侧同步用户', price: 151000 }]));
+    });
+
+    expect(within(detailDialog).getByText('右侧同步用户')).toBeInTheDocument();
+    expect(rankingRail.querySelector('.live-ranking-top-list [data-bidder-id="u10"] .live-ranking-name')).toHaveTextContent('右侧同步用户');
+    expect(rankingRail).toHaveTextContent('1510.00');
+    expect(document.querySelector('.live-ranking-ghost')).not.toBeInTheDocument();
+    expect(document.querySelector('.live-ranking-row.is-entering')).not.toBeInTheDocument();
+    expect(document.querySelector('.live-ranking-row.is-shifted-down')).not.toBeInTheDocument();
   });
 
   it('shows a right-docked live ranking rail, appends the current user, and collapses it', async () => {
@@ -3324,39 +3676,66 @@ describe('App flow', () => {
       renderApp();
 
       await flushApp();
-      await act(async () => {
-        emitLatestMockControl(sockets, {
-          type: 'timer.extended',
-          payload: {
-            auctionId: 'auc_2001',
-            newEndTsMs: now + 180_000
-          }
-        });
-      });
+	      await act(async () => {
+	        emitLatestMockControl(sockets, {
+	          type: 'timer.extended',
+	          payload: {
+	            auctionId: 'auc_2001',
+	            endTime: new Date(now + 180_000).toISOString(),
+	            serverTime: new Date(now).toISOString()
+	          }
+	        });
+	      });
       expect(screen.getByText('竞拍延时')).toBeInTheDocument();
       expect(document.querySelector('.live-auction-alert.is-extended')).toBeInTheDocument();
 
       await act(async () => {
         emitLatestMockControl(sockets, {
           type: 'auction.closed',
-          payload: {
-            auctionId: 'auc_2001',
-            status: 'CLOSED_WON',
-            winnerBidderId: 'u2',
-            finalPrice: 150300,
-            closedTsMs: Date.now()
-          }
-        });
-      });
+	          payload: {
+	            auctionId: 'auc_2001',
+	            status: 'CLOSED_WON',
+	            winnerId: 'u2',
+	            price: 150300,
+	            closedAt: new Date(now).toISOString(),
+	            serverTime: new Date(now).toISOString()
+	          }
+	        });
+	      });
       const closedAlert = document.querySelector('.live-auction-alert.is-closed');
       expect(closedAlert).toBeInTheDocument();
       expect(closedAlert).toHaveTextContent('竞拍结束');
     } finally {
       vi.useRealTimers();
-    }
-  });
+	    }
+	  });
 
-  it('shows a global won alert instead of the old standalone celebration when the current user wins the lot', async () => {
+	  it('shows hammering locally when the countdown reaches the end before a closed event arrives', async () => {
+	    vi.useFakeTimers();
+	    vi.setSystemTime(now);
+	    installNativeRealtimeSocket();
+	    try {
+	      seedSession();
+	      window.history.pushState(null, '', '/live/room_1001');
+	      renderApp();
+
+	      await flushApp();
+	      await act(async () => {
+	        vi.advanceTimersByTime(121_000);
+	      });
+
+	      fireEvent.click(screen.getByRole('button', { name: getMessage('live.goodsEntry') }));
+	      await flushApp();
+	      const drawer = screen.getByRole('dialog', { name: getMessage('live.goodsList') });
+	      const currentLotRow = within(drawer).getAllByTestId('lot-row')[0];
+	      expect(within(currentLotRow).getAllByText(getMessage('auction.hammerInProgress')).length).toBeGreaterThan(0);
+	      expect(within(currentLotRow).getByRole('button', { name: getMessage('auction.hammerInProgress') })).toBeDisabled();
+	    } finally {
+	      vi.useRealTimers();
+	    }
+	  });
+
+	  it('shows a global won alert instead of the old standalone celebration when the current user wins the lot', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
     const sockets = installMockControlSocket();

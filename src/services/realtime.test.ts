@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildLiveRoomWsUrl,
   isFreshRealtimeMessage,
+  isFreshRealtimeMessageByDomain,
   MockRealtimeClient,
   MockRealtimeControlClient,
   NativeWebSocketClient,
   nextNativeReconnectDelay,
+  nextRealtimeSeqByDomain,
   realtimeLastSeqStorageKey
 } from './realtime';
 
@@ -94,6 +96,15 @@ describe('realtime', () => {
     expect(isFreshRealtimeMessage({ type: 'bid.accepted', seq: 9, payload: {} }, 12)).toBe(false);
   });
 
+  it('tracks realtime seq independently for bid and room event streams', () => {
+    let cursor = nextRealtimeSeqByDomain({ type: 'room.online', seq: 12, payload: {} }, {});
+    expect(isFreshRealtimeMessageByDomain({ type: 'bid.accepted', seq: 1, payload: {} }, cursor)).toBe(true);
+    cursor = nextRealtimeSeqByDomain({ type: 'bid.accepted', seq: 1, payload: {} }, cursor);
+    expect(isFreshRealtimeMessageByDomain({ type: 'ranking.updated', seq: 13, payload: {} }, cursor)).toBe(true);
+    expect(isFreshRealtimeMessageByDomain({ type: 'bid.accepted', seq: 1, payload: {} }, cursor)).toBe(false);
+    expect(isFreshRealtimeMessageByDomain({ type: 'bid.accepted', seq: 2, payload: {} }, cursor)).toBe(true);
+  });
+
   it('calculates native reconnect delay with exponential backoff and jitter', () => {
     expect(nextNativeReconnectDelay(0, () => 0)).toBe(500);
     expect(nextNativeReconnectDelay(2, () => 0.5)).toBe(2500);
@@ -105,6 +116,7 @@ describe('realtime', () => {
     const client = new NativeWebSocketClient({
       baseUrl: 'ws://127.0.0.1:8080',
       roomId: 'room_1001',
+      auctionId: 'auc_2001',
       storage: window.localStorage
     });
     const seen: string[] = [];
@@ -117,8 +129,53 @@ describe('realtime', () => {
     sockets[0].emit({ type: 'timer.extended', seq: 9, payload: { auctionId: 'auc_2001' } });
     sockets[0].emit({ type: 'room.online', seq: 13, payload: { roomId: 'room_1001', count: 328 } });
 
-    expect(seen).toEqual(['bid.accepted', 'room.online']);
-    expect(window.localStorage.getItem(realtimeLastSeqStorageKey('room_1001'))).toBe('13');
+    expect(seen).toEqual(['bid.accepted', 'ranking.updated', 'room.online']);
+    expect(window.localStorage.getItem(realtimeLastSeqStorageKey('room_1001', 'auc_2001'))).toBe('12');
+    client.disconnect();
+  });
+
+  it('does not let room seq collisions block native bid.accepted messages', () => {
+    const { sockets } = createFakeWebSocketHarness();
+    const client = new NativeWebSocketClient({
+      baseUrl: 'ws://127.0.0.1:8080',
+      roomId: 'room_1001',
+      auctionId: 'auc_2001',
+      storage: window.localStorage
+    });
+    const seen: string[] = [];
+    client.onMessage((message) => seen.push(message.type));
+
+    client.connect();
+    sockets[0].open();
+    sockets[0].emit({ type: 'room.online', seq: 1, payload: { roomId: 'room_1001', count: 328 } });
+    sockets[0].emit({ type: 'bid.accepted', seq: 1, payload: { auctionId: 'auc_2001', currentPrice: 1100 } });
+    sockets[0].emit({ type: 'ranking.updated', seq: 2, payload: { auctionId: 'auc_2001', ranking: [] } });
+    sockets[0].emit({ type: 'bid.accepted', seq: 2, payload: { auctionId: 'auc_2001', currentPrice: 1200 } });
+
+    expect(seen).toEqual(['room.online', 'bid.accepted', 'ranking.updated', 'bid.accepted']);
+    expect(window.localStorage.getItem(realtimeLastSeqStorageKey('room_1001', 'auc_2001'))).toBe('2');
+    client.disconnect();
+  });
+
+  it('keeps native WebSocket lastSeq scoped by auction so a new lot can receive low seq bid events', () => {
+    window.localStorage.setItem(realtimeLastSeqStorageKey('room_1001', 'auc_old'), '88');
+    const { sockets } = createFakeWebSocketHarness();
+    const client = new NativeWebSocketClient({
+      baseUrl: 'ws://127.0.0.1:8080',
+      roomId: 'room_1001',
+      auctionId: 'auc_new',
+      storage: window.localStorage
+    });
+    const seen: string[] = [];
+    client.onMessage((message) => seen.push(message.type));
+
+    client.connect();
+    expect(sockets[0].url).toBe('ws://127.0.0.1:8080/ws/live-rooms/room_1001');
+    sockets[0].open();
+    sockets[0].emit({ type: 'bid.accepted', seq: 1, payload: { auctionId: 'auc_new', currentPrice: 1100 } });
+
+    expect(seen).toEqual(['bid.accepted']);
+    expect(window.localStorage.getItem(realtimeLastSeqStorageKey('room_1001', 'auc_new'))).toBe('1');
     client.disconnect();
   });
 
@@ -153,6 +210,7 @@ describe('realtime', () => {
     const client = new NativeWebSocketClient({
       baseUrl: 'ws://127.0.0.1:8080/',
       roomId: 'room_1001',
+      auctionId: 'auc_2001',
       storage: window.localStorage,
       reconnect: {
         random: () => 0

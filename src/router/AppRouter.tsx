@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type TouchEvent as ReactTouchEvent, type TransitionEvent as ReactTransitionEvent, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type Dispatch, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type SetStateAction, type TouchEvent as ReactTouchEvent, type TransitionEvent as ReactTransitionEvent, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams, type Location, type NavigateFunction } from 'react-router-dom';
@@ -52,13 +52,14 @@ import { ApiClient, defaultApiClient } from '../services/api';
 import { defaultDigitalHumanMedia, getLiveVoiceBroadcastAudioPlayer, LiveVoiceBroadcastAudioPlayer, type LiveVoiceBroadcastAudioPayload } from '../services/digitalHuman';
 import { demoCategories, demoLiveRoom, demoLiveRoomPage, demoLiveRoomStats, demoLotPage, findDemoLiveRoom, listDemoLots } from '../services/mockData';
 import {
-  isFreshRealtimeMessage,
+  isFreshRealtimeMessageByDomain,
   MockRealtimeClient,
   MockRealtimeControlClient,
   NativeWebSocketClient,
-  nextRealtimeSeq,
+  nextRealtimeSeqByDomain,
   type RealtimeClient,
-  type RealtimeMessage
+  type RealtimeMessage,
+  type RealtimeSeqCursor
 } from '../services/realtime';
 import type {
   AuctionState,
@@ -87,7 +88,7 @@ import { useLiveActivityStore } from '../store/liveActivity';
 import { usePreferencesStore } from '../store/preferences';
 import { mergeProfile, useProfileStore } from '../store/profile';
 import { useSessionStore } from '../store/session';
-import { formatCountdown, formatMoney, makeRequestId, msUntil } from '../utils/format';
+import { formatCountdown, formatMoney, getServerOffsetMs, makeRequestId } from '../utils/format';
 import { MainTabShell, type MainTab } from '../layout/MainTabShell';
 
 let activeLocale: Locale = defaultLocale;
@@ -233,14 +234,29 @@ function ordersPath(tab: MyAuctionTabKey, orderId?: string): string {
   return `/orders?${params.toString()}`;
 }
 
+const closedOrderStatuses = new Set(['TIMEOUT', 'TIMED_OUT', 'CANCELLED', 'CANCELED', 'CLOSED', 'EXPIRED', 'PAY_TIMEOUT', 'PAYMENT_TIMEOUT']);
+const closedPayStatuses = new Set(['TIMEOUT', 'TIMED_OUT', 'CANCELLED', 'CANCELED', 'CLOSED', 'EXPIRED', 'FAILED']);
+
+function normalizeOrderState(value?: string): string {
+  return String(value ?? '').trim().toUpperCase();
+}
+
+function isClosedOrder(order?: Order): boolean {
+  if (!order) return false;
+  return closedOrderStatuses.has(normalizeOrderState(order.status)) || closedPayStatuses.has(normalizeOrderState(order.payStatus));
+}
+
 function isPendingPayOrder(order?: Order): boolean {
   if (!order) return false;
-  return order.payStatus === 'UNPAID' || order.status === 'PENDING_PAY';
+  if (isClosedOrder(order)) return false;
+  const status = normalizeOrderState(order.status);
+  const payStatus = normalizeOrderState(order.payStatus);
+  return payStatus === 'UNPAID' || payStatus === 'PENDING' || status === 'PENDING_PAY' || status === 'CREATED';
 }
 
 function isPaidOrder(order?: Order): boolean {
   if (!order) return false;
-  return order.payStatus === 'PAID' || order.status === 'PAID';
+  return normalizeOrderState(order.payStatus) === 'PAID' || normalizeOrderState(order.status) === 'PAID';
 }
 
 function orderTabFromOrder(order?: Order): MyAuctionTabKey {
@@ -258,6 +274,19 @@ function buildOrderByAuctionId(records: UserAuctionRecord[] = [], orders: Order[
     if (record.order) byAuctionId.set(record.lot.auctionId, record.order);
   });
   return byAuctionId;
+}
+
+function mergeAuctionRecordsWithOrders(records: UserAuctionRecord[] = [], orders: Order[] = []): UserAuctionRecord[] {
+  if (!records.length || !orders.length) return records;
+  const byId = new Map(orders.map((order) => [order.id, order]));
+  const byAuctionId = new Map(orders.map((order) => [order.auctionId, order]));
+  return records.map((record) => {
+    const latestOrder =
+      (record.order?.id ? byId.get(record.order.id) : undefined) ??
+      (record.order || record.lot.status === 'CLOSED_WON' || record.lot.status === 'SETTLED' ? byAuctionId.get(record.lot.auctionId) : undefined);
+    if (!latestOrder || latestOrder === record.order) return record;
+    return { ...record, order: latestOrder };
+  });
 }
 
 function transitionRouteUpdate(update: () => void): void {
@@ -1540,10 +1569,12 @@ function MePage({
   const followedCount = useLiveActivityStore((state) => state.followedRooms.length);
   const footprintCount = useLiveActivityStore((state) => state.footprints.length);
   const profileQuery = useQuery({ queryKey: ['my-profile'], queryFn: () => apiClient.getMyProfile() });
-  const recordsQuery = useQuery({ queryKey: ['my-auction-records'], queryFn: () => apiClient.listMyAuctionRecords(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 } });
+  const recordsQuery = useQuery({ queryKey: ['my-auction-records'], queryFn: () => apiClient.listMyAuctionRecords(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 }, refetchOnMount: 'always' });
+  const ordersQuery = useQuery({ queryKey: ['my-orders'], queryFn: () => apiClient.listMyOrders(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 }, refetchOnMount: 'always' });
   const baseProfile = profileQuery.data ?? profileFromSession(userId, sessionUser);
   const profile = mergeProfile(baseProfile, profileOverride);
-  const groupedRecords = groupAuctionRecords(recordsQuery.data?.items ?? []);
+  const mergedRecords = useMemo(() => mergeAuctionRecordsWithOrders(recordsQuery.data?.items ?? [], ordersQuery.data?.items ?? []), [ordersQuery.data?.items, recordsQuery.data?.items]);
+  const groupedRecords = groupAuctionRecords(mergedRecords);
   const avatarMutation = useMutation({
     mutationFn: (avatarUrl: string) => apiClient.updateMyProfile({ userId: profile.userId, avatarUrl, nickname: profile.nickname }),
     onSuccess: (saved) => {
@@ -1722,7 +1753,8 @@ function OrdersPage({
 }) {
   const queryClient = useQueryClient();
   const [receiptTarget, setReceiptTarget] = useState<UserAuctionRecord | null>(null);
-  const recordsQuery = useQuery({ queryKey: ['my-auction-records'], queryFn: () => apiClient.listMyAuctionRecords(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 } });
+  const recordsQuery = useQuery({ queryKey: ['my-auction-records'], queryFn: () => apiClient.listMyAuctionRecords(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 }, refetchOnMount: 'always' });
+  const ordersQuery = useQuery({ queryKey: ['my-orders'], queryFn: () => apiClient.listMyOrders(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 }, refetchOnMount: 'always' });
   const confirmReceipt = useMutation({
     mutationFn: (orderId: string) => apiClient.confirmReceipt(orderId),
     onSuccess: (updatedOrder) => {
@@ -1733,6 +1765,13 @@ function OrdersPage({
           items: current.items.map((record) => (record.order?.id === updatedOrder.id ? { ...record, order: updatedOrder } : record))
         };
       });
+      queryClient.setQueryData<PageResult<Order>>(['my-orders'], (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          items: current.items.map((order) => (order.id === updatedOrder.id ? updatedOrder : order))
+        };
+      });
       queryClient.setQueryData<Order>(['order', updatedOrder.id], updatedOrder);
       setReceiptTarget(null);
       Toast.show({ content: t('orders.receiptSuccess') });
@@ -1741,7 +1780,8 @@ function OrdersPage({
       Toast.show({ content: t('orders.receiptError') });
     }
   });
-  const groupedRecords = groupAuctionRecords(recordsQuery.data?.items ?? []);
+  const mergedRecords = useMemo(() => mergeAuctionRecordsWithOrders(recordsQuery.data?.items ?? [], ordersQuery.data?.items ?? []), [ordersQuery.data?.items, recordsQuery.data?.items]);
+  const groupedRecords = groupAuctionRecords(mergedRecords);
 
   useEffect(() => {
     if (!highlightedOrderId) return undefined;
@@ -1770,7 +1810,7 @@ function OrdersPage({
       </div>
       <section className="record-list-section order-list-page-section">
         <SectionTitle eyebrow={t('profile.records')} title={recordStatusLabel(activeTab)} />
-        <ResultList loading={recordsQuery.isLoading} empty={!groupedRecords[activeTab].length}>
+        <ResultList loading={recordsQuery.isLoading || ordersQuery.isLoading} empty={!groupedRecords[activeTab].length}>
           {groupedRecords[activeTab].map((record) => (
             <AuctionRecordCard
               key={record.id}
@@ -3071,6 +3111,7 @@ type RankingBidHint = {
   bidTsMs: number;
 };
 
+type RankingAnimationSource = 'bid.accepted' | 'snapshot';
 type RankingAnimationKind = 'top-slot-to-first' | 'divider-to-first' | 'current-row-to-first' | 'price-only';
 type RankingAnimationOrigin = 'top-slot' | 'divider' | 'current-row' | 'price';
 
@@ -3247,6 +3288,7 @@ function LiveRoomPage({
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [chatMessages, setChatMessages] = useState<LiveChatMessage[]>(() => initialLiveChatMessages(roomId));
   const [ranking, setRanking] = useState<RankingItem[]>([]);
+  const [rankingAnimationSource, setRankingAnimationSource] = useState<RankingAnimationSource>('snapshot');
   const [enrolledAuctions, setEnrolledAuctions] = useState<Set<string>>(() => new Set());
   const [lotStates, setLotStates] = useState<Record<string, AuctionState>>({});
   const [liveStats, setLiveStats] = useState<LiveRoomStats>(demoLiveRoomStats);
@@ -3257,12 +3299,17 @@ function LiveRoomPage({
   const [digitalHumanSpeaking, setDigitalHumanSpeaking] = useState(false);
   const [liveVoicePermissionPromptVisible, setLiveVoicePermissionPromptVisible] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const [serverTimeOffsetMs, setServerTimeOffsetMs] = useState(0);
   const { alerts: auctionAlerts, pushAlert: pushAuctionAlert } = useLiveAuctionAlerts();
   const realtimeRef = useRef<RealtimeClient>();
   const liveVoicePlayerRef = useRef<LiveVoiceBroadcastAudioPlayer>();
   const pendingLiveVoicePayloadRef = useRef<LiveVoiceBroadcastAudioPayload>();
+  const serverTimeOffsetRef = useRef(0);
   const lastSeqRef = useRef(0);
+  const realtimeSeqCursorRef = useRef<RealtimeSeqCursor>({});
+  const lastSeqScopeRef = useRef('');
   const lastRankingBidRef = useRef<RankingBidHint>();
+  const rankingRef = useRef<RankingItem[]>([]);
   const sheetTimersRef = useRef<number[]>([]);
   const liveSheetsRef = useRef<LiveSheetInstance[]>([]);
   const liveSheetKeysRef = useRef<Set<string>>(new Set());
@@ -3275,6 +3322,14 @@ function LiveRoomPage({
   const commentsViewportRef = useRef<HTMLDivElement>(null);
   const commentsEndRef = useRef<HTMLDivElement>(null);
   const commentsShouldStickRef = useRef(true);
+  rankingRef.current = ranking;
+  const applyRankingUpdate = useCallback((updater: (current: RankingItem[]) => RankingItem[]) => {
+    const current = rankingRef.current;
+    const next = updater(current);
+    if (next === current) return;
+    rankingRef.current = next;
+    setRanking(next);
+  }, []);
   const followedRooms = useLiveActivityStore((state) => state.followedRooms);
   const roomLocalLikeCount = useLiveActivityStore((state) => state.roomLikeCounts[roomId] ?? 0);
   const followRoom = useLiveActivityStore((state) => state.followRoom);
@@ -3348,6 +3403,27 @@ function LiveRoomPage({
     return () => window.clearInterval(timer);
   }, []);
 
+  const syncServerTimeOffset = useCallback((payload: unknown) => {
+    const offsetMs = serverTimeOffsetFromPayload(payload);
+    if (offsetMs === undefined) return;
+    setServerTimeOffsetMs((current) => {
+      if (Math.abs(current - offsetMs) < 5) return current;
+      serverTimeOffsetRef.current = offsetMs;
+      return offsetMs;
+    });
+  }, []);
+
+  useEffect(() => {
+    const serverTsMs = stateQuery.data?.serverTsMs;
+    if (!serverTsMs || !Number.isFinite(serverTsMs)) return;
+    setServerTimeOffsetMs((current) => {
+      const next = getServerOffsetMs(serverTsMs, Date.now());
+      if (Math.abs(current - next) < 5) return current;
+      serverTimeOffsetRef.current = next;
+      return next;
+    });
+  }, [stateQuery.data?.serverTsMs]);
+
   useEffect(() => {
     setChatMessages(initialLiveChatMessages(roomId));
     setCommentDraft(useLiveActivityStore.getState().commentDrafts[roomId] ?? '');
@@ -3371,14 +3447,19 @@ function LiveRoomPage({
   const currentState = activeLot ? lotStates[activeLot.auctionId] ?? stateQuery.data ?? activeLotInitialState : undefined;
   const hasBlockingLiveSheet = liveSheets.some((sheet) => sheet.phase !== 'closing');
   const liveSheetOpen = hasBlockingLiveSheet;
-  const activeCountdownRemainMs = currentState ? msUntil(currentState.endTsMs, now) : 0;
+  const activeCountdownRemainMs = currentState ? countdownRemainMs(currentState.endTsMs, now, serverTimeOffsetMs) : 0;
+  const displayCurrentState = currentState ? stateWithHammerPendingAfterCountdown(currentState, activeCountdownRemainMs) : undefined;
+  const displayLotStates = useMemo(() => {
+    if (!activeLot || !displayCurrentState) return lotStates;
+    return { ...lotStates, [activeLot.auctionId]: displayCurrentState };
+  }, [activeLot?.auctionId, displayCurrentState, lotStates]);
   const activeCountdownPressurePhase = getCountdownPressurePhase(
     activeCountdownRemainMs,
-    currentState?.status,
+    displayCurrentState?.status,
     Boolean(countdownExtensionPulse && countdownExtensionPulse.auctionId === activeLot?.auctionId)
   );
   const countdownAlert = useMemo<LiveAuctionAlert | undefined>(() => {
-    if (!activeLot || !currentState || activeCountdownPressurePhase === 'idle') return undefined;
+    if (!activeLot || !displayCurrentState || activeCountdownPressurePhase === 'idle') return undefined;
     const seconds = Math.max(0, Math.ceil(activeCountdownRemainMs / 1000));
     const isExtended = activeCountdownPressurePhase === 'extended';
     const subtitle = isExtended ? t('countdownPressure.extendedSubtitle') : t('countdownPressure.subtitle');
@@ -3395,11 +3476,11 @@ function LiveRoomPage({
       priority: liveAuctionAlertPriority.countdown,
       durationMs: liveAuctionAlertDurationMs.countdown
     };
-  }, [activeCountdownPressurePhase, activeCountdownRemainMs, activeLot, currentState]);
+  }, [activeCountdownPressurePhase, activeCountdownRemainMs, activeLot, displayCurrentState]);
   const visibleAuctionAlerts = auctionAlerts.length ? auctionAlerts : countdownAlert ? [countdownAlert] : [];
   const stateForLot = useCallback(
-    (lot: LiveRoomLot) => lotStates[lot.auctionId] ?? (lot.auctionId === activeLot?.auctionId ? currentState : stateFromLot(lot)),
-    [activeLot?.auctionId, currentState, lotStates]
+    (lot: LiveRoomLot) => displayLotStates[lot.auctionId] ?? stateFromLot(lot),
+    [displayLotStates]
   );
 
   useEffect(() => {
@@ -3578,21 +3659,21 @@ function LiveRoomPage({
       setFloatingAuctionCard((current) => (current?.phase === 'leaving' ? current : undefined));
       return;
     }
-    if (!activeLot || !currentState || hiddenAuctionCardId === activeLot.auctionId) {
+    if (!activeLot || !displayCurrentState || hiddenAuctionCardId === activeLot.auctionId) {
       setFloatingAuctionCard((current) => (current?.mode === 'running' && current.phase !== 'leaving' ? { ...current, phase: 'leaving' } : current));
       return;
     }
     requestFloatingAuctionCard({
       auctionId: activeLot.auctionId,
       lot: activeLot,
-      state: currentState,
+      state: displayCurrentState,
       ranking,
       enrolled: enrolledAuctions.has(activeLot.auctionId),
       mode: 'running',
       phase: activeLot.auctionId === runtimeStartedAuctionId ? 'entering' : 'visible',
       startedByRuntimeEvent: activeLot.auctionId === runtimeStartedAuctionId
     });
-  }, [activeLot, currentState, enrolledAuctions, hiddenAuctionCardId, liveSheetOpen, ranking, requestFloatingAuctionCard, runtimeStartedAuctionId]);
+  }, [activeLot, displayCurrentState, enrolledAuctions, hiddenAuctionCardId, liveSheetOpen, ranking, requestFloatingAuctionCard, runtimeStartedAuctionId]);
 
   useEffect(() => {
     if (!initialLotId) return;
@@ -3602,7 +3683,7 @@ function LiveRoomPage({
 
   const latestContext = useRef({
     activeLot,
-    currentState,
+    currentState: displayCurrentState,
     room,
     lots,
     liveStats,
@@ -3612,7 +3693,7 @@ function LiveRoomPage({
   });
   latestContext.current = {
     activeLot,
-    currentState,
+    currentState: displayCurrentState,
     room,
     lots,
     liveStats,
@@ -3880,6 +3961,12 @@ function LiveRoomPage({
 
   useEffect(() => {
     const context = latestContext.current;
+    const seqScope = `${roomId}:${context.activeLot?.auctionId ?? ''}`;
+    if (lastSeqScopeRef.current !== seqScope) {
+      lastSeqScopeRef.current = seqScope;
+      lastSeqRef.current = 0;
+      realtimeSeqCursorRef.current = {};
+    }
     const hasActiveAuction = Boolean(context.activeLot && context.currentState);
     const minIncrement = context.activeLot && context.currentState ? minIncrementForLot(context.activeLot, context.currentState) : 100;
     const isTestMode = import.meta.env.MODE === 'test';
@@ -3891,6 +3978,7 @@ function LiveRoomPage({
         ? new NativeWebSocketClient({
             baseUrl: wsBaseUrl ?? '',
             roomId,
+            auctionId: context.activeLot?.auctionId,
             accessToken,
             lastSeq: lastSeqRef.current,
             storage: window.localStorage
@@ -3904,15 +3992,17 @@ function LiveRoomPage({
               minIncrement,
               endTsMs: context.currentState.endTsMs,
               userId,
-              participantCount: context.currentState.participantCount ?? context.activeLot.participantCount,
+              participantCount: participantCountForLot(context.activeLot, context.currentState),
               onlineCount: context.liveStats.onlineCount,
               capPrice: capPriceForLot(context.activeLot)
             })
           : undefined;
     realtimeRef.current = client;
     const handleMessage = (message: RealtimeMessage) => {
-      if (!isFreshRealtimeMessage(message, lastSeqRef.current)) return;
-      lastSeqRef.current = nextRealtimeSeq(message, lastSeqRef.current);
+      if (!isFreshRealtimeMessageByDomain(message, realtimeSeqCursorRef.current)) return;
+      realtimeSeqCursorRef.current = nextRealtimeSeqByDomain(message, realtimeSeqCursorRef.current);
+      lastSeqRef.current = realtimeSeqCursorRef.current.bid ?? lastSeqRef.current;
+      syncServerTimeOffset(message.payload);
       if (message.type === 'bid.accepted') {
         const payload = message.payload as Record<string, unknown>;
         const auctionId = String(payload.auctionId ?? latestContext.current.activeLot?.auctionId ?? '');
@@ -3942,7 +4032,7 @@ function LiveRoomPage({
         const auctionId = String(payload.auctionId ?? context.activeLot?.auctionId ?? '');
         const extendedLot = context.lots.find((lot) => lot.auctionId === auctionId);
         if (auctionId && extendedLot && context.activeLot?.auctionId === auctionId) {
-          const newEndTsMs = Number(payload.newEndTsMs ?? payload.endTsMs ?? context.currentState?.endTsMs ?? Date.now());
+          const newEndTsMs = parseRealtimeTimestampMs(payload.endTime, context.currentState?.endTsMs ?? Date.now());
           if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
           setCountdownExtensionPulse({ auctionId, id: Date.now() });
           countdownExtensionTimerRef.current = window.setTimeout(() => {
@@ -3951,7 +4041,7 @@ function LiveRoomPage({
           pushAuctionAtmosphereAlert('extended', {
             auctionId,
             lot: extendedLot,
-            subtitle: t('auctionAlert.extended.subtitleWithTime', { time: formatCountdown(msUntil(newEndTsMs, Date.now())) })
+            subtitle: t('auctionAlert.extended.subtitleWithTime', { time: formatCountdown(countdownRemainMs(newEndTsMs, Date.now(), serverTimeOffsetRef.current)) })
           });
         }
       }
@@ -3970,7 +4060,7 @@ function LiveRoomPage({
             currentPrice: realtimeNumber(payload.currentPrice, baseStartedState.currentPrice ?? 0),
             leaderBidderId: payload.leaderBidderId === undefined ? baseStartedState.leaderBidderId : String(payload.leaderBidderId),
             endTsMs: parseRealtimeTimestampMs(payload.endTime, baseStartedState.endTsMs ?? Date.now()),
-            serverTsMs: Date.now(),
+            serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now()),
             bidCount: payload.bidCount === undefined ? baseStartedState.bidCount : realtimeNumber(payload.bidCount, baseStartedState.bidCount ?? 0),
             participantCount: payload.participantCount === undefined ? baseStartedState.participantCount : realtimeNumber(payload.participantCount, baseStartedState.participantCount ?? 0)
           };
@@ -3987,8 +4077,8 @@ function LiveRoomPage({
               next[lot.auctionId] = {
                 ...previous,
                 status: 'CLOSED_FAILED',
-                endTsMs: Date.now(),
-                serverTsMs: Date.now()
+                endTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now()),
+                serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now())
               };
             });
             next[auctionId] = startedState;
@@ -4052,7 +4142,7 @@ function LiveRoomPage({
               currentPrice: realtimeNumber(payload.price, context.currentState.currentPrice ?? 0),
               leaderBidderId: payload.winnerId === undefined ? context.currentState.leaderBidderId : String(payload.winnerId),
               endTsMs: closedAtMs,
-              serverTsMs: Date.now()
+              serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now())
             },
             ranking: context.ranking,
             enrolled: context.enrolledAuctions.has(closingAuctionId),
@@ -4073,11 +4163,39 @@ function LiveRoomPage({
       if (isLiveSessionLotListChangedMessage(message) && realtimeLiveSessionMessageMatchesRoom(message, latestContext.current.room)) {
         const payload = message.payload && typeof message.payload === 'object' ? (message.payload as Record<string, unknown>) : undefined;
         const auctionId = payload?.auctionId === undefined ? '' : String(payload.auctionId);
-        if (auctionId && message.type === 'live_session.lot_unmounted') {
+        const action = String(payload?.action ?? '').trim();
+        const isCancelledLot = auctionId && message.type === 'live_session.lot_changed' && action === 'cancelled';
+        if (auctionId && (message.type === 'live_session.lot_unmounted' || isCancelledLot)) {
+          if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
+          setCountdownExtensionPulse(undefined);
+          setRuntimeStartedAuctionId((current) => (current === auctionId ? undefined : current));
+          setHiddenAuctionCardId((current) => (current === auctionId ? undefined : current));
+          lastRankingBidRef.current = undefined;
+          rankingRef.current = [];
+          setRankingAnimationSource('snapshot');
+          setRanking([]);
+          if (pendingFloatingAuctionCardRef.current?.auctionId === auctionId) {
+            pendingFloatingAuctionCardRef.current = undefined;
+          }
+          setFloatingAuctionCard((current) => (current?.auctionId === auctionId ? undefined : current));
           setLotStates((prev) => {
-            if (!(auctionId in prev)) return prev;
             const next = { ...prev };
-            delete next[auctionId];
+            if (isCancelledLot) {
+              const lot = latestContext.current.lots.find((item) => item.auctionId === auctionId);
+              const previous = prev[auctionId] ?? (lot ? stateFromLot(lot) : fallbackAuctionState(auctionId));
+              next[auctionId] = {
+                ...previous,
+                auctionId,
+                status: 'READY',
+                currentPrice: lot?.startPrice ?? previous.currentPrice ?? 0,
+                leaderBidderId: undefined,
+                endTsMs: lot?.endTsMs ?? previous.endTsMs ?? Date.now(),
+                serverTsMs: Date.now()
+              };
+            } else {
+              if (!(auctionId in prev)) return prev;
+              delete next[auctionId];
+            }
             return next;
           });
         }
@@ -4116,7 +4234,9 @@ function LiveRoomPage({
         setLiveStats,
         setLotStates,
         setNotice: pushNotice,
-        setRanking,
+        applyRankingUpdate,
+        getCurrentRanking: () => rankingRef.current,
+        setRankingAnimationSource,
         onChatAck: acknowledgeChatMessage,
         onChatMessage: appendChatMessage,
         onChatError: failChatMessage,
@@ -4144,12 +4264,53 @@ function LiveRoomPage({
       controlClient?.disconnect();
       client?.disconnect();
     };
-  }, [accessToken, acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, playLiveVoiceBroadcast, pushAuctionAtmosphereAlert, pushNotice, queryClient, requestFloatingAuctionCard, roomId, userId]);
+  }, [accessToken, acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, applyRankingUpdate, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, playLiveVoiceBroadcast, pushAuctionAtmosphereAlert, pushNotice, queryClient, requestFloatingAuctionCard, roomId, syncServerTimeOffset, userId]);
 
   const enrollMutation = useMutation({
     mutationFn: (auctionId: string) => apiClient.enrollAuction(auctionId),
     onSuccess: (result: EnrollResult) => {
-      setEnrolledAuctions((prev) => new Set(prev).add(result.auctionId));
+      const auctionId = result.auctionId;
+      const wasEnrolled = latestContext.current.enrolledAuctions.has(auctionId);
+      setEnrolledAuctions((prev) => {
+        if (prev.has(auctionId)) return prev;
+        const next = new Set(prev);
+        next.add(auctionId);
+        return next;
+      });
+      if (!wasEnrolled) {
+        setLotStates((prev) => {
+          const context = latestContext.current;
+          const lot = context.lots.find((item) => item.auctionId === auctionId);
+          const previous =
+            prev[auctionId] ??
+            (context.activeLot?.auctionId === auctionId ? context.currentState : undefined) ??
+            (lot ? stateFromLot(lot) : fallbackAuctionState(auctionId));
+          const participantCount = Math.max(finiteParticipantCount(previous.participantCount), finiteParticipantCount(lot?.participantCount)) + 1;
+          return {
+            ...prev,
+            [auctionId]: {
+              ...previous,
+              auctionId,
+              participantCount
+            }
+          };
+        });
+        queryClient.setQueryData<PageResult<LiveRoomLot>>(['live-room-lots', roomId], (current) => {
+          if (!current) return current;
+          return {
+            ...current,
+            items: current.items.map((lot) =>
+              lot.auctionId === auctionId
+                ? { ...lot, participantCount: finiteParticipantCount(lot.participantCount) + 1 }
+                : lot
+            )
+          };
+        });
+      }
+      void queryClient.invalidateQueries({ queryKey: ['auction-state', auctionId] });
+      void queryClient.invalidateQueries({ queryKey: ['live-room-lots', roomId] });
+      void queryClient.invalidateQueries({ queryKey: ['live-room-stats', roomId] });
+      void myAuctionRecordsQuery.refetch();
       pushNotice(t('auction.enrolled'));
     }
   });
@@ -4285,7 +4446,16 @@ function LiveRoomPage({
         </div>
       ) : null}
 
-      {activeLot && currentState ? <LiveRankingRail items={ranking} userId={userId} collapsed={rankingCollapsed} lastBid={lastRankingBidRef.current} onToggle={() => setRankingCollapsed((value) => !value)} /> : null}
+      {activeLot && displayCurrentState ? (
+        <LiveRankingRail
+          items={ranking}
+          userId={userId}
+          collapsed={rankingCollapsed}
+          lastBid={lastRankingBidRef.current}
+          animateChanges={rankingAnimationSource === 'bid.accepted'}
+          onToggle={() => setRankingCollapsed((value) => !value)}
+        />
+      ) : null}
 
       <LiveCommentPanel
         open={commentsOpen}
@@ -4319,7 +4489,7 @@ function LiveRoomPage({
           onOpenLot={() => openLot(floatingAuctionCard.lot)}
           onQuickBid={() => openQuickBid(floatingAuctionCard.lot)}
           onDismiss={() => dismissFloatingAuctionCard(floatingAuctionCard.auctionId)}
-          remainMs={floatingAuctionCard.mode === 'ended' ? 0 : msUntil(floatingAuctionCard.state.endTsMs, now)}
+          remainMs={floatingAuctionCard.mode === 'ended' ? 0 : countdownRemainMs(floatingAuctionCard.state.endTsMs, now, serverTimeOffsetMs)}
           ended={floatingAuctionCard.mode === 'ended'}
         />
       ) : null}
@@ -4335,7 +4505,7 @@ function LiveRoomPage({
               zIndex={zIndex}
               accessibilityHidden={accessibilityHidden}
               lots={lots}
-              states={lotStates}
+              states={displayLotStates}
               activeAuctionId={activeLot?.auctionId}
               enrolledAuctionIds={enrolledAuctions}
               ordersByAuctionId={orderByAuctionId}
@@ -4391,6 +4561,7 @@ function LiveRoomPage({
             feedback={quickBidFeedback}
             lastBidAtMs={lastBidAtByAuction[sheetLot.auctionId]}
             nowMs={now}
+            serverTimeOffsetMs={serverTimeOffsetMs}
             userId={userId}
             onClose={() => closeLiveSheet(sheet.id)}
             onSubmit={(price) => submitBid(sheetLot, sheetState, price)}
@@ -4688,12 +4859,14 @@ function LiveRankingRail({
   userId,
   collapsed,
   lastBid,
+  animateChanges,
   onToggle
 }: {
   items: RankingItem[];
   userId: string;
   collapsed: boolean;
   lastBid?: RankingBidHint;
+  animateChanges: boolean;
   onToggle: () => void;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -4734,6 +4907,14 @@ function LiveRankingRail({
       pinnedCurrentUserTimerRef.current = undefined;
     }
 
+    if (!animateChanges) {
+      setAnimation(undefined);
+      setAnimationLayout(undefined);
+      setPinnedCurrentUser(undefined);
+      previousItemsRef.current = items;
+      return;
+    }
+
     const nextAnimation = buildRankingAnimation(previousItems, items, userId, lastBid);
     setAnimation(nextAnimation);
     setAnimationLayout(nextAnimation ? fallbackRankingAnimationLayout(nextAnimation) : undefined);
@@ -4755,7 +4936,7 @@ function LiveRankingRail({
       }, nextAnimation.durationMs);
     }
     previousItemsRef.current = items;
-  }, [items, lastBid, userId]);
+  }, [animateChanges, items, lastBid, userId]);
 
   useEffect(() => {
     return () => {
@@ -4804,7 +4985,7 @@ function LiveRankingRail({
             <div className="live-ranking-top-list">
               {slots.map((slot) => (
                 <LiveRankingRow
-                  key={slot.rank}
+                  key={rankingSlotKey(slot)}
                   rank={slot.rank}
                   item={slot.item}
                   userId={userId}
@@ -4938,6 +5119,10 @@ function LiveRankingExitRow({ animation, layout }: { animation: RankingAnimation
 function buildRankingSlots(items: RankingItem[]): Array<{ rank: number; item?: RankingItem }> {
   const sortedItems = sortRankingItems(items).slice(0, 8);
   return Array.from({ length: 8 }, (_, index) => ({ rank: index + 1, item: sortedItems[index] }));
+}
+
+function rankingSlotKey(slot: { rank: number; item?: RankingItem }): string {
+  return slot.item ? `${slot.rank}-${slot.item.bidderId}-${slot.item.price}` : `${slot.rank}-empty`;
 }
 
 function buildRankingAnimation(previousItems: RankingItem[], nextItems: RankingItem[], userId: string, lastBid?: RankingBidHint): RankingAnimation | undefined {
@@ -5094,6 +5279,22 @@ function rankingItemsEqual(previousItems: RankingItem[], nextItems: RankingItem[
   });
 }
 
+function rankingSnapshotItemsEqual(previousItems: RankingItem[], nextItems: RankingItem[]): boolean {
+  const previousSorted = sortRankingItems(previousItems);
+  const nextSorted = sortRankingItems(nextItems);
+  if (previousSorted.length !== nextSorted.length) return false;
+  return previousSorted.every((previousItem, index) => {
+    const nextItem = nextSorted[index];
+    return (
+      nextItem &&
+      previousItem.rank === nextItem.rank &&
+      previousItem.bidderId === nextItem.bidderId &&
+      previousItem.price === nextItem.price &&
+      previousItem.nicknameMask === nextItem.nicknameMask
+    );
+  });
+}
+
 function rankingAvatarText(item?: RankingItem, current = false): string {
   const name = item?.nicknameMask ?? (current ? t('live.commentMe') : '');
   return name.trim().slice(0, 1) || '-';
@@ -5182,7 +5383,9 @@ interface RealtimeHandlerOptions {
   setLiveStats: (updater: (prev: LiveRoomStats) => LiveRoomStats) => void;
   setLotStates: (updater: (prev: Record<string, AuctionState>) => Record<string, AuctionState>) => void;
   setNotice: (notice: string) => void;
-  setRanking: (items: RankingItem[]) => void;
+  applyRankingUpdate: (updater: (current: RankingItem[]) => RankingItem[]) => void;
+  getCurrentRanking: () => RankingItem[];
+  setRankingAnimationSource: Dispatch<SetStateAction<RankingAnimationSource>>;
   onChatAck: (payload: Record<string, unknown>) => void;
   onChatMessage: (message: LiveChatMessage) => void;
   onChatError: (payload: Record<string, unknown>) => void;
@@ -5195,11 +5398,11 @@ interface RealtimeHandlerOptions {
 function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandlerOptions) {
   if (message.type === 'room.online') {
     const payload = message.payload as Record<string, unknown>;
+    const nextOnlineCount = realtimeOptionalNumber(payload.online ?? payload.count ?? payload.participantCount);
     options.setLiveStats((prev) => {
-      const onlineCount = Number(payload.online ?? payload.count ?? prev.onlineCount);
       return {
         ...prev,
-        onlineCount: Number.isFinite(onlineCount) ? onlineCount : prev.onlineCount
+        onlineCount: nextOnlineCount === undefined ? prev.onlineCount : nextOnlineCount
       };
     });
   }
@@ -5221,6 +5424,26 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
             participantCount: payload.participantCount === undefined ? previous.participantCount : realtimeNumber(payload.participantCount, previous.participantCount ?? 0),
             endTsMs: parseRealtimeTimestampMs(payload.endTime, previous.endTsMs ?? Date.now()),
             serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now())
+          }
+        };
+      });
+    }
+  }
+  if (message.type === 'auction.participant_updated') {
+    const payload = realtimePayloadRecord(message.payload);
+    const auctionId = String(payload.auctionId ?? options.activeAuctionId ?? '').trim();
+    const participantCount = realtimeOptionalNumber(payload.participantCount);
+    if (auctionId && participantCount !== undefined) {
+      options.setLotStates((prev) => {
+        const activeState = options.activeAuctionState?.auctionId === auctionId ? options.activeAuctionState : undefined;
+        const previous = prev[auctionId] ?? activeState;
+        if (!previous) return prev;
+        return {
+          ...prev,
+          [auctionId]: {
+            ...previous,
+            auctionId,
+            participantCount
           }
         };
       });
@@ -5257,12 +5480,20 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
   if (message.type === 'bid.accepted') {
     const payload = message.payload as Record<string, unknown>;
     updateLotStateFromBidPayload(payload, options, true);
+    options.setRankingAnimationSource('bid.accepted');
+    options.applyRankingUpdate((prev) => mergeRealtimeBidIntoRankingItems(prev, payload, options.userId, options.activeAuctionId));
     options.onBidAccepted?.(realtimeMessageRequestId(message, payload), payload);
     options.setNotice(String(payload.bidderId ?? payload.leaderBidderId) === options.userId ? t('auction.bidAccepted') : t('live.chat.bid'));
   }
   if (message.type === 'ranking.updated') {
     const payload = realtimePayloadRecord(message.payload);
-    options.setRanking(normalizeRealtimeRankingItems(payload.ranking));
+    const auctionId = String(payload.auctionId ?? '').trim();
+    if (options.activeAuctionId && auctionId && auctionId !== options.activeAuctionId) return;
+    const nextRanking = normalizeRealtimeRankingItems(payload.ranking);
+    if (!rankingSnapshotItemsEqual(options.getCurrentRanking(), nextRanking)) {
+      options.setRankingAnimationSource('snapshot');
+      options.applyRankingUpdate(() => nextRanking);
+    }
   }
   if (message.type === 'timer.extended') {
     const payload = message.payload as Record<string, unknown>;
@@ -5274,7 +5505,7 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
         auctionId,
         status: 'EXTENDED',
         endTsMs: parseRealtimeTimestampMs(payload.endTime, prev[auctionId]?.endTsMs ?? Date.now()),
-        serverTsMs: Date.now()
+        serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now())
       }
     }));
     options.setNotice(t('auction.extended'));
@@ -5293,7 +5524,7 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
           currentPrice: realtimeNumber(payload.currentPrice, previous.currentPrice ?? 0),
           leaderBidderId: payload.leaderBidderId === undefined ? previous.leaderBidderId : String(payload.leaderBidderId),
           endTsMs: parseRealtimeTimestampMs(payload.endTime, previous.endTsMs ?? Date.now()),
-          serverTsMs: Date.now(),
+          serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now()),
           bidCount: payload.bidCount === undefined ? previous.bidCount : realtimeNumber(payload.bidCount, previous.bidCount ?? 0),
           participantCount: payload.participantCount === undefined ? previous.participantCount : realtimeNumber(payload.participantCount, previous.participantCount ?? 0)
         }
@@ -5312,7 +5543,7 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
         currentPrice: realtimeNumber(payload.price, prev[auctionId]?.currentPrice ?? 0),
         leaderBidderId: payload.winnerId === undefined ? prev[auctionId]?.leaderBidderId : String(payload.winnerId),
         endTsMs: parseRealtimeTimestampMs(payload.closedAt, Date.now()),
-        serverTsMs: Date.now()
+        serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now())
       }
     }));
     options.setNotice(t('auction.closed'));
@@ -5485,7 +5716,7 @@ function LotListSheet({
         <SheetHeader title={t('live.goodsList')} onClose={requestClose} />
         <div className="lot-list">
           {sortedLots.map(({ lot, state, originalIndex }) => {
-            const isRunning = isRunningAuctionStatus(state.status);
+            const isActive = isActiveAuctionDisplayStatus(state.status);
             const action = deriveLotListAction({
               state,
               enrolled: enrolledAuctionIds.has(lot.auctionId),
@@ -5495,7 +5726,7 @@ function LotListSheet({
             const actionClassName = lotListActionClassName(action);
             return (
               <article
-                className={lot.auctionId === activeAuctionId && isRunning ? 'lot-row is-active' : 'lot-row'}
+                className={lot.auctionId === activeAuctionId && isActive ? 'lot-row is-active' : 'lot-row'}
                 role="button"
                 tabIndex={0}
                 aria-label={lot.title}
@@ -5567,13 +5798,17 @@ function sortLotListForSheet(lots: LiveRoomLot[], states: Record<string, Auction
     state: states[lot.auctionId] ?? stateFromLot(lot),
     originalIndex
   }));
-  const activeLot = indexedLots.find((item) => item.lot.auctionId === activeAuctionId && isRunningAuctionStatus(item.state.status));
+  const activeLot = indexedLots.find((item) => item.lot.auctionId === activeAuctionId && isActiveAuctionDisplayStatus(item.state.status));
   if (!activeLot) return indexedLots;
   return [activeLot, ...indexedLots.filter((item) => item.lot.id !== activeLot.lot.id)];
 }
 
 function isRunningAuctionStatus(status: AuctionState['status'] | LiveRoomLot['status']): boolean {
   return status === 'RUNNING' || status === 'EXTENDED';
+}
+
+function isActiveAuctionDisplayStatus(status: AuctionState['status'] | LiveRoomLot['status']): boolean {
+  return isRunningAuctionStatus(status) || status === 'HAMMER_PENDING';
 }
 
 type LotListAction = {
@@ -5761,7 +5996,7 @@ function LotDetailSheet({
             <p className={description ? 'detail-description' : 'detail-description is-empty'}>{description || t('product.noDescription')}</p>
             {scheduledStartText(lot, state) ? <div className="lot-schedule-line detail-schedule-line">{scheduledStartText(lot, state)}</div> : null}
             <div className="price-grid compact detail-rule-grid">
-              <Metric label={t('auction.participants')} value={String(state.participantCount ?? lot.participantCount ?? 0)} icon={<Users size={16} />} />
+              <Metric label={t('auction.participants')} value={String(participantCountForLot(lot, state))} icon={<Users size={16} />} />
               <Metric label={t('auction.bidCount')} value={String(state.bidCount ?? lot.bidCount ?? 0)} icon={<Gavel size={16} />} />
               <Metric label={t('auction.increment')} value={formatMoney(minIncrementForLot(lot, state))} icon={<Plus size={16} />} />
               <Metric label={t('auction.deposit')} value={formatMoney(lot.depositAmount ?? 0)} icon={<WalletCards size={16} />} />
@@ -5817,6 +6052,7 @@ function BidSheet({
   feedback,
   lastBidAtMs,
   nowMs,
+  serverTimeOffsetMs,
   userId,
   onClose,
   onSubmit
@@ -5831,6 +6067,7 @@ function BidSheet({
   feedback: QuickBidFeedback;
   lastBidAtMs?: number;
   nowMs: number;
+  serverTimeOffsetMs: number;
   userId: string;
   onClose: () => void;
   onSubmit: (price: number) => void;
@@ -5840,7 +6077,7 @@ function BidSheet({
   const [stepCount, setStepCount] = useState(1);
   const [selectedPrice, setSelectedPrice] = useState(() => getQuickBidPrice(rule, 1));
   const [closedAtMs, setClosedAtMs] = useState<number | undefined>(() => (isClosed ? nowMs : undefined));
-  const remainMs = msUntil(state.endTsMs, nowMs);
+  const remainMs = countdownRemainMs(state.endTsMs, nowMs, serverTimeOffsetMs);
   const minBidIntervalMs = getMinBidIntervalMs(rule);
   const maxBidSteps = getQuickBidMaxSteps(rule);
   const intervalRemainingMs = getQuickBidIntervalRemainingMs(lastBidAtMs, nowMs, minBidIntervalMs);
@@ -6079,7 +6316,8 @@ function ResultPage({ apiClient, auctionId, onBack, onPay }: { apiClient: ApiCli
   const orders = useQuery({
     queryKey: ['result-order', auctionId],
     queryFn: () => apiClient.listMyOrders({ auctionId }),
-    placeholderData: { items: [], total: 0, page: 1, page_size: 20 }
+    placeholderData: { items: [], total: 0, page: 1, page_size: 20 },
+    refetchOnMount: 'always'
   });
   const order = orders.data?.items[0];
   return (
@@ -6092,7 +6330,7 @@ function ResultPage({ apiClient, auctionId, onBack, onPay }: { apiClient: ApiCli
       <h2>{order ? t('result.won') : t('result.lost')}</h2>
       <p>{auctionId}</p>
       {order ? <ResultWinningCelebration auctionId={auctionId} price={order.amount} /> : null}
-      {order ? (
+      {order && isPendingPayOrder(order) ? (
         <Button block color="primary" onClick={() => onPay(order.id)}>
           {t('auction.pay')}
         </Button>
@@ -6129,14 +6367,15 @@ function ResultWinningCelebration({ auctionId, price }: { auctionId: string; pri
   );
 }
 
-type PaymentVisualStatus = 'idle' | 'paying' | 'paid' | 'error';
+type PaymentVisualStatus = 'idle' | 'paying' | 'paid' | 'error' | 'closed';
 
 function PaymentStatusAnimation({ status }: { status: PaymentVisualStatus }) {
   const labelKey: Record<PaymentVisualStatus, MessageKey> = {
     idle: 'pay.idleStatus',
     paying: 'pay.processingStatus',
     paid: 'pay.successStatus',
-    error: 'pay.errorStatus'
+    error: 'pay.errorStatus',
+    closed: 'pay.closedStatus'
   };
   const label = t(labelKey[status]);
   return (
@@ -6151,7 +6390,7 @@ function PaymentStatusAnimation({ status }: { status: PaymentVisualStatus }) {
         <circle className="payment-halo" cx="80" cy="80" r="58" />
         {status === 'paid' ? (
           <path className="payment-check" d="M48 82l21 22 45-50" />
-        ) : status === 'error' ? (
+        ) : status === 'error' || status === 'closed' ? (
           <g className="payment-error-mark">
             <path d="M58 58l44 44" />
             <path d="M102 58L58 102" />
@@ -6184,20 +6423,66 @@ function PayPage({
   onBack: (auctionId: string) => void;
   onPaid?: (order: Order) => void;
 }) {
+  const queryClient = useQueryClient();
   const [paid, setPaid] = useState(false);
+  const returnTimerRef = useRef<number>();
   const order = useQuery({
     queryKey: ['order', orderId],
-    queryFn: () => apiClient.getOrder(orderId)
+    queryFn: () => apiClient.getOrder(orderId),
+    refetchOnMount: 'always'
   });
+
+  useEffect(() => {
+    return () => {
+      if (returnTimerRef.current) window.clearTimeout(returnTimerRef.current);
+    };
+  }, []);
+
+  const syncPaidOrder = useCallback((paidOrder: Order) => {
+    queryClient.setQueryData<Order>(['order', paidOrder.id], paidOrder);
+    queryClient.setQueryData<PageResult<Order>>(['my-orders'], (current) => {
+      if (!current) return current;
+      const hasOrder = current.items.some((item) => item.id === paidOrder.id);
+      return {
+        ...current,
+        items: hasOrder ? current.items.map((item) => (item.id === paidOrder.id ? paidOrder : item)) : [paidOrder, ...current.items]
+      };
+    });
+    queryClient.setQueryData<PageResult<UserAuctionRecord>>(['my-auction-records'], (current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        items: current.items.map((record) => (record.order?.id === paidOrder.id || record.lot.auctionId === paidOrder.auctionId ? { ...record, order: paidOrder } : record))
+      };
+    });
+    void queryClient.invalidateQueries({ queryKey: ['my-orders'] });
+    void queryClient.invalidateQueries({ queryKey: ['my-auction-records'] });
+    void queryClient.invalidateQueries({ queryKey: ['result-order', paidOrder.auctionId] });
+  }, [queryClient]);
+
   const pay = useMutation({
     mutationFn: () => apiClient.payOrder(orderId),
     onSuccess: (paidOrder) => {
       setPaid(true);
-      onPaid?.(paidOrder);
+      syncPaidOrder(paidOrder);
+      if (returnTimerRef.current) window.clearTimeout(returnTimerRef.current);
+      returnTimerRef.current = window.setTimeout(() => {
+        onPaid?.(paidOrder);
+      }, 2000);
+    },
+    onError: () => {
+      void order.refetch();
+      void queryClient.invalidateQueries({ queryKey: ['my-orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['my-auction-records'] });
     }
   });
   const targetAuctionId = auctionId ?? order.data?.auctionId ?? 'auc_2001';
-  const status: PaymentVisualStatus = paid ? 'paid' : pay.isPending ? 'paying' : pay.isError ? 'error' : 'idle';
+  const paymentComplete = paid || isPaidOrder(order.data);
+  const paymentClosed = Boolean(order.data && !paymentComplete && !isPendingPayOrder(order.data));
+  const paymentUnavailable = Boolean(order.isError && !order.data);
+  const status: PaymentVisualStatus = paymentComplete ? 'paid' : pay.isPending ? 'paying' : paymentClosed ? 'closed' : pay.isError || paymentUnavailable ? 'error' : 'idle';
+  const paymentMessage = paymentComplete ? t('pay.paid') : paymentClosed ? t('pay.closed') : pay.isError || paymentUnavailable ? t('pay.errorStatus') : orderId;
+  const buttonLabel = paymentComplete ? t('pay.paid') : paymentClosed ? t('pay.closedStatus') : paymentUnavailable ? t('pay.errorStatus') : t('pay.submit');
   return (
     <section className="page-content result-page">
       <button className="back-button" onClick={() => onBack(targetAuctionId)} type="button">
@@ -6205,9 +6490,9 @@ function PayPage({
       </button>
       <PaymentStatusAnimation status={status} />
       <h1>{t('pay.title')}</h1>
-      <p>{paid ? t('pay.paid') : pay.isError ? t('pay.errorStatus') : orderId}</p>
-      <Button block color="primary" loading={pay.isPending} disabled={paid} onClick={() => pay.mutate()}>
-        {paid ? t('pay.paid') : t('pay.submit')}
+      <p>{paymentMessage}</p>
+      <Button block color="primary" loading={pay.isPending} disabled={order.isLoading || paymentComplete || paymentClosed || paymentUnavailable} onClick={() => pay.mutate()}>
+        {buttonLabel}
       </Button>
     </section>
   );
@@ -6270,6 +6555,14 @@ function stateFromLot(lot: LiveRoomLot): AuctionState {
   };
 }
 
+function finiteParticipantCount(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function participantCountForLot(lot: LiveRoomLot, state?: AuctionState): number {
+  return Math.max(finiteParticipantCount(lot.participantCount), finiteParticipantCount(state?.participantCount));
+}
+
 function fallbackAuctionState(auctionId: string): AuctionState {
   return {
     auctionId,
@@ -6312,7 +6605,7 @@ function updateLotStateFromBidPayload(payload: Record<string, unknown>, options:
         bidCount: nextBidCount,
         participantCount: payload.participantCount === undefined ? previous.participantCount : realtimeNumber(payload.participantCount, previous.participantCount ?? 0),
         endTsMs: parseRealtimeTimestampMs(payload.endTime, previous.endTsMs ?? Date.now()),
-        serverTsMs: Date.now()
+        serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now())
       }
     };
   });
@@ -6324,13 +6617,38 @@ function realtimePayloadWithState(payload: unknown): Record<string, unknown> {
   if (!state) return {};
   return {
     ...state,
-    auctionId: state.auctionId ?? raw.auctionId
+    auctionId: state.auctionId ?? raw.auctionId,
+    liveSessionId: state.liveSessionId ?? raw.liveSessionId,
+    serverTime: state.serverTime ?? raw.serverTime
   };
+}
+
+function serverTimeOffsetFromPayload(payload: unknown, clientNowMs = Date.now()): number | undefined {
+  const raw = realtimePayloadRecord(payload);
+  const serverTimeMs = parseRealtimeTimestampMs(raw.serverTime, Number.NaN);
+  return Number.isFinite(serverTimeMs) ? getServerOffsetMs(serverTimeMs, clientNowMs) : undefined;
+}
+
+function countdownRemainMs(endTsMs: number, clientNowMs: number, serverTimeOffsetMs: number): number {
+  return endTsMs - (clientNowMs + serverTimeOffsetMs);
+}
+
+function stateWithHammerPendingAfterCountdown(state: AuctionState, remainMs: number): AuctionState {
+  if (remainMs <= 0 && isRunningAuctionStatus(state.status)) {
+    return { ...state, status: 'HAMMER_PENDING' };
+  }
+  return state;
 }
 
 function realtimeNumber(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function realtimeOptionalNumber(value: unknown): number | undefined {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  return Math.max(0, Math.floor(parsed));
 }
 
 function parseRealtimeTimestampMs(value: unknown, fallback: number): number {
@@ -6366,6 +6684,41 @@ function normalizeRealtimeRankingItems(value: unknown): RankingItem[] {
       }
     ];
   });
+}
+
+function mergeRealtimeBidIntoRankingItems(previousItems: RankingItem[], payload: Record<string, unknown>, userId: string, activeAuctionId?: string): RankingItem[] {
+  const auctionId = String(payload.auctionId ?? '').trim();
+  if (activeAuctionId && auctionId && auctionId !== activeAuctionId) return previousItems;
+  const bidderId = String(payload.bidderId ?? payload.leaderBidderId ?? '').trim();
+  if (!bidderId) return previousItems;
+  const previousItem = previousItems.find((item) => item.bidderId === bidderId);
+  const price = realtimeNumber(payload.price ?? payload.currentPrice, previousItem?.price ?? Number.NaN);
+  if (!Number.isFinite(price)) return previousItems;
+  const rawNickname = String(payload.bidderNickname ?? '').trim();
+  const nicknameMask = rawNickname || previousItem?.nicknameMask || (bidderId === userId ? t('live.commentMe') : bidderId);
+  const bidTsMs = parseRealtimeTimestampMs(payload.bidTsMs ?? payload.createdAtMs ?? payload.createdAt ?? payload.serverTime, Date.now());
+  const bidItem: RankingItem = previousItem
+    ? {
+        ...previousItem,
+        rank: 1,
+        nicknameMask,
+        price,
+        bidTsMs
+      }
+    : {
+        rank: 1,
+        bidderId,
+        nicknameMask,
+        price,
+        bidTsMs
+      };
+  const merged = [bidItem, ...previousItems.filter((item) => item.bidderId !== bidderId)];
+  const ranked = merged
+    .sort((a, b) => b.price - a.price || b.bidTsMs - a.bidTsMs || a.rank - b.rank)
+    .map((item, index) => ({ ...item, rank: index + 1 }));
+  const topItems = ranked.slice(0, 10);
+  const currentUserItem = userId ? ranked.find((item) => item.bidderId === userId) : undefined;
+  return currentUserItem && !topItems.some((item) => item.bidderId === userId) ? [...topItems, currentUserItem] : topItems;
 }
 
 function bidRuleFromLot(lot: LiveRoomLot, state: AuctionState): BidRuleInput {
@@ -6505,7 +6858,7 @@ function lotStatusLabel(status: AuctionState['status']): string {
     WARMING_UP: 'auction.upcoming',
     RUNNING: 'auction.running',
     EXTENDED: 'auction.running',
-    HAMMER_PENDING: 'auction.hammerPending',
+    HAMMER_PENDING: 'auction.hammerInProgress',
     CLOSED_WON: 'auction.closedWon',
     CLOSED_FAILED: 'auction.closedFailed',
     SETTLED: 'auction.settled'

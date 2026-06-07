@@ -77,6 +77,7 @@ function joinUrl(baseUrl: string, path: string): string {
 }
 
 function toMs(value: unknown, fallback = Date.now() + 180_000): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
     const parsed = Date.parse(value);
     return Number.isNaN(parsed) ? fallback : parsed;
@@ -255,20 +256,23 @@ function normalizeState(raw: Record<string, unknown>): AuctionState {
     currentPrice: Number(raw.currentPrice ?? 0),
     leaderBidderId: raw.leaderBidderId === undefined ? undefined : String(raw.leaderBidderId),
     bidCount: raw.bidCount === undefined ? undefined : Number(raw.bidCount),
+    participantCount: raw.participantCount === undefined ? undefined : Number(raw.participantCount),
     endTsMs: toMs(raw.endTime),
-    serverTsMs: Date.now()
+    serverTsMs: toMs(raw.serverTime, Date.now())
   };
 }
 
 function normalizeOrder(raw: Record<string, unknown>): Order {
+  const status = raw.status ?? raw.orderStatus ?? raw.order_status;
+  const payStatus = raw.payStatus ?? raw.paymentStatus ?? raw.pay_status;
   return {
     id: String(raw.id),
     auctionId: String(raw.auctionId),
-    buyerId: String(raw.winnerId),
+    buyerId: String(raw.winnerId ?? raw.buyerId ?? ''),
     merchantId: raw.sellerId === undefined ? undefined : String(raw.sellerId),
-    amount: Number(raw.dealPrice ?? 0),
-    status: String(raw.status),
-    payStatus: raw.payStatus === undefined ? undefined : String(raw.payStatus),
+    amount: Number(raw.dealPrice ?? raw.amount ?? raw.payAmount ?? 0),
+    status: String(status ?? ''),
+    payStatus: payStatus === undefined ? undefined : String(payStatus),
     fulfillmentStatus: raw.fulfillmentStatus === undefined ? undefined : (String(raw.fulfillmentStatus) as Order['fulfillmentStatus']),
     createdAt: optionalString(raw.createdAt),
     paidAt: optionalString(raw.paidAt),

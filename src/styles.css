@@ -1050,9 +1050,6 @@ button {
 
 @keyframes ranking-target-reveal {
   0%,
-  92% {
-    opacity: 0;
-  }
   100% {
     opacity: 1;
   }
@@ -2996,14 +2993,16 @@ button {
   animation: payment-check-draw 520ms ease-out forwards;
 }
 
-.payment-animation.is-error .payment-error-mark path {
+.payment-animation.is-error .payment-error-mark path,
+.payment-animation.is-closed .payment-error-mark path {
   stroke: #ef4444;
   stroke-dasharray: 64;
   stroke-dashoffset: 64;
   animation: payment-check-draw 320ms ease-out forwards;
 }
 
-.payment-animation.is-error .payment-error-mark path + path {
+.payment-animation.is-error .payment-error-mark path + path,
+.payment-animation.is-closed .payment-error-mark path + path {
   animation-delay: 80ms;
 }
 
@@ -3653,6 +3652,28 @@ button {
   background: #111827;
   border: 0;
   border-radius: 8px;
+}
+
+.lot-result-card .result-media {
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.lot-result-card .result-media > img,
+.lot-result-card .result-media > .visual-placeholder {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.lot-result-card .result-media > img {
+  object-fit: contain;
+  object-position: center;
+}
+
+.lot-result-card .result-media > .visual-placeholder {
+  min-height: 0;
+  border-radius: 0;
 }
 
 .live-result-card .result-media {

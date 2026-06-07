@@ -4,8 +4,10 @@ export const myAuctionTabKeys: MyAuctionTabKey[] = ['all', 'pendingBid', 'pendin
 
 const paidDepositStatuses = new Set(['PAID', 'FROZEN', 'APPLIED', 'RELEASED', 'REFUNDED']);
 const pendingBidStatuses = new Set<AuctionStatus>(['READY', 'WARMING_UP', 'RUNNING', 'EXTENDED']);
-const runningLotStatuses = new Set<AuctionStatus>(['RUNNING', 'EXTENDED']);
+const activeLotStatuses = new Set<AuctionStatus>(['RUNNING', 'EXTENDED', 'HAMMER_PENDING']);
 const upcomingLotStatuses = new Set<AuctionStatus>(['READY', 'WARMING_UP']);
+const closedOrderStatuses = new Set(['TIMEOUT', 'TIMED_OUT', 'CANCELLED', 'CANCELED', 'CLOSED', 'EXPIRED', 'PAY_TIMEOUT', 'PAYMENT_TIMEOUT']);
+const closedPayStatuses = new Set(['TIMEOUT', 'TIMED_OUT', 'CANCELLED', 'CANCELED', 'CLOSED', 'EXPIRED', 'FAILED']);
 
 export type PreviewLotStatusKind = 'running' | 'upcoming';
 
@@ -53,28 +55,40 @@ export function selectCurrentRunningLot(room: LiveRoom, lots: LiveRoomLot[], sta
   const roomLots = lots.filter((lot) => lot.roomId === room.id);
   if (room.activeAuctionId) {
     const activeLot = roomLots.find((lot) => lot.auctionId === room.activeAuctionId);
-    if (activeLot && runningLotStatuses.has(lotRuntimeStatus(activeLot, states))) return activeLot;
+    if (activeLot && activeLotStatuses.has(lotRuntimeStatus(activeLot, states))) return activeLot;
   }
-  return roomLots.find((lot) => runningLotStatuses.has(lotRuntimeStatus(lot, states)));
+  return roomLots.find((lot) => activeLotStatuses.has(lotRuntimeStatus(lot, states)));
 }
 
 export function selectPreviewLot(roomId: string, lots: LiveRoomLot[]): LiveRoomLot | undefined {
   const roomLots = lots.filter((lot) => lot.roomId === roomId);
-  return roomLots.find((lot) => runningLotStatuses.has(lot.status)) ?? roomLots.find((lot) => upcomingLotStatuses.has(lot.status));
+  return roomLots.find((lot) => activeLotStatuses.has(lot.status)) ?? roomLots.find((lot) => upcomingLotStatuses.has(lot.status));
 }
 
 export function previewLotStatusKind(lot: LiveRoomLot): PreviewLotStatusKind {
-  return runningLotStatuses.has(lot.status) ? 'running' : 'upcoming';
+  return activeLotStatuses.has(lot.status) ? 'running' : 'upcoming';
 }
 
 function isPendingPayOrder(order?: Order): boolean {
   if (!order) return false;
-  return order.payStatus === 'UNPAID' || order.status === 'PENDING_PAY';
+  if (isClosedOrder(order)) return false;
+  const status = normalizeOrderState(order.status);
+  const payStatus = normalizeOrderState(order.payStatus);
+  return payStatus === 'UNPAID' || payStatus === 'PENDING' || status === 'PENDING_PAY' || status === 'CREATED';
 }
 
 function isPaidOrder(order?: Order): boolean {
   if (!order) return false;
-  return order.payStatus === 'PAID' || order.status === 'PAID';
+  return normalizeOrderState(order.payStatus) === 'PAID' || normalizeOrderState(order.status) === 'PAID';
+}
+
+function isClosedOrder(order?: Order): boolean {
+  if (!order) return false;
+  return closedOrderStatuses.has(normalizeOrderState(order.status)) || closedPayStatuses.has(normalizeOrderState(order.payStatus));
+}
+
+function normalizeOrderState(value?: string): string {
+  return String(value ?? '').trim().toUpperCase();
 }
 
 function lotRuntimeStatus(lot: LiveRoomLot, states: Record<string, AuctionState>): AuctionStatus {
