@@ -42,6 +42,8 @@ interface MockOptions {
   minIncrement: number;
   endTsMs: number;
   userId: string;
+  userNickname?: string;
+  userAvatarUrl?: string;
   participantCount?: number;
   onlineCount?: number;
   capPrice?: number;
@@ -73,6 +75,8 @@ interface BackendRankingEntry {
   rank: number;
   bidderId: string;
   bidderNickname: string;
+  bidderAvatarUrl?: string;
+  bidder_avatar_url?: string;
   price: number;
 }
 
@@ -122,7 +126,7 @@ export function nextRealtimeSeq(message: Pick<RealtimeMessage, 'seq'>, lastSeq: 
 
 export function realtimeMessageSeqDomain(message: Pick<RealtimeMessage, 'type' | 'seq'>): RealtimeSeqDomain | undefined {
 	if (typeof message.seq !== 'number' || message.seq <= 0) return undefined;
-	return message.type === 'bid.accepted' || message.type === 'bid.rejected' ? 'bid' : 'room';
+	return message.type === 'bid.accepted' || message.type === 'bid.accept' || message.type === 'bid.rejected' ? 'bid' : 'room';
 }
 
 export function isFreshRealtimeMessageByDomain(message: Pick<RealtimeMessage, 'type' | 'seq'>, cursor: RealtimeSeqCursor): boolean {
@@ -330,6 +334,7 @@ export class MockRealtimeClient implements RealtimeClient {
           auctionId: this.options.auctionId,
           bidId: `bid_${this.seq}`,
           bidderId: this.options.userId,
+          bidderAvatarUrl: this.currentUserAvatarUrl(),
           price: this.currentPrice,
           accepted: true,
           currentPrice: this.currentPrice,
@@ -474,11 +479,13 @@ export class MockRealtimeClient implements RealtimeClient {
 
   private ranking(): BackendRankingEntry[] {
     const leaderIsUser = this.leaderBidderId === this.options.userId;
+    const currentUserRankingName = this.currentUserRankingName();
     const items: BackendRankingEntry[] = [
       {
         rank: 1,
         bidderId: this.leaderBidderId,
-        bidderNickname: leaderIsUser ? '我' : '用户**02',
+        bidderNickname: leaderIsUser ? currentUserRankingName : '用户**02',
+        bidderAvatarUrl: leaderIsUser ? this.currentUserAvatarUrl() : '/logo.png',
         price: this.currentPrice
       }
     ];
@@ -489,6 +496,7 @@ export class MockRealtimeClient implements RealtimeClient {
         rank,
         bidderId: `u${demoUserNumber}`,
         bidderNickname: `用户**${String(demoUserNumber).padStart(2, '0')}`,
+        bidder_avatar_url: rank % 2 === 0 ? '/logo.png' : undefined,
         price: Math.max(0, this.currentPrice - this.options.minIncrement * (rank - 1))
       });
     }
@@ -496,11 +504,24 @@ export class MockRealtimeClient implements RealtimeClient {
       items.push({
         rank: 9,
         bidderId: this.options.userId,
-        bidderNickname: '我',
+        bidderNickname: currentUserRankingName,
+        bidderAvatarUrl: this.currentUserAvatarUrl(),
         price: Math.max(0, this.currentPrice - this.options.minIncrement * 8)
       });
     }
     return items;
+  }
+
+  private currentUserRankingName(): string {
+    const nickname = this.options.userNickname?.trim();
+    if (nickname) return nickname;
+    const suffix = this.options.userId.replace(/[^\p{L}\p{N}]/gu, '').slice(-2).toUpperCase();
+    return suffix ? `用户**${suffix}` : '用户**';
+  }
+
+  private currentUserAvatarUrl(): string | undefined {
+    const avatarUrl = this.options.userAvatarUrl?.trim();
+    return avatarUrl || undefined;
   }
 }
 

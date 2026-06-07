@@ -33,6 +33,18 @@ describe('auction view helpers', () => {
       record('pending_shipment', 'CLOSED_WON', { order: order('pending_shipment', 'PAID', 'PAID', 'UNSHIPPED') }),
       record('pending_receipt', 'SETTLED', { order: order('pending_receipt', 'PAID', 'PAID', 'SHIPPED') }),
       record('completed', 'SETTLED', { order: order('completed', 'PAID', 'PAID', 'RECEIVED') }),
+      record('captured_zero_deposit_pending_shipment', 'CLOSED_WON', {
+        depositAmount: 0,
+        depositStatus: 'CAPTURED',
+        lotDepositAmount: 0,
+        order: order('captured_zero_deposit_pending_shipment', 'PAID', 'PAID', 'UNSHIPPED')
+      }),
+      record('captured_zero_deposit_pending_receipt', 'SETTLED', {
+        depositAmount: 0,
+        depositStatus: 'CAPTURED',
+        lotDepositAmount: 0,
+        order: order('captured_zero_deposit_pending_receipt', 'PAID', 'PAID', 'SHIPPED')
+      }),
       record('zero_deposit_ready', 'RUNNING', { depositAmount: 0, depositStatus: 'READY', lotDepositAmount: 0 }),
       record('no_deposit_ignored', 'RUNNING', { depositAmount: 0, depositStatus: '' })
     ];
@@ -48,12 +60,14 @@ describe('auction view helpers', () => {
       'pending_shipment',
       'pending_receipt',
       'completed',
+      'captured_zero_deposit_pending_shipment',
+      'captured_zero_deposit_pending_receipt',
       'zero_deposit_ready'
     ]);
     expect(grouped.pendingBid.map((item) => item.id)).toEqual(['pending_bid_ready', 'pending_bid_running', 'zero_deposit_ready']);
     expect(grouped.pendingPay.map((item) => item.id)).toEqual(['pending_pay']);
-    expect(grouped.pendingShipment.map((item) => item.id)).toEqual(['pending_shipment']);
-    expect(grouped.pendingReceipt.map((item) => item.id)).toEqual(['pending_receipt']);
+    expect(grouped.pendingShipment.map((item) => item.id)).toEqual(['pending_shipment', 'captured_zero_deposit_pending_shipment']);
+    expect(grouped.pendingReceipt.map((item) => item.id)).toEqual(['pending_receipt', 'captured_zero_deposit_pending_receipt']);
     expect(grouped.completed.map((item) => item.id)).toEqual(['completed']);
   });
 

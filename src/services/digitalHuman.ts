@@ -35,6 +35,13 @@ export interface LiveVoiceBroadcastPlaybackOptions {
   onEnded?: () => void;
 }
 
+interface LiveVoiceBroadcastQueueItem {
+  payload: LiveVoiceBroadcastAudioPayload;
+  key: string;
+  resolve: (result: LiveVoiceBroadcastPlaybackResult) => void;
+  reject: (error: unknown) => void;
+}
+
 interface DigitalHumanServerMessage {
   type?: string;
   text?: string;
@@ -97,6 +104,11 @@ export class LiveVoiceBroadcastAudioPlayer {
   private audioContext?: AudioContext;
   private source?: AudioBufferSourceNode;
   private finishTimer = 0;
+  private queue: LiveVoiceBroadcastQueueItem[] = [];
+  private activeKeys = new Set<string>();
+  private drainCallbacks = new Set<() => void>();
+  private starting = false;
+  private playbackGeneration = 0;
 
   async unlockAudio(): Promise<boolean> {
     const audioContext = this.ensureAudioContext();
@@ -108,12 +120,92 @@ export class LiveVoiceBroadcastAudioPlayer {
   }
 
   async play(payload: LiveVoiceBroadcastAudioPayload, options: LiveVoiceBroadcastPlaybackOptions = {}): Promise<LiveVoiceBroadcastPlaybackResult> {
-    this.stop();
     const audioBase64 = typeof payload.audioBase64 === 'string' ? payload.audioBase64.trim() : '';
     if (!audioBase64) {
       console.warn('[live.voice_broadcast] playback skipped: empty audioBase64');
       return { played: false, durationMs: 0 };
     }
+
+    const key = liveVoiceBroadcastPayloadKey(payload);
+    if (this.activeKeys.has(key)) {
+      console.info('[live.voice_broadcast] playback skipped: duplicate active audio', { audioBase64Length: audioBase64.length });
+      return { played: false, durationMs: 0 };
+    }
+
+    this.activeKeys.add(key);
+    if (options.onEnded) this.drainCallbacks.add(options.onEnded);
+
+    const result = new Promise<LiveVoiceBroadcastPlaybackResult>((resolve, reject) => {
+      this.queue.push({ payload, key, resolve, reject });
+    });
+    void this.playNextQueuedItem();
+    return result;
+  }
+
+  stop(): void {
+    this.playbackGeneration += 1;
+    window.clearTimeout(this.finishTimer);
+    this.finishTimer = 0;
+    const queuedItems = this.queue.splice(0);
+    queuedItems.forEach((item) => item.resolve({ played: false, durationMs: 0 }));
+    this.activeKeys.clear();
+    this.drainCallbacks.clear();
+    this.starting = false;
+    if (!this.source) return;
+    const source = this.source;
+    this.source = undefined;
+    source.onended = null;
+    try {
+      source.stop();
+    } catch {
+      // The source may not have started yet.
+    }
+  }
+
+  close(): void {
+    this.stop();
+    if (typeof this.audioContext?.close === 'function') {
+      void this.audioContext.close();
+    }
+    this.audioContext = undefined;
+  }
+
+  private async playNextQueuedItem(): Promise<void> {
+    if (this.source || this.starting) return;
+    const item = this.queue.shift();
+    if (!item) {
+      this.flushDrainCallbacks();
+      return;
+    }
+
+    this.starting = true;
+    const generation = this.playbackGeneration;
+    try {
+      const result = await this.startQueuedItem(item, generation);
+      if (generation !== this.playbackGeneration) {
+        this.starting = false;
+        item.resolve({ played: false, durationMs: 0 });
+        return;
+      }
+      item.resolve(result);
+      if (!result.played) {
+        this.activeKeys.delete(item.key);
+        this.starting = false;
+        void this.playNextQueuedItem();
+        return;
+      }
+      this.starting = false;
+    } catch (error) {
+      this.activeKeys.delete(item.key);
+      this.starting = false;
+      item.reject(error);
+      void this.playNextQueuedItem();
+    }
+  }
+
+  private async startQueuedItem(item: LiveVoiceBroadcastQueueItem, generation: number): Promise<LiveVoiceBroadcastPlaybackResult> {
+    const { payload } = item;
+    const audioBase64 = typeof payload.audioBase64 === 'string' ? payload.audioBase64.trim() : '';
 
     const audioContext = this.ensureAudioContext();
     if (!audioContext) {
@@ -140,6 +232,7 @@ export class LiveVoiceBroadcastAudioPlayer {
       console.error('[live.voice_broadcast] audio decode failed', { bytes: arrayBuffer.byteLength, audioFormat, sampleRate, channels }, error);
       throw error;
     }
+    if (generation !== this.playbackGeneration) return { played: false, durationMs: 0 };
     const durationMs = Math.ceil(buffer.duration * 1000);
     console.info('[live.voice_broadcast] decoded audio', {
       bytes: arrayBuffer.byteLength,
@@ -154,6 +247,7 @@ export class LiveVoiceBroadcastAudioPlayer {
     }
 
     const unlocked = await this.unlockAudio();
+    if (generation !== this.playbackGeneration) return { played: false, durationMs, blocked: false };
     if (!unlocked) {
       console.warn('[live.voice_broadcast] playback blocked: AudioContext is not running', { audioContextState: audioContext.state, durationMs });
       return { played: false, durationMs, blocked: true };
@@ -169,7 +263,12 @@ export class LiveVoiceBroadcastAudioPlayer {
       if (this.source === source) this.source = undefined;
       window.clearTimeout(this.finishTimer);
       this.finishTimer = 0;
-      options.onEnded?.();
+      this.activeKeys.delete(item.key);
+      if (this.queue.length) {
+        void this.playNextQueuedItem();
+        return;
+      }
+      this.flushDrainCallbacks();
     };
     source.onended = finish;
     const startAt = Math.max(audioContext.currentTime + 0.03, 0);
@@ -185,26 +284,11 @@ export class LiveVoiceBroadcastAudioPlayer {
     return { played: true, durationMs };
   }
 
-  stop(): void {
-    window.clearTimeout(this.finishTimer);
-    this.finishTimer = 0;
-    if (!this.source) return;
-    const source = this.source;
-    this.source = undefined;
-    source.onended = null;
-    try {
-      source.stop();
-    } catch {
-      // The source may not have started yet.
-    }
-  }
-
-  close(): void {
-    this.stop();
-    if (typeof this.audioContext?.close === 'function') {
-      void this.audioContext.close();
-    }
-    this.audioContext = undefined;
+  private flushDrainCallbacks(): void {
+    if (this.source || this.queue.length || this.starting) return;
+    const callbacks = Array.from(this.drainCallbacks);
+    this.drainCallbacks.clear();
+    callbacks.forEach((callback) => callback());
   }
 
   private ensureAudioContext(): AudioContext | undefined {
@@ -213,6 +297,12 @@ export class LiveVoiceBroadcastAudioPlayer {
     if (!this.audioContext) this.audioContext = new AudioContextClass();
     return this.audioContext;
   }
+}
+
+function liveVoiceBroadcastPayloadKey(payload: LiveVoiceBroadcastAudioPayload): string {
+  const audioBase64 = typeof payload.audioBase64 === 'string' ? payload.audioBase64.trim() : '';
+  const audioFormat = String(payload.audioFormat || payload.encoding || 'pcm_s16le').toLowerCase();
+  return [audioBase64, audioFormat, normalizeSampleRate(payload.sampleRate), normalizeChannelCount(payload.channels)].join('|');
 }
 
 let sharedLiveVoiceBroadcastAudioPlayer: LiveVoiceBroadcastAudioPlayer | undefined;

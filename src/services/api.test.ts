@@ -99,10 +99,66 @@ describe('ApiClient', () => {
     expect(fetcher).toHaveBeenNthCalledWith(3, 'http://mock.local/api/v1/live-sessions/1001/lots', expect.any(Object));
   });
 
+  it('preserves missing live room stats counters as non-finite sentinels while accepting explicit zero and aliases', async () => {
+    const fetcher = vi
+      .fn()
+      .mockImplementationOnce(() => ok({ liveSessionId: 1001, bidCount: 36 }))
+      .mockImplementationOnce(() => ok({ liveSessionId: 1001, online_count: 0, viewer_count: 1208, bidCount: 37 }));
+    const api = new ApiClient('http://mock.local', fetcher);
+
+    const missingStats = await api.getLiveRoomStats('1001');
+    const explicitStats = await api.getLiveRoomStats('1001');
+
+    expect(Number.isFinite(missingStats.onlineCount)).toBe(false);
+    expect(Number.isFinite(missingStats.watcherCount)).toBe(false);
+    expect(explicitStats).toMatchObject({ roomId: '1001', onlineCount: 0, watcherCount: 1208, bidCount: 37 });
+  });
+
+  it('fetches the initial auction ranking through the HTTP snapshot endpoint', async () => {
+    const fetcher = vi.fn(() =>
+      ok({
+        auctionId: 2001,
+        ranking: [
+          { rank: 1, bidderId: 'u2', bidderNickname: '初始用户', bidderAvatarUrl: 'https://cdn.example.com/u2.png', price: 150100 }
+        ]
+      })
+    );
+    const api = new ApiClient('http://mock.local', fetcher);
+
+    const ranking = await api.getAuctionRanking('2001');
+
+    expect(ranking).toHaveLength(1);
+    expect(ranking[0]).toMatchObject({ bidderId: 'u2', bidderNickname: '初始用户', bidderAvatarUrl: 'https://cdn.example.com/u2.png', price: 150100 });
+    expect(fetcher).toHaveBeenCalledWith('http://mock.local/api/v1/auctions/2001/ranking?limit=10', expect.any(Object));
+  });
+
   it('queries orders by auctionId and fetches order detail without old auction history endpoints', async () => {
     const fetcher = vi
       .fn()
-      .mockImplementationOnce(() => ok({ orders: [{ id: 2001, auctionId: 2001, winnerId: 'u1', sellerId: 'merchant_01', dealPrice: 150100, status: 'CREATED', payStatus: 'UNPAID' }] }))
+      .mockImplementationOnce(() =>
+        ok({
+          orders: [
+            {
+              id: 2001,
+              auctionId: 2001,
+              liveSessionId: 9001,
+              winnerId: 'u1',
+              sellerId: 'merchant_01',
+              dealPrice: 150100,
+              status: 'CREATED',
+              payStatus: 'UNPAID',
+              lotSnapshot: {
+                auctionId: 2001,
+                liveSessionId: 9001,
+                title: '后端订单拍品',
+                coverUrl: '/api/v1/images/order.png',
+                dealPrice: 150100,
+                depositAmount: 5000
+              }
+            }
+          ]
+        })
+      )
       .mockImplementationOnce(() => ok({ id: 2001, auctionId: 2001, winnerId: 'u1', sellerId: 'merchant_01', dealPrice: 150100, status: 'CREATED', payStatus: 'UNPAID' }));
     const api = new ApiClient('http://mock.local', fetcher);
 
@@ -110,6 +166,14 @@ describe('ApiClient', () => {
     const order = await api.getOrder('2001');
 
     expect(orders.items[0].auctionId).toBe('2001');
+    expect(orders.items[0]).toMatchObject({
+      liveSessionId: '9001',
+      lotSnapshot: {
+        title: '后端订单拍品',
+        coverUrl: '/api/v1/images/order.png',
+        depositAmount: 5000
+      }
+    });
     expect(order.amount).toBe(150100);
     expect(fetcher).toHaveBeenNthCalledWith(1, 'http://mock.local/api/v1/orders/mine?limit=20&offset=0&auctionId=2001', expect.any(Object));
     expect(fetcher).toHaveBeenNthCalledWith(2, 'http://mock.local/api/v1/orders/2001', expect.any(Object));
@@ -138,6 +202,48 @@ describe('ApiClient', () => {
     expect((fetcher.mock.calls[0][1] as RequestInit).headers).toMatchObject({
       'Idempotency-Key': expect.stringMatching(/^receive-ord_1-/)
     });
+  });
+
+  it('normalizes order status aliases and snake_case response fields', async () => {
+    const fetcher = vi.fn(() =>
+      ok({
+        orders: [
+          {
+            id: 57024847413760,
+            auction_id: 56973840220672,
+            live_session_id: 90000021,
+            winner_id: '1001',
+            seller_id: '2001',
+            deal_price: 1700,
+            status: 'shipped',
+            pay_status: 'paid',
+            fulfillment_status: 'delivered',
+            lot_snapshot: {
+              auctionId: 56973840220672,
+              title: '复古机械表',
+              dealPrice: 1700
+            },
+            shipped_at: '2026-06-07T08:36:23.28Z'
+          }
+        ]
+      })
+    );
+    const api = new ApiClient('http://mock.local', fetcher);
+
+    const orders = await api.listMyOrders({ status: 'PAID', fulfillmentStatus: 'SHIPPED' });
+
+    expect(orders.items[0]).toMatchObject({
+      auctionId: '56973840220672',
+      liveSessionId: '90000021',
+      buyerId: '1001',
+      merchantId: '2001',
+      amount: 1700,
+      status: 'PAID',
+      payStatus: 'PAID',
+      fulfillmentStatus: 'SHIPPED',
+      shippedAt: '2026-06-07T08:36:23.28Z'
+    });
+    expect(fetcher).toHaveBeenCalledWith('http://mock.local/api/v1/orders/mine?limit=20&offset=0&status=PAID&fulfillmentStatus=SHIPPED', expect.any(Object));
   });
 
   it('throws ApiError when business code is non-zero', async () => {
@@ -284,7 +390,33 @@ describe('ApiClient', () => {
     });
     expect(fetcher).toHaveBeenNthCalledWith(1, 'http://mock.local/api/v1/auth/me', expect.any(Object));
     expect(fetcher).toHaveBeenNthCalledWith(2, 'http://mock.local/api/v1/auth/me', expect.objectContaining({ method: 'PATCH' }));
+    expect((fetcher.mock.calls[1][1] as RequestInit).headers).toMatchObject({
+      'Idempotency-Key': expect.stringMatching(/^patch-\d+-[a-z0-9]+$/)
+    });
     expect(fetcher).toHaveBeenNthCalledWith(3, 'http://mock.local/api/v1/auction-participations/mine?limit=20&offset=0', expect.any(Object));
+  });
+
+  it('uploads avatar as multipart form data without overriding the content type boundary', async () => {
+    const fetcher = vi.fn(() => ok({ id: 'u1', nickname: 'Buyer One', avatarUrl: 'https://cdn.example.com/u1.jpg', role: 'buyer', status: 'ACTIVE' }));
+    const api = new ApiClient('http://mock.local', fetcher);
+    api.setToken('jwt');
+    const avatar = new File(['cropped'], 'avatar.jpg', { type: 'image/jpeg' });
+
+    const saved = await api.uploadMyAvatar(avatar, { userId: 'u1', nickname: 'Buyer One' });
+
+    const request = fetcher.mock.calls[0][1] as RequestInit;
+    expect(saved.avatarUrl).toBe('https://cdn.example.com/u1.jpg');
+    expect(fetcher).toHaveBeenCalledWith('http://mock.local/api/v1/auth/me/avatar', expect.objectContaining({ method: 'POST' }));
+    expect(request.body).toBeInstanceOf(FormData);
+    const uploaded = (request.body as FormData).get('avatar');
+    expect(uploaded).toBeInstanceOf(File);
+    expect((uploaded as File).name).toBe('avatar.jpg');
+    expect((uploaded as File).type).toBe('image/jpeg');
+    expect(request.headers).toMatchObject({
+      Authorization: 'Bearer jwt',
+      'Idempotency-Key': expect.stringMatching(/^post-\d+-[a-z0-9]+$/)
+    });
+    expect(request.headers).not.toHaveProperty('Content-Type');
   });
 
   it('uses local demo data by default for independent presentation', async () => {
@@ -320,6 +452,15 @@ describe('ApiClient', () => {
     expect(recordAfterReceipt?.order).toMatchObject({ id: 'ord_2001', fulfillmentStatus: 'RECEIVED' });
   });
 
+  it('provides initial ranking snapshots in local demo mode', async () => {
+    const api = new DemoApiClient(vi.fn());
+
+    const ranking = await api.getAuctionRanking('auc_2001');
+
+    expect(ranking.length).toBeGreaterThan(0);
+    expect(ranking[0]).toMatchObject({ bidderNickname: '用户**02', bidderAvatarUrl: '/logo.png' });
+  });
+
   it('provides five-image galleries for selected local demo lots', async () => {
     const api = new DemoApiClient(vi.fn());
 
@@ -340,6 +481,7 @@ describe('ApiClient', () => {
     const merchant = await api.getMerchant(merchants.items[0].id);
     const merchantRooms = await api.listMerchantLiveSessions(merchant.id, { status: 'live' });
     const profile = await api.updateMyProfile({ nickname: 'Demo Buyer' });
+    const avatarProfile = await api.uploadMyAvatar(new Blob(['demo-avatar'], { type: 'image/jpeg' }), profile);
     const records = await api.listMyAuctionRecords();
 
     expect(runningJewelry.items).toHaveLength(1);
@@ -348,6 +490,7 @@ describe('ApiClient', () => {
     expect(liveRooms.items.every((room) => room.status === 'LIVE')).toBe(true);
     expect(merchantRooms.items.every((room) => room.merchantId === merchant.id)).toBe(true);
     expect(profile.nickname).toBe('Demo Buyer');
+    expect(avatarProfile.avatarUrl).toMatch(/^data:image\/jpeg;base64,/);
     expect(records.items.map((record) => record.depositStatus).every(Boolean)).toBe(true);
     expect(records.items.some((record) => record.order?.fulfillmentStatus === 'UNSHIPPED')).toBe(true);
     expect(records.items.some((record) => record.order?.fulfillmentStatus === 'SHIPPED')).toBe(true);

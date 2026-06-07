@@ -262,6 +262,7 @@ export interface EnrollResult {
   userId: string;
   amount: number;
   status: string;
+  participantCount?: number;
   relatedOrderId?: string;
   remark?: string;
   createdAt?: string;
@@ -272,19 +273,40 @@ export interface ListOrderOptions {
   auctionId?: string;
   status?: string;
   payStatus?: string;
+  fulfillmentStatus?: OrderFulfillmentStatus;
   limit?: number;
   offset?: number;
+}
+
+export interface OrderLotSnapshot {
+  auctionId?: string;
+  liveSessionId?: string;
+  sellerId?: string;
+  winnerId?: string;
+  title?: string;
+  description?: string;
+  category?: string;
+  brand?: string;
+  condition?: string;
+  coverUrl?: string;
+  imageUrls?: string[];
+  startPrice?: number;
+  dealPrice?: number;
+  depositAmount?: number;
+  closedAt?: string;
 }
 
 export interface Order {
   id: string;
   auctionId: string;
+  liveSessionId?: string;
   buyerId: string;
   merchantId?: string;
   amount: number;
   status: 'CREATED' | 'PAID' | 'TIMEOUT' | 'CANCELLED' | string;
   payStatus?: string;
   fulfillmentStatus?: OrderFulfillmentStatus;
+  lotSnapshot?: OrderLotSnapshot;
   createdAt?: string;
   paidAt?: string;
   shippedAt?: string;
@@ -294,11 +316,14 @@ export interface Order {
 export interface RankingItem {
   rank: number;
   bidderId: string;
+  nickname?: string;
   nicknameMask: string;
   avatarUrl?: string;
   price: number;
   bidTsMs: number;
 }
+
+export type RankingSnapshotItem = Record<string, unknown>;
 
 export interface LiveChatMessage {
   id: string;

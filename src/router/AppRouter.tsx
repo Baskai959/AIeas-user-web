@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type Dispatch, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type SetStateAction, type TouchEvent as ReactTouchEvent, type TransitionEvent as ReactTransitionEvent, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type Dispatch, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type SetStateAction, type SyntheticEvent as ReactSyntheticEvent, type TouchEvent as ReactTouchEvent, type TransitionEvent as ReactTransitionEvent, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams, type Location, type NavigateFunction } from 'react-router-dom';
@@ -140,6 +140,9 @@ const previewMediaSnapshotMaxAgeMs = 30_000;
 const likeBurstParticles = Array.from({ length: 15 }, (_, index) => index);
 const liveVoiceUnlockEvents = ['pointerdown', 'touchend', 'keydown', 'click'] as const;
 const liveSessionLotListChangedEvents = new Set(['live_session.lot_mounted', 'live_session.lot_unmounted', 'live_session.lot_changed']);
+function isLiveSoundUnlockControlTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && Boolean(target.closest('[data-live-sound-unlock-control="true"]'));
+}
 function feedTrackTransform(trackIndex: number, offsetPx = 0): string {
   const percent = trackIndex === 0 ? 0 : -trackIndex * 100;
   return offsetPx === 0 ? `translate3d(0, ${percent}%, 0)` : `translate3d(0, calc(${percent}% + ${offsetPx}px), 0)`;
@@ -279,6 +282,15 @@ function orderTabFromOrder(order?: Order): MyAuctionTabKey {
   return 'all';
 }
 
+function orderListOptionsForTab(tab: MyAuctionTabKey) {
+  const base = { limit: 100 };
+  if (tab === 'pendingPay') return { ...base, payStatus: 'UNPAID' };
+  if (tab === 'pendingShipment') return { ...base, status: 'PAID', fulfillmentStatus: 'UNSHIPPED' as const };
+  if (tab === 'pendingReceipt') return { ...base, status: 'PAID', fulfillmentStatus: 'SHIPPED' as const };
+  if (tab === 'completed') return { ...base, status: 'PAID', fulfillmentStatus: 'RECEIVED' as const };
+  return base;
+}
+
 function buildOrderByAuctionId(records: UserAuctionRecord[] = [], orders: Order[] = []): Map<string, Order> {
   const byAuctionId = new Map<string, Order>();
   orders.forEach((order) => byAuctionId.set(order.auctionId, order));
@@ -288,17 +300,65 @@ function buildOrderByAuctionId(records: UserAuctionRecord[] = [], orders: Order[
   return byAuctionId;
 }
 
+function lotFromOrder(order: Order): LiveRoomLot {
+  const snapshot = order.lotSnapshot;
+  const imageUrls = snapshot?.imageUrls?.filter(Boolean) ?? [];
+  const imageUrl = snapshot?.coverUrl ?? imageUrls[0];
+  const endTsMs = Date.parse(snapshot?.closedAt ?? order.paidAt ?? order.createdAt ?? '');
+  const price = snapshot?.dealPrice ?? order.amount;
+  const depositAmount = snapshot?.depositAmount ?? 0;
+  const status: LiveRoomLot['status'] = order.fulfillmentStatus === 'RECEIVED' ? 'SETTLED' : 'CLOSED_WON';
+  return {
+    id: `order-lot-${order.auctionId}`,
+    auctionId: order.auctionId,
+    roomId: order.liveSessionId ?? snapshot?.liveSessionId ?? '',
+    merchantId: order.merchantId ?? snapshot?.sellerId,
+    categoryId: snapshot?.category,
+    title: snapshot?.title ?? `订单 ${order.id}`,
+    subtitle: snapshot?.category,
+    description: snapshot?.description,
+    imageUrl,
+    imageUrls,
+    status,
+    startPrice: snapshot?.startPrice ?? price,
+    currentPrice: price,
+    finalPrice: price,
+    leaderBidderId: order.buyerId,
+    endTsMs: Number.isFinite(endTsMs) ? endTsMs : Date.now(),
+    depositAmount
+  };
+}
+
+function recordFromOrder(order: Order): UserAuctionRecord {
+  const lot = lotFromOrder(order);
+  return {
+    id: `order-${order.id}`,
+    userId: order.buyerId,
+    lot,
+    order,
+    depositAmount: lot.depositAmount ?? 0,
+    depositStatus: 'READY',
+    enrolledAt: order.createdAt
+  };
+}
+
 function mergeAuctionRecordsWithOrders(records: UserAuctionRecord[] = [], orders: Order[] = []): UserAuctionRecord[] {
-  if (!records.length || !orders.length) return records;
+  if (!orders.length) return records;
   const byId = new Map(orders.map((order) => [order.id, order]));
   const byAuctionId = new Map(orders.map((order) => [order.auctionId, order]));
-  return records.map((record) => {
+  const usedOrderIds = new Set<string>();
+  const merged = records.map((record) => {
     const latestOrder =
       (record.order?.id ? byId.get(record.order.id) : undefined) ??
       (record.order || record.lot.status === 'CLOSED_WON' || record.lot.status === 'SETTLED' ? byAuctionId.get(record.lot.auctionId) : undefined);
+    if (latestOrder) usedOrderIds.add(latestOrder.id);
     if (!latestOrder || latestOrder === record.order) return record;
     return { ...record, order: latestOrder };
   });
+  orders.forEach((order) => {
+    if (!usedOrderIds.has(order.id)) merged.push(recordFromOrder(order));
+  });
+  return merged;
 }
 
 function transitionRouteUpdate(update: () => void): void {
@@ -527,6 +587,7 @@ function LiveRoutePage({ apiClient }: { apiClient: ApiClient }) {
   const { roomId = demoLiveRoom.id } = useParams();
   const [searchParams] = useSearchParams();
   const user = useSessionStore((state) => state.user);
+  const profileOverride = useProfileStore((state) => state.profileOverride);
   const accessToken = useSessionStore((state) => state.accessToken);
   const navigate = useNavigate();
   const location = useLocation() as Location<AppLocationState | null>;
@@ -541,6 +602,8 @@ function LiveRoutePage({ apiClient }: { apiClient: ApiClient }) {
       initialLotId={searchParams.get('lotId') ?? undefined}
       initialPreviewMedia={location.state?.previewMedia}
       userId={user?.id ?? 'u1'}
+      userNickname={user?.nickname}
+      userAvatarUrl={profileOverride?.avatarUrl ?? user?.avatarUrl}
       accessToken={accessToken}
       onBack={() => navigateWithTransition(navigate, returnTo, returnState ? { state: returnState } : undefined)}
       onPay={(orderId) => navigateWithTransition(navigate, payPath(orderId, currentPath(location)))}
@@ -1278,6 +1341,21 @@ function liveVoiceAudioDebugSummary(payload: LiveVoiceBroadcastAudioPayload | un
   };
 }
 
+function liveVoicePendingPayloadKey(payload: LiveVoiceBroadcastAudioPayload): string {
+  const audioBase64 = typeof payload.audioBase64 === 'string' ? payload.audioBase64.trim() : '';
+  const audioFormat = String(payload.audioFormat || payload.encoding || 'pcm_s16le').toLowerCase();
+  const sampleRate = Number(payload.sampleRate);
+  const normalizedSampleRate = Number.isFinite(sampleRate) && sampleRate >= 8000 && sampleRate <= 192000 ? sampleRate : 24_000;
+  const channels = Math.floor(Number(payload.channels));
+  const normalizedChannels = Number.isFinite(channels) && channels >= 1 ? Math.min(channels, 8) : 1;
+  return [audioBase64, audioFormat, normalizedSampleRate, normalizedChannels].join('|');
+}
+
+function appendUniqueLiveVoicePendingPayload(queue: LiveVoiceBroadcastAudioPayload[], payload: LiveVoiceBroadcastAudioPayload): LiveVoiceBroadcastAudioPayload[] {
+  const key = liveVoicePendingPayloadKey(payload);
+  return queue.some((item) => liveVoicePendingPayloadKey(item) === key) ? queue : [...queue, payload];
+}
+
 function liveVoiceMessageDebugSummary(message: RealtimeMessage, room: LiveRoom, payload: LiveVoiceBroadcastAudioPayload | undefined): Record<string, unknown> {
   const raw = message.payload && typeof message.payload === 'object' ? (message.payload as Record<string, unknown>) : undefined;
   const rawAudioBase64 = typeof raw?.audioBase64 === 'string' ? raw.audioBase64.trim() : undefined;
@@ -1615,24 +1693,30 @@ function MePage({
   onProfileUpdated: (profile: UserProfile) => void;
 }) {
   const [showAvatarDialog, setShowAvatarDialog] = useState(false);
+  const queryClient = useQueryClient();
   const profileOverride = useProfileStore((state) => state.profileOverride);
   const setProfileOverride = useProfileStore((state) => state.setProfileOverride);
   const followedCount = useLiveActivityStore((state) => state.followedRooms.length);
   const footprintCount = useLiveActivityStore((state) => state.footprints.length);
   const profileQuery = useQuery({ queryKey: ['my-profile'], queryFn: () => apiClient.getMyProfile() });
   const recordsQuery = useQuery({ queryKey: ['my-auction-records'], queryFn: () => apiClient.listMyAuctionRecords(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 }, refetchOnMount: 'always' });
-  const ordersQuery = useQuery({ queryKey: ['my-orders'], queryFn: () => apiClient.listMyOrders(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 }, refetchOnMount: 'always' });
+  const ordersQuery = useQuery({ queryKey: ['my-orders'], queryFn: () => apiClient.listMyOrders({ limit: 100 }), placeholderData: { items: [], total: 0, page: 1, page_size: 100 }, refetchOnMount: 'always' });
   const baseProfile = profileQuery.data ?? profileFromSession(userId, sessionUser);
   const profile = mergeProfile(baseProfile, profileOverride);
   const mergedRecords = useMemo(() => mergeAuctionRecordsWithOrders(recordsQuery.data?.items ?? [], ordersQuery.data?.items ?? []), [ordersQuery.data?.items, recordsQuery.data?.items]);
   const groupedRecords = groupAuctionRecords(mergedRecords);
   const avatarMutation = useMutation({
-    mutationFn: (avatarUrl: string) => apiClient.updateMyProfile({ userId: profile.userId, avatarUrl, nickname: profile.nickname }),
+    mutationFn: (avatar: File) => apiClient.uploadMyAvatar(avatar, profile),
     onSuccess: (saved) => {
-      const nextProfile = mergeProfile(saved, { avatarUrl: saved.avatarUrl });
+      const nextProfile = mergeProfile(profile, saved);
       setProfileOverride(nextProfile);
+      queryClient.setQueryData(['my-profile'], nextProfile);
+      void queryClient.invalidateQueries({ queryKey: ['my-profile'] });
       onProfileUpdated(nextProfile);
       setShowAvatarDialog(false);
+    },
+    onError: () => {
+      Toast.show({ content: t('profile.avatarUploadError') });
     }
   });
   const statusItems = userRecordStatusItems(groupedRecords);
@@ -1677,7 +1761,7 @@ function MePage({
         </div>
       </section>
 
-      {showAvatarDialog ? <AvatarDialog profile={profile} saving={avatarMutation.isPending} onClose={() => setShowAvatarDialog(false)} onSave={(avatarUrl) => avatarMutation.mutate(avatarUrl)} /> : null}
+      {showAvatarDialog ? <AvatarDialog profile={profile} saving={avatarMutation.isPending} onClose={() => setShowAvatarDialog(false)} onSave={(avatar) => avatarMutation.mutate(avatar)} /> : null}
     </section>
   );
 }
@@ -1695,6 +1779,7 @@ function SettingsPage({
   onProfileUpdated: (profile: UserProfile) => void;
   onLogout: (options: { keepBrowsingData: boolean }) => void;
 }) {
+  const queryClient = useQueryClient();
   const profileOverride = useProfileStore((state) => state.profileOverride);
   const setProfileOverride = useProfileStore((state) => state.setProfileOverride);
   const locale = usePreferencesStore((state) => state.locale);
@@ -1711,12 +1796,17 @@ function SettingsPage({
   }, [profile.nickname]);
 
   const save = useMutation({
-    mutationFn: () => apiClient.updateMyProfile({ userId: profile.userId, nickname: nickname.trim(), avatarUrl: profile.avatarUrl }),
+    mutationFn: () => apiClient.updateMyProfile({ userId: profile.userId, nickname: nickname.trim() }),
     onSuccess: (saved) => {
-      const nextProfile = mergeProfile(saved, { nickname: saved.nickname, avatarUrl: saved.avatarUrl });
+      const nextProfile = mergeProfile(profile, saved);
       setProfileOverride(nextProfile);
+      queryClient.setQueryData(['my-profile'], nextProfile);
+      void queryClient.invalidateQueries({ queryKey: ['my-profile'] });
       onProfileUpdated(nextProfile);
       onBack();
+    },
+    onError: () => {
+      Toast.show({ content: t('settings.saveError') });
     }
   });
 
@@ -1805,7 +1895,7 @@ function OrdersPage({
   const queryClient = useQueryClient();
   const [receiptTarget, setReceiptTarget] = useState<UserAuctionRecord | null>(null);
   const recordsQuery = useQuery({ queryKey: ['my-auction-records'], queryFn: () => apiClient.listMyAuctionRecords(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 }, refetchOnMount: 'always' });
-  const ordersQuery = useQuery({ queryKey: ['my-orders'], queryFn: () => apiClient.listMyOrders(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 }, refetchOnMount: 'always' });
+  const ordersQuery = useQuery({ queryKey: ['my-orders', activeTab], queryFn: () => apiClient.listMyOrders(orderListOptionsForTab(activeTab)), placeholderData: { items: [], total: 0, page: 1, page_size: 100 }, refetchOnMount: 'always' });
   const confirmReceipt = useMutation({
     mutationFn: (orderId: string) => apiClient.confirmReceipt(orderId),
     onSuccess: (updatedOrder) => {
@@ -1816,7 +1906,7 @@ function OrdersPage({
           items: current.items.map((record) => (record.order?.id === updatedOrder.id ? { ...record, order: updatedOrder } : record))
         };
       });
-      queryClient.setQueryData<PageResult<Order>>(['my-orders'], (current) => {
+      queryClient.setQueryData<PageResult<Order>>(['my-orders', activeTab], (current) => {
         if (!current) return current;
         return {
           ...current,
@@ -2658,7 +2748,7 @@ function AvatarDialog({
   profile: UserProfile;
   saving: boolean;
   onClose: () => void;
-  onSave: (avatarUrl: string) => void;
+  onSave: (avatar: File) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const dragRef = useRef<{ pointerId: number; x: number; y: number; offsetX: number; offsetY: number }>();
@@ -2853,10 +2943,10 @@ function AvatarDialog({
   };
 
   const confirm = async () => {
-    if (!selectedUrl) return;
+    if (!selectedUrl || saving) return;
     try {
-      const avatarUrl = await renderCroppedAvatar(selectedUrl, crop);
-      onSave(avatarUrl);
+      const avatar = await renderCroppedAvatar(selectedUrl, crop);
+      onSave(avatar);
     } catch {
       setError(t('profile.avatarError'));
     }
@@ -2909,7 +2999,7 @@ function AvatarDialog({
               <Button fill="outline" onClick={() => inputRef.current?.click()}>
                 <Camera size={16} /> {t('profile.reselectAvatar')}
               </Button>
-              <Button color="primary" loading={saving} onClick={confirm}>
+              <Button color="primary" loading={saving} disabled={saving} onClick={confirm}>
                 <Check size={16} /> {t('profile.useAvatar')}
               </Button>
             </div>
@@ -2961,7 +3051,7 @@ function avatarTransformStyle(crop: AvatarCropState, ratio = 1) {
   };
 }
 
-async function renderCroppedAvatar(imageUrl: string, crop: AvatarCropState): Promise<string> {
+async function renderCroppedAvatar(imageUrl: string, crop: AvatarCropState): Promise<File> {
   const image = await loadImage(imageUrl);
   const size = 256;
   const canvas = document.createElement('canvas');
@@ -2980,7 +3070,42 @@ async function renderCroppedAvatar(imageUrl: string, crop: AvatarCropState): Pro
   const offsetRatio = size / 260;
   context.drawImage(image, (size - width) / 2 + crop.offsetX * offsetRatio, (size - height) / 2 + crop.offsetY * offsetRatio, width, height);
   context.restore();
-  return canvas.toDataURL('image/jpeg', 0.88);
+  const blob = await canvasToBlob(canvas, 'image/jpeg', 0.88);
+  return new File([blob], `avatar-${Date.now()}.jpg`, { type: blob.type || 'image/jpeg' });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob> {
+  if (!canvas.toBlob) {
+    return Promise.resolve(dataUrlToBlob(canvas.toDataURL(type, quality)));
+  }
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob);
+          return;
+        }
+        try {
+          resolve(dataUrlToBlob(canvas.toDataURL(type, quality)));
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error('avatar encode failed'));
+        }
+      },
+      type,
+      quality
+    );
+  });
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [meta, payload] = dataUrl.split(',');
+  if (!meta || !payload || !meta.startsWith('data:')) throw new Error('invalid avatar data url');
+  const mimeMatch = /^data:([^;]+);base64$/.exec(meta);
+  if (!mimeMatch) throw new Error('invalid avatar mime type');
+  const binary = atob(payload);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: mimeMatch[1] });
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -3309,6 +3434,8 @@ function LiveRoomPage({
   initialLotId,
   initialPreviewMedia,
   userId,
+  userNickname,
+  userAvatarUrl,
   accessToken,
   onBack,
   onPay,
@@ -3319,6 +3446,8 @@ function LiveRoomPage({
   initialLotId?: string;
   initialPreviewMedia?: PreviewMediaSnapshot;
   userId: string;
+  userNickname?: string;
+  userAvatarUrl?: string;
   accessToken?: string;
   onBack: () => void;
   onPay: (orderId: string, auctionId: string) => void;
@@ -3336,7 +3465,7 @@ function LiveRoomPage({
   const [commentsOpen, setCommentsOpen] = useState(true);
   const [commentComposerOpen, setCommentComposerOpen] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
-  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [chatMessages, setChatMessages] = useState<LiveChatMessage[]>(() => initialLiveChatMessages(roomId));
   const [ranking, setRanking] = useState<RankingItem[]>([]);
   const [rankingAnimationSource, setRankingAnimationSource] = useState<RankingAnimationSource>('snapshot');
@@ -3347,13 +3476,19 @@ function LiveRoomPage({
   const [likeBurstId, setLikeBurstId] = useState(0);
   const [likeBurstVisible, setLikeBurstVisible] = useState(false);
   const [digitalHumanSpeaking, setDigitalHumanSpeaking] = useState(false);
+  const [liveSoundAutoplayBlocked, setLiveSoundAutoplayBlocked] = useState(false);
   const [liveVoicePermissionPromptVisible, setLiveVoicePermissionPromptVisible] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [serverTimeOffsetMs, setServerTimeOffsetMs] = useState(0);
   const { alerts: auctionAlerts, pushAlert: pushAuctionAlert } = useLiveAuctionAlerts();
   const realtimeRef = useRef<RealtimeClient>();
   const liveVoicePlayerRef = useRef<LiveVoiceBroadcastAudioPlayer>();
-  const pendingLiveVoicePayloadRef = useRef<LiveVoiceBroadcastAudioPayload>();
+  const pendingLiveVoicePayloadsRef = useRef<LiveVoiceBroadcastAudioPayload[]>([]);
+  const liveVideoSurfaceRef = useRef<LiveRoomVideoSurfaceHandle>(null);
+  const liveSoundAutoplayBlockedRef = useRef(false);
+  const liveSoundUnlockInFlightRef = useRef(false);
+  const liveVoicePermissionPromptVisibleRef = useRef(false);
+  const soundEnabledRef = useRef(soundEnabled);
   const serverTimeOffsetRef = useRef(0);
   const lastSeqRef = useRef(0);
   const realtimeSeqCursorRef = useRef<RealtimeSeqCursor>({});
@@ -3372,6 +3507,9 @@ function LiveRoomPage({
   const commentsViewportRef = useRef<HTMLDivElement>(null);
   const commentsEndRef = useRef<HTMLDivElement>(null);
   const commentsShouldStickRef = useRef(true);
+  soundEnabledRef.current = soundEnabled;
+  liveSoundAutoplayBlockedRef.current = liveSoundAutoplayBlocked;
+  liveVoicePermissionPromptVisibleRef.current = liveVoicePermissionPromptVisible;
   rankingRef.current = ranking;
   const applyRankingUpdate = useCallback((updater: (current: RankingItem[]) => RankingItem[]) => {
     const current = rankingRef.current;
@@ -3441,7 +3579,7 @@ function LiveRoomPage({
   });
 
   useEffect(() => {
-    if (statsQuery.data) setLiveStats(statsQuery.data);
+    if (statsQuery.data) setLiveStats((prev) => mergeLiveRoomStats(prev, statsQuery.data));
   }, [statsQuery.data]);
 
   useEffect(() => {
@@ -3481,8 +3619,11 @@ function LiveRoomPage({
     setLikeBurstId(0);
     setLikeBurstVisible(false);
     setDigitalHumanSpeaking(false);
+    setLiveSoundAutoplayBlocked(false);
     setLiveVoicePermissionPromptVisible(false);
-    pendingLiveVoicePayloadRef.current = undefined;
+    liveSoundAutoplayBlockedRef.current = false;
+    liveVoicePermissionPromptVisibleRef.current = false;
+    pendingLiveVoicePayloadsRef.current = [];
     liveVoicePlayerRef.current?.stop();
     commentsShouldStickRef.current = true;
   }, [roomId]);
@@ -3499,10 +3640,27 @@ function LiveRoomPage({
   const liveSheetOpen = hasBlockingLiveSheet;
   const activeCountdownRemainMs = currentState ? countdownRemainMs(currentState.endTsMs, now, serverTimeOffsetMs) : 0;
   const displayCurrentState = currentState ? stateWithHammerPendingAfterCountdown(currentState, activeCountdownRemainMs) : undefined;
+  const rankingQuery = useQuery({
+    queryKey: ['auction-ranking', activeLot?.auctionId],
+    queryFn: () => {
+      if (!activeLot?.auctionId) throw new Error('No active auction');
+      return apiClient.getAuctionRanking(activeLot.auctionId);
+    },
+    enabled: Boolean(activeLot?.auctionId && isActiveAuctionDisplayStatus(displayCurrentState?.status ?? activeLot.status)),
+    staleTime: 1000
+  });
+
+  useEffect(() => {
+    if (!activeLot?.auctionId || !rankingQuery.data) return;
+    const nextRanking = normalizeRealtimeRankingItems(rankingQuery.data, userId, userNickname, userAvatarUrl);
+    if (!shouldApplyRankingSnapshot(rankingRef.current, nextRanking)) return;
+    setRankingAnimationSource('snapshot');
+    applyRankingUpdate((current) => (shouldApplyRankingSnapshot(current, nextRanking) ? nextRanking : current));
+  }, [activeLot?.auctionId, applyRankingUpdate, rankingQuery.data, userAvatarUrl, userId, userNickname]);
   const displayLotStates = useMemo(() => {
     if (!activeLot || !displayCurrentState) return lotStates;
     return { ...lotStates, [activeLot.auctionId]: displayCurrentState };
-  }, [activeLot?.auctionId, displayCurrentState, lotStates]);
+  }, [activeLot, displayCurrentState, lotStates]);
   const activeCountdownPressurePhase = getCountdownPressurePhase(
     activeCountdownRemainMs,
     displayCurrentState?.status,
@@ -3783,24 +3941,61 @@ function LiveRoomPage({
     setDigitalHumanSpeaking(false);
   }, []);
 
+  const stopLiveVoiceBroadcastPlayback = useCallback(() => {
+    pendingLiveVoicePayloadsRef.current = [];
+    setLiveVoicePermissionPromptVisible(false);
+    liveVoicePermissionPromptVisibleRef.current = false;
+    liveVoicePlayerRef.current?.stop();
+    stopDigitalHumanSpeaking();
+  }, [stopDigitalHumanSpeaking]);
+
+  const unlockLiveVoiceAudio = useCallback(async () => {
+    const player = liveVoicePlayerRef.current ?? getLiveVoiceBroadcastAudioPlayer();
+    liveVoicePlayerRef.current = player;
+    try {
+      return await player.unlockAudio();
+    } catch (error) {
+      console.warn('[live.voice_broadcast] audio unlock failed', error);
+      return false;
+    }
+  }, []);
+
   const playLiveVoiceBroadcast = useCallback(
-    (payload: LiveVoiceBroadcastAudioPayload) => {
+    (payload: LiveVoiceBroadcastAudioPayload, options: { ignoreSoundGate?: boolean } = {}) => {
+      if (!options.ignoreSoundGate && !soundEnabledRef.current) {
+        pendingLiveVoicePayloadsRef.current = [];
+        setLiveVoicePermissionPromptVisible(false);
+        liveVoicePlayerRef.current?.stop();
+        stopDigitalHumanSpeaking();
+        console.info('[live.voice_broadcast] playback skipped: live sound is muted', liveVoiceAudioDebugSummary(payload));
+        return;
+      }
       const player = liveVoicePlayerRef.current ?? getLiveVoiceBroadcastAudioPlayer();
       liveVoicePlayerRef.current = player;
-      pendingLiveVoicePayloadRef.current = undefined;
       const audioSummary = liveVoiceAudioDebugSummary(payload);
       console.info('[live.voice_broadcast] playback requested', audioSummary);
-      stopDigitalHumanSpeaking();
       void player.play(payload, { onEnded: stopDigitalHumanSpeaking }).then((result) => {
         console.info('[live.voice_broadcast] playback result', { ...audioSummary, ...result });
         if (result.played) {
+          if (!soundEnabledRef.current) {
+            player.stop();
+            stopDigitalHumanSpeaking();
+            return;
+          }
           setLiveVoicePermissionPromptVisible(false);
           setDigitalHumanSpeaking(true);
           return;
         }
+        if (!soundEnabledRef.current) {
+          pendingLiveVoicePayloadsRef.current = [];
+          setLiveVoicePermissionPromptVisible(false);
+          stopDigitalHumanSpeaking();
+          return;
+        }
         if (result.blocked) {
           console.warn('[live.voice_broadcast] playback blocked; waiting for the next user gesture to unlock audio', { ...audioSummary, ...result });
-          pendingLiveVoicePayloadRef.current = payload;
+          pendingLiveVoicePayloadsRef.current = appendUniqueLiveVoicePendingPayload(pendingLiveVoicePayloadsRef.current, payload);
+          liveVoicePermissionPromptVisibleRef.current = true;
           setLiveVoicePermissionPromptVisible(true);
           Toast.show({ content: t('live.voiceAudioBlocked') });
         } else {
@@ -3815,26 +4010,30 @@ function LiveRoomPage({
   );
 
   const unlockAndPlayPendingLiveVoice = useCallback(() => {
-    const player = liveVoicePlayerRef.current ?? getLiveVoiceBroadcastAudioPlayer();
-    liveVoicePlayerRef.current = player;
-    void player.unlockAudio().then((unlocked) => {
-      const pendingPayload = pendingLiveVoicePayloadRef.current;
-      if (!pendingPayload) return;
-      console.info('[live.voice_broadcast] user gesture unlock attempt', { unlocked, ...liveVoiceAudioDebugSummary(pendingPayload) });
+    if (!soundEnabledRef.current) return;
+    if (liveSoundAutoplayBlockedRef.current) return;
+    void unlockLiveVoiceAudio().then((unlocked) => {
+      const pendingPayloads = pendingLiveVoicePayloadsRef.current;
+      if (!pendingPayloads.length) return;
+      console.info('[live.voice_broadcast] user gesture unlock attempt', { unlocked, pendingCount: pendingPayloads.length });
       if (!unlocked) {
+        liveVoicePermissionPromptVisibleRef.current = true;
         setLiveVoicePermissionPromptVisible(true);
         return;
       }
+      liveVoicePermissionPromptVisibleRef.current = false;
       setLiveVoicePermissionPromptVisible(false);
-      playLiveVoiceBroadcast(pendingPayload);
+      pendingLiveVoicePayloadsRef.current = [];
+      pendingPayloads.forEach((pendingPayload) => playLiveVoiceBroadcast(pendingPayload, { ignoreSoundGate: true }));
     });
-  }, [playLiveVoiceBroadcast]);
+  }, [playLiveVoiceBroadcast, unlockLiveVoiceAudio]);
 
   useEffect(() => {
     liveVoiceUnlockEvents.forEach((eventName) => window.addEventListener(eventName, unlockAndPlayPendingLiveVoice, true));
     return () => {
       liveVoiceUnlockEvents.forEach((eventName) => window.removeEventListener(eventName, unlockAndPlayPendingLiveVoice, true));
-      pendingLiveVoicePayloadRef.current = undefined;
+      pendingLiveVoicePayloadsRef.current = [];
+      liveVoicePermissionPromptVisibleRef.current = false;
       setLiveVoicePermissionPromptVisible(false);
       const player = liveVoicePlayerRef.current ?? getLiveVoiceBroadcastAudioPlayer();
       player.stop();
@@ -4042,6 +4241,8 @@ function LiveRoomPage({
               minIncrement,
               endTsMs: context.currentState.endTsMs,
               userId,
+              userNickname,
+              userAvatarUrl,
               participantCount: participantCountForLot(context.activeLot, context.currentState),
               onlineCount: context.liveStats.onlineCount,
               capPrice: capPriceForLot(context.activeLot)
@@ -4053,7 +4254,7 @@ function LiveRoomPage({
       realtimeSeqCursorRef.current = nextRealtimeSeqByDomain(message, realtimeSeqCursorRef.current);
       lastSeqRef.current = realtimeSeqCursorRef.current.bid ?? lastSeqRef.current;
       syncServerTimeOffset(message.payload);
-      if (message.type === 'bid.accepted') {
+      if (isBidAcceptedRealtimeType(message.type)) {
         const payload = message.payload as Record<string, unknown>;
         const auctionId = String(payload.auctionId ?? latestContext.current.activeLot?.auctionId ?? '');
         const bidderId = String(payload.bidderId ?? payload.leaderBidderId ?? '');
@@ -4061,7 +4262,7 @@ function LiveRoomPage({
         const acceptedLot = context.lots.find((lot) => lot.auctionId === auctionId);
         const previousState = context.activeLot?.auctionId === auctionId ? context.currentState : undefined;
         const previousLeaderId = previousState?.leaderBidderId ?? acceptedLot?.leaderBidderId;
-        const acceptedPrice = Number(payload.currentPrice ?? payload.price ?? previousState?.currentPrice ?? acceptedLot?.currentPrice ?? 0);
+        const acceptedPrice = Number(realtimeBidPriceValue(payload) ?? previousState?.currentPrice ?? acceptedLot?.currentPrice ?? 0);
         if (auctionId && acceptedLot && bidderId === userId) {
           pushAuctionAtmosphereAlert('leading', { auctionId, lot: acceptedLot, price: acceptedPrice });
         } else if (auctionId && acceptedLot && previousLeaderId === userId && bidderId && bidderId !== userId) {
@@ -4137,6 +4338,7 @@ function LiveRoomPage({
           void queryClient.invalidateQueries({ queryKey: ['live-room', roomId] });
           void queryClient.invalidateQueries({ queryKey: ['live-room-lots', roomId] });
           void queryClient.invalidateQueries({ queryKey: ['live-room-stats', roomId] });
+          void queryClient.invalidateQueries({ queryKey: ['auction-ranking', auctionId] });
           if (startedLot && !context.hasBlockingLiveSheet) {
             requestFloatingAuctionCard({
               auctionId,
@@ -4205,6 +4407,7 @@ function LiveRoomPage({
         void queryClient.invalidateQueries({ queryKey: ['my-auction-records'] });
         if (closingAuctionId) {
           void queryClient.invalidateQueries({ queryKey: ['result-order', closingAuctionId] });
+          void queryClient.invalidateQueries({ queryKey: ['auction-ranking', closingAuctionId] });
         }
       }
       if (isLiveSessionLotListChangedMessage(message) && realtimeLiveSessionMessageMatchesRoom(message, latestContext.current.room)) {
@@ -4278,6 +4481,8 @@ function LiveRoomPage({
         activeAuctionId: latestContext.current.activeLot?.auctionId,
         activeAuctionState: latestContext.current.currentState,
         userId,
+        userNickname,
+        userAvatarUrl,
         setLiveStats,
         setLotStates,
         setNotice: pushNotice,
@@ -4286,14 +4491,16 @@ function LiveRoomPage({
         setRankingAnimationSource,
         onChatAck: acknowledgeChatMessage,
         onChatMessage: appendChatMessage,
-        onChatError: failChatMessage,
-        onBidAck: handleBidAck,
-        onBidAccepted: handleBidAcceptedFeedback,
-        onBidRejected: handleBidRejectedFeedback,
-        onSnapshotRequired: () => {
-          void refetchAuctionStateRef.current();
-        }
-      });
+      onChatError: failChatMessage,
+      onBidAck: handleBidAck,
+      onBidAccepted: handleBidAcceptedFeedback,
+      onBidRejected: handleBidRejectedFeedback,
+      onSnapshotRequired: () => {
+        void refetchAuctionStateRef.current();
+        const activeAuctionId = latestContext.current.activeLot?.auctionId;
+        if (activeAuctionId) void queryClient.invalidateQueries({ queryKey: ['auction-ranking', activeAuctionId] });
+      }
+    });
     };
     const controlClient =
       (isTestMode || import.meta.env.VITE_REALTIME_MODE !== 'websocket') && import.meta.env.VITE_MOCK_CONTROL_URL
@@ -4311,20 +4518,20 @@ function LiveRoomPage({
       controlClient?.disconnect();
       client?.disconnect();
     };
-  }, [accessToken, acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, applyRankingUpdate, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, playLiveVoiceBroadcast, pushAuctionAtmosphereAlert, pushNotice, queryClient, requestFloatingAuctionCard, roomId, syncServerTimeOffset, userId]);
+  }, [accessToken, acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, applyRankingUpdate, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, playLiveVoiceBroadcast, pushAuctionAtmosphereAlert, pushNotice, queryClient, requestFloatingAuctionCard, roomId, syncServerTimeOffset, userAvatarUrl, userId, userNickname]);
 
   const enrollMutation = useMutation({
     mutationFn: (auctionId: string) => apiClient.enrollAuction(auctionId),
     onSuccess: (result: EnrollResult) => {
       const auctionId = result.auctionId;
-      const wasEnrolled = latestContext.current.enrolledAuctions.has(auctionId);
+      const participantCount = finiteOptionalParticipantCount(result.participantCount);
       setEnrolledAuctions((prev) => {
         if (prev.has(auctionId)) return prev;
         const next = new Set(prev);
         next.add(auctionId);
         return next;
       });
-      if (!wasEnrolled) {
+      if (participantCount !== undefined) {
         setLotStates((prev) => {
           const context = latestContext.current;
           const lot = context.lots.find((item) => item.auctionId === auctionId);
@@ -4332,7 +4539,6 @@ function LiveRoomPage({
             prev[auctionId] ??
             (context.activeLot?.auctionId === auctionId ? context.currentState : undefined) ??
             (lot ? stateFromLot(lot) : fallbackAuctionState(auctionId));
-          const participantCount = Math.max(finiteParticipantCount(previous.participantCount), finiteParticipantCount(lot?.participantCount)) + 1;
           return {
             ...prev,
             [auctionId]: {
@@ -4348,7 +4554,7 @@ function LiveRoomPage({
             ...current,
             items: current.items.map((lot) =>
               lot.auctionId === auctionId
-                ? { ...lot, participantCount: finiteParticipantCount(lot.participantCount) + 1 }
+                ? { ...lot, participantCount }
                 : lot
             )
           };
@@ -4433,10 +4639,85 @@ function LiveRoomPage({
   const liveLikeCount = (room.likeCount ?? 0) + roomLocalLikeCount;
   const hasLikedRoom = roomLocalLikeCount > 0;
   const liveShopMetaText = t('live.likes', { count: formatCompactNumber(liveLikeCount) });
-  const handleSoundBlocked = useCallback(() => {
-    setSoundEnabled(false);
+  const showSoundBlockedToast = useCallback(() => {
     Toast.show({ content: t('live.soundBlocked') });
   }, []);
+  const handleSoundBlocked = useCallback(() => {
+    if (!soundEnabledRef.current) return;
+    liveSoundAutoplayBlockedRef.current = true;
+    setLiveSoundAutoplayBlocked(true);
+    showSoundBlockedToast();
+  }, [showSoundBlockedToast]);
+  const retryLiveSoundUnlock = useCallback(() => {
+    if (!soundEnabledRef.current) return;
+    if (liveSoundUnlockInFlightRef.current) return;
+    liveSoundUnlockInFlightRef.current = true;
+    soundEnabledRef.current = true;
+    setSoundEnabled(true);
+    const surface = liveVideoSurfaceRef.current;
+    const pendingVoicePayloads = pendingLiveVoicePayloadsRef.current;
+    const unlockPlayback = surface?.setAudiblePlayback(true) ?? Promise.resolve(true);
+    const unlockVoiceAudio = unlockLiveVoiceAudio();
+    void Promise.all([unlockPlayback, unlockVoiceAudio]).then(([played, voiceUnlocked]) => {
+      liveSoundUnlockInFlightRef.current = false;
+      if (!soundEnabledRef.current) return;
+      if (played) {
+        liveSoundAutoplayBlockedRef.current = false;
+        setLiveSoundAutoplayBlocked(false);
+        if (pendingVoicePayloads.length) {
+          if (voiceUnlocked) {
+            liveVoicePermissionPromptVisibleRef.current = false;
+            setLiveVoicePermissionPromptVisible(false);
+            pendingLiveVoicePayloadsRef.current = [];
+            pendingVoicePayloads.forEach((pendingVoicePayload) => playLiveVoiceBroadcast(pendingVoicePayload, { ignoreSoundGate: true }));
+          } else {
+            liveVoicePermissionPromptVisibleRef.current = true;
+            setLiveVoicePermissionPromptVisible(true);
+            showSoundBlockedToast();
+          }
+        } else if (voiceUnlocked) {
+          liveVoicePermissionPromptVisibleRef.current = false;
+          setLiveVoicePermissionPromptVisible(false);
+        }
+        return;
+      }
+      liveSoundAutoplayBlockedRef.current = true;
+      setLiveSoundAutoplayBlocked(true);
+      showSoundBlockedToast();
+    }).catch(() => {
+      liveSoundUnlockInFlightRef.current = false;
+      if (!soundEnabledRef.current) return;
+      liveSoundAutoplayBlockedRef.current = true;
+      setLiveSoundAutoplayBlocked(true);
+      showSoundBlockedToast();
+    });
+  }, [playLiveVoiceBroadcast, showSoundBlockedToast, unlockLiveVoiceAudio]);
+  const toggleLiveSound = useCallback(() => {
+    const surface = liveVideoSurfaceRef.current;
+    if (soundEnabled && !liveSoundAutoplayBlocked) {
+      soundEnabledRef.current = false;
+      liveSoundAutoplayBlockedRef.current = false;
+      liveVoicePermissionPromptVisibleRef.current = false;
+      setSoundEnabled(false);
+      setLiveSoundAutoplayBlocked(false);
+      setLiveVoicePermissionPromptVisible(false);
+      void surface?.setAudiblePlayback(false);
+      stopLiveVoiceBroadcastPlayback();
+      return;
+    }
+    soundEnabledRef.current = true;
+    setSoundEnabled(true);
+    retryLiveSoundUnlock();
+  }, [liveSoundAutoplayBlocked, retryLiveSoundUnlock, soundEnabled, stopLiveVoiceBroadcastPlayback]);
+
+  const handleLiveSoundUnlockGesture = useCallback((event: ReactSyntheticEvent<HTMLElement>) => {
+    if (!soundEnabledRef.current || !liveSoundAutoplayBlockedRef.current) return;
+    if (isLiveSoundUnlockControlTarget(event.target)) return;
+    retryLiveSoundUnlock();
+  }, [retryLiveSoundUnlock]);
+
+  const soundControlActive = soundEnabled && !liveSoundAutoplayBlocked;
+  const liveSoundUnlockPromptVisible = soundEnabled && (liveSoundAutoplayBlocked || liveVoicePermissionPromptVisible);
 
   if (room.status === 'ENDED') {
     return <RoomStatePage room={room} lots={lots} status="ended" onBack={onBack} onPay={(auctionId) => onPay('ord_2001', auctionId)} />;
@@ -4447,8 +4728,8 @@ function LiveRoomPage({
   }
 
   return (
-    <section className="live-page">
-      <LiveRoomVideoSurface room={room} initialMediaPosition={initialMediaPosition} soundEnabled={soundEnabled} onSoundBlocked={handleSoundBlocked} digitalHumanSpeaking={digitalHumanSpeaking} />
+    <section className="live-page" onPointerDownCapture={handleLiveSoundUnlockGesture} onKeyDownCapture={handleLiveSoundUnlockGesture}>
+      <LiveRoomVideoSurface ref={liveVideoSurfaceRef} room={room} initialMediaPosition={initialMediaPosition} soundEnabled={soundControlActive} onSoundBlocked={handleSoundBlocked} digitalHumanSpeaking={digitalHumanSpeaking} />
       <div className="live-gradient" />
       <header className="live-header">
         <button className="live-back" onClick={onBack} aria-label={t('common.back')} type="button">
@@ -4466,13 +4747,14 @@ function LiveRoomPage({
         </div>
         <div className="live-header-right">
           <button
-            className={soundEnabled ? 'live-sound-toggle is-on' : 'live-sound-toggle'}
+            className={soundControlActive ? 'live-sound-toggle is-on' : 'live-sound-toggle'}
             type="button"
-            aria-label={soundEnabled ? t('live.soundDisable') : t('live.soundEnable')}
-            aria-pressed={soundEnabled}
-            onClick={() => setSoundEnabled((value) => !value)}
+            aria-label={soundControlActive ? t('live.soundDisable') : t('live.soundEnable')}
+            aria-pressed={soundControlActive}
+            data-live-sound-unlock-control="true"
+            onClick={toggleLiveSound}
           >
-            {soundEnabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
+            {soundControlActive ? <Volume2 size={13} /> : <VolumeX size={13} />}
           </button>
           <span className="live-watcher-count live-header-watchers" aria-label={t('live.statsOnline', { count: liveStats.onlineCount })}>
             <Users size={12} /> {liveStats.onlineCount}
@@ -4480,13 +4762,13 @@ function LiveRoomPage({
         </div>
       </header>
 
-      {liveVoicePermissionPromptVisible ? (
+      {liveSoundUnlockPromptVisible ? (
         <div className="live-voice-permission" role="alert">
           <div className="live-voice-permission-copy">
             <strong>{t('live.voiceAudioBlockedTitle')}</strong>
             <span>{t('live.voiceAudioBlocked')}</span>
           </div>
-          <button className="live-voice-permission-button" type="button" onClick={unlockAndPlayPendingLiveVoice}>
+          <button className="live-voice-permission-button" type="button" data-live-sound-unlock-control="true" onClick={retryLiveSoundUnlock}>
             <Volume2 size={16} />
             <span>{t('live.voiceAudioAllow')}</span>
           </button>
@@ -4497,6 +4779,8 @@ function LiveRoomPage({
         <LiveRankingRail
           items={ranking}
           userId={userId}
+          userNickname={userNickname}
+          userAvatarUrl={userAvatarUrl}
           collapsed={rankingCollapsed}
           lastBid={lastRankingBidRef.current}
           animateChanges={rankingAnimationSource === 'bid.accepted'}
@@ -4688,22 +4972,46 @@ function LiveAuctionAlertCelebration() {
   );
 }
 
-function LiveRoomVideoSurface({
-  room,
-  initialMediaPosition,
-  soundEnabled,
-  onSoundBlocked,
-  digitalHumanSpeaking
-}: {
+type LiveRoomVideoSurfaceHandle = {
+  setAudiblePlayback: (enabled: boolean) => Promise<boolean>;
+};
+
+type LiveRoomVideoSurfaceProps = {
   room: LiveRoom;
   initialMediaPosition?: PreviewMediaSnapshot;
   soundEnabled: boolean;
   onSoundBlocked: () => void;
   digitalHumanSpeaking?: boolean;
-}) {
+};
+
+const LiveRoomVideoSurface = forwardRef<LiveRoomVideoSurfaceHandle, LiveRoomVideoSurfaceProps>(function LiveRoomVideoSurface({
+  room,
+  initialMediaPosition,
+  soundEnabled,
+  onSoundBlocked,
+  digitalHumanSpeaking
+}, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const appliedInitialMediaKeyRef = useRef<string>();
   const initialMediaKey = useMemo(() => previewMediaSnapshotKey(initialMediaPosition), [initialMediaPosition]);
+  const setAudiblePlayback = useCallback(async (enabled: boolean) => {
+    const video = videoRef.current;
+    if (!video) return true;
+    if (!enabled) {
+      forceMutedVideo(video);
+      void playVideo(video);
+      return true;
+    }
+    enableAudibleVideo(video);
+    const played = await playVideo(video);
+    if (!played) {
+      forceMutedVideo(video);
+      void playVideo(video);
+    }
+    return played;
+  }, []);
+
+  useImperativeHandle(ref, () => ({ setAudiblePlayback }), [setAudiblePlayback]);
 
   const syncRecordedVideoPosition = useCallback(() => {
     const video = videoRef.current;
@@ -4770,7 +5078,7 @@ function LiveRoomVideoSurface({
       <span>{t('live.videoConfigMissing')}</span>
     </div>
   );
-}
+});
 
 function VideoOffIcon() {
   return <VideoOff size={28} />;
@@ -4904,6 +5212,8 @@ function LiveCommentPanel({
 function LiveRankingRail({
   items,
   userId,
+  userNickname,
+  userAvatarUrl,
   collapsed,
   lastBid,
   animateChanges,
@@ -4911,6 +5221,8 @@ function LiveRankingRail({
 }: {
   items: RankingItem[];
   userId: string;
+  userNickname?: string;
+  userAvatarUrl?: string;
   collapsed: boolean;
   lastBid?: RankingBidHint;
   animateChanges: boolean;
@@ -4929,7 +5241,11 @@ function LiveRankingRail({
   const [pinnedCurrentUser, setPinnedCurrentUser] = useState<{ active: boolean; item?: RankingItem }>();
   const slots = useMemo(() => buildRankingSlots(items), [items]);
   const currentUserItem = useMemo(() => items.find((item) => item.bidderId === userId), [items, userId]);
-  const currentUserRowItem = pinnedCurrentUser?.active ? pinnedCurrentUser.item : currentUserItem;
+  const currentUserRowItem = useMemo(
+    () => withCurrentUserAvatar(pinnedCurrentUser?.active ? pinnedCurrentUser.item : currentUserItem, userId, userAvatarUrl),
+    [currentUserItem, pinnedCurrentUser?.active, pinnedCurrentUser?.item, userAvatarUrl, userId]
+  );
+  const currentUserFallbackName = useMemo(() => firstNonEmptyString(userNickname) ?? rankingBidderFallbackName(userId), [userId, userNickname]);
   const setRankRowRef = useCallback(
     (rank: number) => (node: HTMLDivElement | null) => {
       if (node) {
@@ -5044,7 +5360,15 @@ function LiveRankingRail({
             <div ref={dividerRef} className="live-ranking-divider" />
             {animation && animation.kind !== 'price-only' && resolvedAnimationLayout && animation.exitItem ? <LiveRankingExitRow animation={animation} layout={resolvedAnimationLayout} /> : null}
           </div>
-          <LiveRankingRow rank={currentUserRowItem?.rank ?? '-'} item={currentUserRowItem} userId={userId} animation={animation} current rowRef={(node) => (currentRowRef.current = node)} />
+          <LiveRankingRow
+            rank={currentUserRowItem?.rank ?? '-'}
+            item={currentUserRowItem}
+            userId={userId}
+            animation={animation}
+            current
+            currentFallbackName={currentUserFallbackName}
+            rowRef={(node) => (currentRowRef.current = node)}
+          />
           {animation && animation.kind !== 'price-only' && resolvedAnimationLayout ? (
             <LiveRankingGhost animation={animation} layout={resolvedAnimationLayout} />
           ) : null}
@@ -5060,6 +5384,7 @@ function LiveRankingRow({
   userId,
   animation,
   current = false,
+  currentFallbackName,
   rowRef
 }: {
   rank: number | '-';
@@ -5067,6 +5392,7 @@ function LiveRankingRow({
   userId: string;
   animation?: RankingAnimation;
   current?: boolean;
+  currentFallbackName?: string;
   rowRef?: (node: HTMLDivElement | null) => void;
 }) {
   const isPlaceholder = !item && !current;
@@ -5103,10 +5429,8 @@ function LiveRankingRow({
   return (
     <div ref={rowRef} className={rowClassName} data-rank={rank} data-bidder-id={item?.bidderId} data-current-user={current ? 'true' : undefined}>
       <span className={rankClassName}>{item || current ? rank : rank}</span>
-      <span className="live-ranking-avatar" aria-hidden="true">
-        {item?.avatarUrl ? <img src={item.avatarUrl} alt="" /> : <span>{rankingAvatarText(item, current)}</span>}
-      </span>
-      <strong className="live-ranking-name">{item?.nicknameMask ?? (current ? t('live.commentMe') : '')}</strong>
+      <RankingAvatar item={item} fallbackName={currentFallbackName} />
+      <strong className="live-ranking-name">{item?.nicknameMask ?? (current ? currentFallbackName : '')}</strong>
       <b className={priceClassName}>{item ? formatMoney(item.price) : '-'}</b>
     </div>
   );
@@ -5130,9 +5454,7 @@ function LiveRankingGhost({ animation, layout }: { animation: RankingAnimation; 
       }
     >
       <span className="live-ranking-rank is-gold">1</span>
-      <span className="live-ranking-avatar" aria-hidden="true">
-        {animation.movingItem.avatarUrl ? <img src={animation.movingItem.avatarUrl} alt="" /> : <span>{rankingAvatarText(animation.movingItem)}</span>}
-      </span>
+      <RankingAvatar item={animation.movingItem} />
       <strong className="live-ranking-name">{animation.movingItem.nicknameMask}</strong>
       <b className="live-ranking-price is-price-updating">{formatMoney(animation.movingItem.price)}</b>
     </div>
@@ -5154,13 +5476,35 @@ function LiveRankingExitRow({ animation, layout }: { animation: RankingAnimation
       }
     >
       <span className="live-ranking-rank is-plain">{animation.exitItem.rank}</span>
-      <span className="live-ranking-avatar" aria-hidden="true">
-        {animation.exitItem.avatarUrl ? <img src={animation.exitItem.avatarUrl} alt="" /> : <span>{rankingAvatarText(animation.exitItem)}</span>}
-      </span>
+      <RankingAvatar item={animation.exitItem} />
       <strong className="live-ranking-name">{animation.exitItem.nicknameMask}</strong>
       <b className="live-ranking-price">{formatMoney(animation.exitItem.price)}</b>
     </div>
   );
+}
+
+function RankingAvatar({ item, fallbackName }: { item?: RankingItem; fallbackName?: string }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const avatarUrl = item?.avatarUrl;
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [avatarUrl]);
+
+  return (
+    <span className="live-ranking-avatar" aria-hidden="true">
+      {avatarUrl && !imageFailed ? <img src={avatarUrl} alt="" onError={() => setImageFailed(true)} /> : <span>{rankingAvatarText(item, fallbackName)}</span>}
+    </span>
+  );
+}
+
+function withCurrentUserAvatar(item: RankingItem | undefined, userId: string, userAvatarUrl?: string): RankingItem | undefined {
+  const avatarUrl = firstNonEmptyString(item?.avatarUrl, item?.bidderId === userId ? userAvatarUrl : undefined);
+  if (!item || !avatarUrl || item.avatarUrl === avatarUrl) return item;
+  return {
+    ...item,
+    avatarUrl
+  };
 }
 
 function buildRankingSlots(items: RankingItem[]): Array<{ rank: number; item?: RankingItem }> {
@@ -5183,7 +5527,7 @@ function buildRankingAnimation(previousItems: RankingItem[], nextItems: RankingI
   const fallbackMovingItem: RankingItem = previousBidderItem ?? {
     rank: 1,
     bidderId,
-    nicknameMask: bidderId === userId ? t('live.commentMe') : bidderId,
+    nicknameMask: rankingBidderFallbackName(bidderId),
     price: lastBid?.price ?? 0,
     bidTsMs: lastBid?.bidTsMs ?? Date.now()
   };
@@ -5322,7 +5666,7 @@ function rankingItemsEqual(previousItems: RankingItem[], nextItems: RankingItem[
   if (previousItems.length !== nextItems.length) return false;
   return previousItems.every((previousItem, index) => {
     const nextItem = nextItems[index];
-    return nextItem && previousItem.rank === nextItem.rank && previousItem.bidderId === nextItem.bidderId && previousItem.price === nextItem.price && previousItem.bidTsMs === nextItem.bidTsMs;
+    return nextItem && previousItem.rank === nextItem.rank && previousItem.bidderId === nextItem.bidderId && previousItem.price === nextItem.price && previousItem.bidTsMs === nextItem.bidTsMs && previousItem.avatarUrl === nextItem.avatarUrl;
   });
 }
 
@@ -5337,13 +5681,21 @@ function rankingSnapshotItemsEqual(previousItems: RankingItem[], nextItems: Rank
       previousItem.rank === nextItem.rank &&
       previousItem.bidderId === nextItem.bidderId &&
       previousItem.price === nextItem.price &&
-      previousItem.nicknameMask === nextItem.nicknameMask
+      previousItem.nicknameMask === nextItem.nicknameMask &&
+      previousItem.avatarUrl === nextItem.avatarUrl
     );
   });
 }
 
-function rankingAvatarText(item?: RankingItem, current = false): string {
-  const name = item?.nicknameMask ?? (current ? t('live.commentMe') : '');
+function shouldApplyRankingSnapshot(currentItems: RankingItem[], snapshotItems: RankingItem[]): boolean {
+  if (rankingSnapshotItemsEqual(currentItems, snapshotItems)) return false;
+  if (!currentItems.length) return true;
+  if (!snapshotItems.length) return false;
+  return Math.max(...snapshotItems.map((item) => item.price)) >= Math.max(...currentItems.map((item) => item.price));
+}
+
+function rankingAvatarText(item?: RankingItem, fallbackName = ''): string {
+  const name = item?.nicknameMask ?? fallbackName;
   return name.trim().slice(0, 1) || '-';
 }
 
@@ -5427,6 +5779,8 @@ interface RealtimeHandlerOptions {
   activeAuctionId?: string;
   activeAuctionState?: AuctionState;
   userId: string;
+  userNickname?: string;
+  userAvatarUrl?: string;
   setLiveStats: (updater: (prev: LiveRoomStats) => LiveRoomStats) => void;
   setLotStates: (updater: (prev: Record<string, AuctionState>) => Record<string, AuctionState>) => void;
   setNotice: (notice: string) => void;
@@ -5443,15 +5797,17 @@ interface RealtimeHandlerOptions {
 }
 
 function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandlerOptions) {
-  if (message.type === 'room.online') {
-    const payload = message.payload as Record<string, unknown>;
-    const nextOnlineCount = realtimeOptionalNumber(payload.online ?? payload.count ?? payload.participantCount);
-    options.setLiveStats((prev) => {
-      return {
+  if (isLiveStatsRealtimeType(message.type)) {
+    const payload = realtimePayloadRecord(message.payload);
+    const nextOnlineCount = realtimeOptionalNumber(realtimeOnlineCountValue(payload));
+    const nextWatcherCount = realtimeOptionalNumber(realtimeWatcherCountValue(payload));
+    if (nextOnlineCount !== undefined || nextWatcherCount !== undefined) {
+      options.setLiveStats((prev) => ({
         ...prev,
-        onlineCount: nextOnlineCount === undefined ? prev.onlineCount : nextOnlineCount
-      };
-    });
+        onlineCount: nextOnlineCount === undefined ? prev.onlineCount : nextOnlineCount,
+        watcherCount: nextWatcherCount === undefined ? prev.watcherCount : nextWatcherCount
+      }));
+    }
   }
   if (message.type === 'room.snapshot') {
     const payload = realtimePayloadRecord(message.payload);
@@ -5524,11 +5880,11 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
     options.onBidRejected?.(realtimeMessageRequestId(message, payload), payload);
     options.setNotice(formatBidRejectedMessage(payload));
   }
-  if (message.type === 'bid.accepted') {
+  if (isBidAcceptedRealtimeType(message.type)) {
     const payload = message.payload as Record<string, unknown>;
     updateLotStateFromBidPayload(payload, options, true);
     options.setRankingAnimationSource('bid.accepted');
-    options.applyRankingUpdate((prev) => mergeRealtimeBidIntoRankingItems(prev, payload, options.userId, options.activeAuctionId));
+    options.applyRankingUpdate((prev) => mergeRealtimeBidIntoRankingItems(prev, payload, options.userId, options.activeAuctionId, options.userNickname, options.userAvatarUrl));
     options.onBidAccepted?.(realtimeMessageRequestId(message, payload), payload);
     options.setNotice(String(payload.bidderId ?? payload.leaderBidderId) === options.userId ? t('auction.bidAccepted') : t('live.chat.bid'));
   }
@@ -5536,7 +5892,7 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
     const payload = realtimePayloadRecord(message.payload);
     const auctionId = String(payload.auctionId ?? '').trim();
     if (options.activeAuctionId && auctionId && auctionId !== options.activeAuctionId) return;
-    const nextRanking = normalizeRealtimeRankingItems(payload.ranking);
+    const nextRanking = normalizeRealtimeRankingItems(extractRealtimeRankingItems(payload), options.userId, options.userNickname, options.userAvatarUrl);
     if (!rankingSnapshotItemsEqual(options.getCurrentRanking(), nextRanking)) {
       options.setRankingAnimationSource('snapshot');
       options.applyRankingUpdate(() => nextRanking);
@@ -6151,6 +6507,12 @@ function BidSheet({
   }, [feedback.status, lot, state]);
 
   useEffect(() => {
+    const nextSteps = Math.max(1, Math.min(maxBidSteps, stepCount));
+    if (nextSteps !== stepCount) setStepCount(nextSteps);
+    setSelectedPrice(getQuickBidPrice(rule, nextSteps));
+  }, [rule.currentPrice, rule.minIncrement, rule.capPrice, maxBidSteps, stepCount]);
+
+  useEffect(() => {
     setClosedAtMs((current) => {
       if (!isClosed) return undefined;
       return current ?? nowMs;
@@ -6606,6 +6968,10 @@ function finiteParticipantCount(value: number | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
+function finiteOptionalParticipantCount(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : undefined;
+}
+
 function participantCountForLot(lot: LiveRoomLot, state?: AuctionState): number {
   return Math.max(finiteParticipantCount(lot.participantCount), finiteParticipantCount(state?.participantCount));
 }
@@ -6624,9 +6990,42 @@ function realtimePayloadRecord(payload: unknown): Record<string, unknown> {
   return payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
 }
 
+function firstRealtimeDefined(...values: unknown[]): unknown {
+  return values.find((value) => value !== undefined && value !== null);
+}
+
+function isLiveStatsRealtimeType(type: string): boolean {
+  return type === 'room.online' || type === 'room.updated' || type === 'live.status' || type === 'auction.closed' || type === 'auction.ended' || type === 'lot.ended' || type === 'live_session.ended';
+}
+
+function realtimeOnlineCountValue(payload: Record<string, unknown>): unknown {
+  return firstRealtimeDefined(payload.online, payload.onlineCount, payload.online_count, payload.count, payload.viewerCount, payload.viewer_count, payload.audienceCount, payload.audience_count);
+}
+
+function realtimeWatcherCountValue(payload: Record<string, unknown>): unknown {
+  return firstRealtimeDefined(payload.watcherCount, payload.watcher_count, payload.viewerTotal, payload.viewer_total, payload.viewerCount, payload.viewer_count, payload.audienceCount, payload.audience_count);
+}
+
+function mergeLiveRoomStats(previous: LiveRoomStats, next: LiveRoomStats): LiveRoomStats {
+  return {
+    ...previous,
+    ...next,
+    onlineCount: Number.isFinite(next.onlineCount) ? next.onlineCount : previous.onlineCount,
+    watcherCount: Number.isFinite(next.watcherCount) ? next.watcherCount : previous.watcherCount
+  };
+}
+
 function realtimeMessageRequestId(message: Pick<RealtimeMessage, 'requestId'>, payload: Record<string, unknown>): string | undefined {
   const requestId = String(message.requestId ?? payload.requestId ?? '').trim();
   return requestId || undefined;
+}
+
+function isBidAcceptedRealtimeType(type: string): boolean {
+  return type === 'bid.accepted' || type === 'bid.accept';
+}
+
+function realtimeBidPriceValue(payload: Record<string, unknown>): unknown {
+  return payload.currentPrice ?? payload.current_price ?? payload.amount ?? payload.price;
 }
 
 function updateLotStateFromBidPayload(payload: Record<string, unknown>, options: RealtimeHandlerOptions, incrementMissingBidCount: boolean) {
@@ -6647,7 +7046,7 @@ function updateLotStateFromBidPayload(payload: Record<string, unknown>, options:
         ...previous,
         auctionId,
         status: 'RUNNING',
-        currentPrice: realtimeNumber(payload.currentPrice ?? payload.price, previous.currentPrice ?? 0),
+        currentPrice: realtimeNumber(realtimeBidPriceValue(payload), previous.currentPrice ?? 0),
         leaderBidderId: hasLeader ? String(payload.leaderBidderId ?? payload.bidderId) : previous.leaderBidderId,
         bidCount: nextBidCount,
         participantCount: payload.participantCount === undefined ? previous.participantCount : realtimeNumber(payload.participantCount, previous.participantCount ?? 0),
@@ -6709,53 +7108,70 @@ function parseRealtimeTimestampMs(value: unknown, fallback: number): number {
   return fallback;
 }
 
-function normalizeRealtimeRankingItems(value: unknown): RankingItem[] {
+function extractRealtimeRankingItems(payload: Record<string, unknown>): unknown[] {
+  const items = Array.isArray(payload.ranking) ? payload.ranking : Array.isArray(payload.items) ? payload.items : [];
+  const currentUserItem = payload.currentUserItem;
+  if (!currentUserItem || typeof currentUserItem !== 'object') return items;
+  return [...items, currentUserItem];
+}
+
+function normalizeRealtimeRankingItems(value: unknown, userId = '', userNickname?: string, userAvatarUrl?: string): RankingItem[] {
   if (!Array.isArray(value)) return [];
   const fallbackTsMs = Date.now();
-  return value.flatMap((item, index) => {
+  const normalized = value.flatMap((item, index) => {
     if (!item || typeof item !== 'object') return [];
     const raw = item as Record<string, unknown>;
-    const bidderId = String(raw.bidderId ?? '').trim();
-    const price = Number(raw.price);
+    const bidderId = String(raw.bidderId ?? raw.bidder_id ?? raw.userId ?? raw.user_id ?? '').trim();
+    const price = Number(realtimeBidPriceValue(raw));
     if (!bidderId || !Number.isFinite(price)) return [];
     const rank = Number(raw.rank);
-    const nicknameMask = String(raw.bidderNickname ?? bidderId).trim() || bidderId;
+    const { nickname, nicknameMask } = resolveRankingDisplayName(raw, bidderId, userId, userNickname);
     return [
       {
         rank: Number.isFinite(rank) && rank > 0 ? rank : index + 1,
         bidderId,
+        nickname,
         nicknameMask,
-        avatarUrl: undefined,
+        avatarUrl: rankingAvatarUrl(raw, bidderId, userId, userAvatarUrl),
         price,
-        bidTsMs: fallbackTsMs
+        bidTsMs: parseRealtimeTimestampMs(raw.bidTsMs ?? raw.createdAtMs ?? raw.createdAt ?? raw.serverTime, fallbackTsMs)
       }
     ];
   });
+  const byBidder = new Map<string, RankingItem>();
+  normalized.forEach((item) => byBidder.set(item.bidderId, item));
+  return [...byBidder.values()];
 }
 
-function mergeRealtimeBidIntoRankingItems(previousItems: RankingItem[], payload: Record<string, unknown>, userId: string, activeAuctionId?: string): RankingItem[] {
+function mergeRealtimeBidIntoRankingItems(previousItems: RankingItem[], payload: Record<string, unknown>, userId: string, activeAuctionId?: string, userNickname?: string, userAvatarUrl?: string): RankingItem[] {
   const auctionId = String(payload.auctionId ?? '').trim();
   if (activeAuctionId && auctionId && auctionId !== activeAuctionId) return previousItems;
-  const bidderId = String(payload.bidderId ?? payload.leaderBidderId ?? '').trim();
+  const bidderId = String(payload.bidderId ?? payload.bidder_id ?? payload.leaderBidderId ?? payload.userId ?? payload.user_id ?? '').trim();
   if (!bidderId) return previousItems;
   const previousItem = previousItems.find((item) => item.bidderId === bidderId);
-  const price = realtimeNumber(payload.price ?? payload.currentPrice, previousItem?.price ?? Number.NaN);
+  const price = realtimeNumber(realtimeBidPriceValue(payload), previousItem?.price ?? Number.NaN);
   if (!Number.isFinite(price)) return previousItems;
-  const rawNickname = String(payload.bidderNickname ?? '').trim();
-  const nicknameMask = rawNickname || previousItem?.nicknameMask || (bidderId === userId ? t('live.commentMe') : bidderId);
+  const resolvedName = resolveRankingDisplayName(payload, bidderId, userId, userNickname);
+  const nickname = resolvedName.nickname ?? previousItem?.nickname;
+  const nicknameMask = resolvedName.nickname ?? previousItem?.nicknameMask ?? resolvedName.nicknameMask;
+  const avatarUrl = rankingAvatarUrl(payload, bidderId, userId, userAvatarUrl) ?? previousItem?.avatarUrl;
   const bidTsMs = parseRealtimeTimestampMs(payload.bidTsMs ?? payload.createdAtMs ?? payload.createdAt ?? payload.serverTime, Date.now());
   const bidItem: RankingItem = previousItem
     ? {
         ...previousItem,
         rank: 1,
+        nickname,
         nicknameMask,
+        avatarUrl,
         price,
         bidTsMs
       }
     : {
         rank: 1,
         bidderId,
+        nickname,
         nicknameMask,
+        avatarUrl,
         price,
         bidTsMs
       };
@@ -6766,6 +7182,56 @@ function mergeRealtimeBidIntoRankingItems(previousItems: RankingItem[], payload:
   const topItems = ranked.slice(0, 10);
   const currentUserItem = userId ? ranked.find((item) => item.bidderId === userId) : undefined;
   return currentUserItem && !topItems.some((item) => item.bidderId === userId) ? [...topItems, currentUserItem] : topItems;
+}
+
+function resolveRankingDisplayName(raw: Record<string, unknown>, bidderId: string, userId = '', userNickname?: string): Pick<RankingItem, 'nickname' | 'nicknameMask'> {
+  const rawNickname = firstNonEmptyString(
+    raw.nickname,
+    raw.userNickname,
+    raw.user_nickname,
+    raw.bidderName,
+    raw.bidderNickname,
+    raw.nicknameMask
+  );
+  const nickname = isSelfRankingAlias(rawNickname) ? firstNonEmptyString(bidderId === userId ? userNickname : undefined) : (rawNickname ?? (bidderId === userId ? firstNonEmptyString(userNickname) : undefined));
+  return {
+    nickname,
+    nicknameMask: nickname ?? rankingBidderFallbackName(bidderId)
+  };
+}
+
+function isSelfRankingAlias(value?: string): boolean {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === '我' || normalized === 'me';
+}
+
+function firstNonEmptyString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const text = typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+    if (text) return text;
+  }
+  return undefined;
+}
+
+function rankingBidderFallbackName(bidderId: string): string {
+  const suffix = bidderId.replace(/[^\p{L}\p{N}]/gu, '').slice(-2).toUpperCase();
+  return suffix ? `用户**${suffix}` : t('common.demoUser');
+}
+
+function rankingAvatarUrl(raw: Record<string, unknown>, bidderId = '', userId = '', userAvatarUrl?: string): string | undefined {
+  return firstNonEmptyString(
+    raw.avatarUrl,
+    raw.avatar_url,
+    raw.avatar,
+    raw.userAvatarUrl,
+    raw.user_avatar_url,
+    raw.userAvatar,
+    raw.bidderAvatarUrl,
+    raw.bidder_avatar_url,
+    raw.bidderAvatar,
+    bidderId && bidderId === userId ? userAvatarUrl : undefined
+  );
 }
 
 function bidRuleFromLot(lot: LiveRoomLot, state: AuctionState): BidRuleInput {

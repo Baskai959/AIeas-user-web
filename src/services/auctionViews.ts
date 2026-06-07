@@ -2,7 +2,7 @@ import type { AuctionState, AuctionStatus, LiveRoom, LiveRoomLot, MyAuctionTabKe
 
 export const myAuctionTabKeys: MyAuctionTabKey[] = ['all', 'pendingBid', 'pendingPay', 'pendingShipment', 'pendingReceipt', 'completed'];
 
-const paidDepositStatuses = new Set(['PAID', 'FROZEN', 'APPLIED', 'RELEASED', 'REFUNDED']);
+const paidDepositStatuses = new Set(['PAID', 'FROZEN', 'APPLIED', 'CAPTURED', 'RELEASED', 'REFUNDED']);
 const pendingBidStatuses = new Set<AuctionStatus>(['READY', 'WARMING_UP', 'RUNNING', 'EXTENDED']);
 const activeLotStatuses = new Set<AuctionStatus>(['RUNNING', 'EXTENDED', 'HAMMER_PENDING']);
 const upcomingLotStatuses = new Set<AuctionStatus>(['READY', 'WARMING_UP']);
@@ -32,7 +32,7 @@ export function groupAuctionRecords(records: UserAuctionRecord[]): Record<MyAuct
 }
 
 export function classifyAuctionRecord(record: UserAuctionRecord): MyAuctionTabKey | undefined {
-  if (!hasPaidDeposit(record)) return undefined;
+  if (!record.order && !hasPaidDeposit(record)) return undefined;
   if (!record.order && pendingBidStatuses.has(record.lot.status)) return 'pendingBid';
   if (isPendingPayOrder(record.order)) return 'pendingPay';
   if (isPaidOrder(record.order) && record.order?.fulfillmentStatus === 'UNSHIPPED') return 'pendingShipment';
@@ -74,7 +74,7 @@ function isPendingPayOrder(order?: Order): boolean {
   if (isClosedOrder(order)) return false;
   const status = normalizeOrderState(order.status);
   const payStatus = normalizeOrderState(order.payStatus);
-  return payStatus === 'UNPAID' || payStatus === 'PENDING' || status === 'PENDING_PAY' || status === 'CREATED';
+  return payStatus === 'UNPAID' || payStatus === 'PENDING' || status === 'PENDING_PAY' || status === 'PENDING_PAYMENT' || status === 'DEAL' || status === 'CREATED';
 }
 
 function isPaidOrder(order?: Order): boolean {

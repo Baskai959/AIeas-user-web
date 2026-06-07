@@ -2,6 +2,7 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Toast } from 'antd-mobile';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { getMessage } from './i18n/messages';
@@ -21,7 +22,17 @@ const detailCollapseRankingText = '收起';
 type BackendRankingTestEntry = {
   rank: number;
   bidderId: string;
-  bidderNickname: string;
+  bidderNickname?: string;
+  nickname?: string;
+  user_nickname?: string;
+  userNickname?: string;
+  bidderName?: string;
+  avatarUrl?: string;
+  avatar_url?: string;
+  userAvatarUrl?: string;
+  user_avatar_url?: string;
+  bidderAvatarUrl?: string;
+  bidder_avatar_url?: string;
   price: number;
 };
 
@@ -242,6 +253,15 @@ const api = {
     userId: profile.userId ?? 'u1',
     nickname: profile.nickname ?? 'Buyer One',
     avatarUrl: profile.avatarUrl,
+    reminderCount: 1,
+    favoriteCount: 2,
+    followingCount: 3,
+    footprintCount: 4
+  })),
+  uploadMyAvatar: vi.fn(async (avatar: Blob) => ({
+    userId: 'u1',
+    nickname: 'Buyer One',
+    avatarUrl: avatar.size > 0 ? 'https://cdn.example.com/avatar.jpg' : 'https://cdn.example.com/avatar-empty.jpg',
     reminderCount: 1,
     favoriteCount: 2,
     followingCount: 3,
@@ -678,9 +698,6 @@ describe('App flow', () => {
     expect(document.querySelector('.live-header-bidders')).not.toBeInTheDocument();
     const liveVideo = screen.getByTestId('live-room-video') as HTMLVideoElement;
     expect(liveVideo).toHaveAttribute('src', '/media/live-room-demo.mp4');
-    expect(liveVideo.muted).toBe(true);
-    expect(liveVideo.volume).toBe(0);
-    await user.click(screen.getByRole('button', { name: getMessage('live.soundEnable') }));
     await waitFor(() => expect(liveVideo.muted).toBe(false));
     expect(liveVideo.volume).toBe(1);
     expect(screen.getByRole('button', { name: getMessage('live.soundDisable') })).toBeInTheDocument();
@@ -691,6 +708,89 @@ describe('App flow', () => {
     expect(await screen.findByText('珠宝严选直播间')).toBeInTheDocument();
     expect(window.location.pathname).toBe('/');
     expect(window.location.search).toBe('?focusRoomId=room_1001');
+  });
+
+  it('attempts audible play when entering a live room and keeps sound enabled after it succeeds', async () => {
+    let audibleAttempts = 0;
+    let resolveFirstAudiblePlay: () => void = () => undefined;
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (this: HTMLMediaElement) {
+      if (!this.muted && this.volume === 1) {
+        audibleAttempts += 1;
+        if (audibleAttempts === 1) {
+          return new Promise<void>((resolve) => {
+            resolveFirstAudiblePlay = resolve;
+          });
+        }
+      }
+      return Promise.resolve();
+    });
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const liveVideo = await screen.findByTestId('live-room-video') as HTMLVideoElement;
+
+    await waitFor(() => expect(audibleAttempts).toBe(1));
+    expect(liveVideo.muted).toBe(false);
+    expect(liveVideo.volume).toBe(1);
+
+    await act(async () => {
+      resolveFirstAudiblePlay();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(liveVideo.muted).toBe(false));
+    expect(liveVideo.volume).toBe(1);
+    expect(screen.getByRole('button', { name: getMessage('live.soundDisable') })).toBeInTheDocument();
+    expect(audibleAttempts).toBeGreaterThanOrEqual(1);
+  });
+
+  it('shows unlock guidance when entry audible autoplay is rejected and hides it after a user gesture succeeds', async () => {
+    let audibleAttempts = 0;
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (this: HTMLMediaElement) {
+      if (!this.muted && this.volume === 1) {
+        audibleAttempts += 1;
+        return audibleAttempts === 1 ? Promise.reject(new Error('browser blocks audible playback')) : Promise.resolve();
+      }
+      return Promise.resolve();
+    });
+    const toastSpy = vi.spyOn(Toast, 'show');
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+    const liveVideo = await screen.findByTestId('live-room-video') as HTMLVideoElement;
+
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledWith({ content: getMessage('live.soundBlocked') }));
+    const blockedToastContent = String(toastSpy.mock.calls[toastSpy.mock.calls.length - 1]?.[0]?.content ?? '');
+    expect(blockedToastContent).toMatch(/浏览器|点击|自动播放|权限|设置/);
+    expect(blockedToastContent).not.toMatch(/再次点击|重试/);
+    expect(screen.getByRole('alert')).toHaveTextContent(getMessage('live.voiceAudioBlockedTitle'));
+    expect(liveVideo.muted).toBe(true);
+    expect(liveVideo.volume).toBe(0);
+    expect(screen.getAllByRole('button', { name: getMessage('live.soundEnable') })).toHaveLength(2);
+
+    await user.click(within(screen.getByRole('alert')).getByRole('button', { name: getMessage('live.voiceAudioAllow') }));
+
+    await waitFor(() => expect(liveVideo.muted).toBe(false));
+    expect(liveVideo.volume).toBe(1);
+    expect(audibleAttempts).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: getMessage('live.soundDisable') })).toBeInTheDocument();
+  });
+
+  it('does not show the entry unlock guidance after the user actively mutes live sound', async () => {
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+    const liveVideo = await screen.findByTestId('live-room-video') as HTMLVideoElement;
+
+    await waitFor(() => expect(liveVideo.muted).toBe(false));
+    await user.click(screen.getByRole('button', { name: getMessage('live.soundDisable') }));
+
+    await waitFor(() => expect(liveVideo.muted).toBe(true));
+    expect(liveVideo.volume).toBe(0);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: getMessage('live.soundEnable') })).toBeInTheDocument();
   });
 
   it('updates the live header online count from realtime presence events', async () => {
@@ -717,10 +817,52 @@ describe('App flow', () => {
     expect(participantsMetric()).toHaveTextContent('128');
 
     await act(async () => {
+      emitLatestMockControl(sockets, { type: 'auction.ended', payload: { auctionId: 'auc_2001', status: 'CLOSED_WON', serverTime: new Date(now).toISOString() } });
+    });
+
+    expect(screen.getByLabelText(getMessage('live.statsOnline', undefined, { count: '329' }))).toHaveTextContent('329');
+
+    await act(async () => {
+      emitLatestMockControl(sockets, { type: 'room.updated', payload: { online_count: 0, viewer_count: 1209 } });
+    });
+
+    expect(screen.getByLabelText(getMessage('live.statsOnline', undefined, { count: '0' }))).toHaveTextContent('0');
+
+    await act(async () => {
       emitLatestMockControl(sockets, { type: 'auction.participant_updated', payload: { auctionId: 'auc_2001', participantCount: 129 } });
     });
 
     expect(participantsMetric()).toHaveTextContent('129');
+  });
+
+  it('keeps the current online count when auction end refresh returns stats without audience fields', async () => {
+    const sockets = installMockControlSocket();
+    vi.mocked(api.getLiveRoomStats)
+      .mockResolvedValueOnce({ roomId: 'room_1001', onlineCount: 328, watcherCount: 1208, bidCount: 36 })
+      .mockResolvedValueOnce({ roomId: 'room_1001', onlineCount: Number.NaN, watcherCount: Number.NaN, bidCount: 36 });
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+
+    expect(await screen.findByLabelText(getMessage('live.statsOnline', undefined, { count: '328' }))).toBeInTheDocument();
+    await waitFor(() => expect(sockets.length).toBeGreaterThan(0));
+
+    await act(async () => {
+      emitLatestMockControl(sockets, {
+        type: 'auction.closed',
+        payload: {
+          auctionId: 'auc_2001',
+          status: 'CLOSED_WON',
+          winnerId: 'u2',
+          price: 150100,
+          closedAt: new Date(now).toISOString(),
+          serverTime: new Date(now).toISOString()
+        }
+      });
+    });
+
+    await waitFor(() => expect(api.getLiveRoomStats).toHaveBeenCalledTimes(2));
+    expect(screen.getByLabelText(getMessage('live.statsOnline', undefined, { count: '328' }))).toHaveTextContent('328');
   });
 
   it('renders a release-ready mobile login screen and submits credentials', async () => {
@@ -1439,7 +1581,8 @@ describe('App flow', () => {
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
     const orders = within(screen.getByLabelText(getMessage('profile.myOrders')));
     await user.click(orders.getByText(getMessage('profile.pendingPay')).closest('button') as HTMLElement);
-    await user.click(await screen.findByRole('button', { name: getMessage('profile.payNow') }));
+    const pendingPayRecord = await screen.findByTestId('order-record-ord_pending_pay');
+    await user.click(within(pendingPayRecord).getByRole('button', { name: getMessage('profile.payNow') }));
 
     expect(await screen.findByText(getMessage('pay.title'))).toBeInTheDocument();
     expect(window.location.pathname).toBe('/pay/ord_pending_pay');
@@ -1529,6 +1672,112 @@ describe('App flow', () => {
     expect(within(row).queryByRole('button', { name: getMessage('profile.payNow') })).not.toBeInTheDocument();
   });
 
+  it('shows backend orders even when participation records are missing', async () => {
+    vi.mocked(api.listMyAuctionRecords).mockResolvedValueOnce({
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 20
+    });
+    vi.mocked(api.listMyOrders).mockResolvedValueOnce({
+      items: [
+        {
+          id: '57024847413760',
+          auctionId: '56973840220672',
+          liveSessionId: '90000021',
+          buyerId: '1001',
+          merchantId: '2001',
+          amount: 1700,
+          status: 'PAID',
+          payStatus: 'PAID',
+          fulfillmentStatus: 'SHIPPED',
+          lotSnapshot: {
+            auctionId: '56973840220672',
+            liveSessionId: '90000021',
+            title: '复古机械表',
+            coverUrl: '/api/v1/images/watch.png',
+            dealPrice: 1700,
+            depositAmount: 0,
+            closedAt: '2026-06-07T08:36:23.28Z'
+          }
+        }
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20
+    });
+    seedSession();
+    renderWithRouter('/orders?tab=pendingReceipt');
+
+    const row = (await screen.findByText('复古机械表')).closest('.record-card') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(within(row).getByText(getMessage('profile.pendingReceipt'))).toBeInTheDocument();
+    expect(row).toHaveAttribute('data-order-id', '57024847413760');
+  });
+
+  it('keeps captured zero-deposit orders visible when participation records already exist', async () => {
+    const order = {
+      id: '57111661117952',
+      auctionId: '57111660462592',
+      liveSessionId: '90000021',
+      buyerId: '1001',
+      merchantId: '2001',
+      amount: 1700,
+      status: 'PAID',
+      payStatus: 'PAID',
+      fulfillmentStatus: 'SHIPPED' as const,
+      lotSnapshot: {
+        auctionId: '57111660462592',
+        liveSessionId: '90000021',
+        title: '已发货零保证金拍品',
+        coverUrl: '/api/v1/images/watch.png',
+        dealPrice: 1700,
+        depositAmount: 0,
+        closedAt: '2026-06-07T08:36:23.28Z'
+      }
+    };
+    vi.mocked(api.listMyAuctionRecords).mockResolvedValueOnce({
+      items: [
+        {
+          id: 'dep_57111660462592',
+          userId: '1001',
+          lot: {
+            id: 'lot_57111660462592',
+            auctionId: '57111660462592',
+            roomId: '90000021',
+            title: '已发货零保证金拍品',
+            status: 'SETTLED',
+            startPrice: 0,
+            currentPrice: 1700,
+            finalPrice: 1700,
+            endTsMs: now,
+            depositAmount: 0
+          },
+          order,
+          depositAmount: 0,
+          depositStatus: 'CAPTURED',
+          enrolledAt: '2026-06-07T08:30:00Z'
+        }
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20
+    });
+    vi.mocked(api.listMyOrders).mockResolvedValueOnce({
+      items: [order],
+      total: 1,
+      page: 1,
+      page_size: 20
+    });
+    seedSession();
+    renderWithRouter('/orders?tab=pendingReceipt');
+
+    const row = (await screen.findByText('已发货零保证金拍品')).closest('.record-card') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(within(row).getByText(getMessage('profile.pendingReceipt'))).toBeInTheDocument();
+    expect(row).toHaveAttribute('data-order-id', '57111661117952');
+  });
+
   it('shows a closed payment state when the order detail has timed out', async () => {
     vi.mocked(api.getOrder).mockResolvedValueOnce({
       id: 'ord_pending_pay',
@@ -1567,7 +1816,8 @@ describe('App flow', () => {
     const user = userEvent.setup();
 
     expect(await screen.findByText('Pending Payment Lot')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: getMessage('profile.payNow') }));
+    const pendingPayRecord = screen.getByTestId('order-record-ord_pending_pay');
+    await user.click(within(pendingPayRecord).getByRole('button', { name: getMessage('profile.payNow') }));
     expect(window.location.pathname).toBe('/pay/ord_pending_pay');
 
     await user.click(screen.getByRole('button', { name: getMessage('pay.submit') }));
@@ -1660,6 +1910,49 @@ describe('App flow', () => {
     expect(avatarImage.getAttribute('style')).toContain('translate(68px, 47px) scale(1.58)');
   });
 
+  it('uploads the cropped avatar file and updates the profile avatar immediately', async () => {
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:avatar') });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+    vi.stubGlobal(
+      'Image',
+      class {
+        onload: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        naturalWidth = 512;
+        naturalHeight = 512;
+        set src(_value: string) {
+          window.setTimeout(() => this.onload?.(), 0);
+        }
+      }
+    );
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      clearRect: vi.fn(),
+      save: vi.fn(),
+      beginPath: vi.fn(),
+      arc: vi.fn(),
+      clip: vi.fn(),
+      drawImage: vi.fn(),
+      restore: vi.fn()
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
+      callback(new Blob(['cropped-avatar'], { type: 'image/jpeg' }));
+    });
+    const { container } = renderApp();
+    const user = userEvent.setup();
+
+    await loginAsBuyer(user);
+    await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
+    await user.click(await screen.findByRole('button', { name: getMessage('profile.viewAvatar') }));
+
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
+    fireEvent.change(fileInput as HTMLInputElement, { target: { files: [new File(['avatar'], 'avatar.png', { type: 'image/png' })] } });
+    await user.click(await screen.findByRole('button', { name: getMessage('profile.useAvatar') }));
+
+    await waitFor(() => expect(api.uploadMyAvatar).toHaveBeenCalledWith(expect.any(File), expect.objectContaining({ userId: 'u1', nickname: 'Buyer One' })));
+    expect(api.updateMyProfile).not.toHaveBeenCalledWith(expect.objectContaining({ avatarUrl: expect.any(String) }));
+    expect(await screen.findByRole('img', { name: 'Buyer One' })).toHaveAttribute('src', 'https://cdn.example.com/avatar.jpg');
+  });
+
   it('opens the current lot card as detail before enrollment, then uses quick bid after deposit', async () => {
     const stateBeforeEnroll = {
       auctionId: 'auc_2001',
@@ -1745,6 +2038,65 @@ describe('App flow', () => {
     }));
   });
 
+  it('keeps participant count server-authoritative after deposit enrollment succeeds', async () => {
+    const singleParticipantLot = {
+      id: 'lot_3001',
+      auctionId: 'auc_2001',
+      roomId: 'room_1001',
+      merchantId: 'merchant_01',
+      categoryId: 'jewelry',
+      title: '单人参与拍品',
+      description: 'Only one participant should be counted.',
+      status: 'RUNNING' as const,
+      startPrice: 0,
+      currentPrice: 150100,
+      leaderBidderId: 'u2',
+      endTsMs: now + 120_000,
+      ruleSnapshot: { incrementRule: { type: 'fixed' as const, amount: 100, maxBidSteps: 10 } },
+      depositAmount: 5000,
+      participantCount: 1,
+      bidCount: 36
+    };
+    const singleParticipantPage = { items: [singleParticipantLot], total: 1, page: 1, page_size: 20 };
+    const singleParticipantState = {
+      auctionId: 'auc_2001',
+      status: 'RUNNING' as const,
+      currentPrice: 150100,
+      leaderBidderId: 'u2',
+      endTsMs: now + 120_000,
+      serverTsMs: now,
+      bidCount: 36,
+      participantCount: 1
+    };
+    vi.mocked(api.listLiveRoomLots)
+      .mockResolvedValueOnce(singleParticipantPage)
+      .mockImplementationOnce(() => new Promise(() => undefined));
+    vi.mocked(api.getAuctionState)
+      .mockResolvedValueOnce(singleParticipantState)
+      .mockImplementationOnce(() => new Promise(() => undefined));
+    vi.mocked(api.enrollAuction).mockResolvedValueOnce({
+      id: 'dep_single_participant',
+      auctionId: 'auc_2001',
+      userId: 'u1',
+      amount: 5000,
+      status: 'READY'
+    });
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001?lotId=lot_3001');
+    renderApp();
+    const user = userEvent.setup();
+
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    const participantsMetric = () => within(detailDialog).getByText(getMessage('auction.participants')).closest('.metric') as HTMLElement;
+    expect(participantsMetric()).toHaveTextContent('1');
+
+    await user.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+
+    expect(await within(detailDialog).findByRole('button', { name: getMessage('product.bidNow') })).toBeInTheDocument();
+    expect(participantsMetric()).toHaveTextContent('1');
+    expect(participantsMetric()).not.toHaveTextContent('2');
+  });
+
   it('updates the bid sheet current price and leader from bid.accepted', async () => {
     const sockets = installMockControlSocket();
     seedSession();
@@ -1780,7 +2132,29 @@ describe('App flow', () => {
     });
 
     await waitFor(() => expect(within(bidDialog).getAllByText(/1502\.00/).length).toBeGreaterThan(0));
+    await waitFor(() => expect(within(bidDialog).getByText(/1503\.00/)).toBeInTheDocument());
+    expect(within(bidDialog).getByText(getMessage('bid.aboveCurrentPriceNotice', 'zh-CN', { amount: '1元' }))).toBeInTheDocument();
+    expect(within(bidDialog).queryByText(getMessage('bid.priceOutdated'))).not.toBeInTheDocument();
     expect(within(bidDialog).getByText(getMessage('bid.leadingBadge', 'zh-CN', { name: '实时用户' }))).toBeInTheDocument();
+
+    await act(async () => {
+      emitLatestMockControl(sockets, {
+        type: 'bid.accept',
+        payload: {
+          auctionId: 'auc_2001',
+          bidderId: 'u6',
+          bidderNickname: '别名用户',
+          current_price: 150300,
+          leaderBidderId: 'u6',
+          accepted: true,
+          bidTsMs: now + 2000,
+          endTime: new Date(now + 120_000).toISOString()
+        }
+      });
+    });
+
+    await waitFor(() => expect(within(bidDialog).getByText(/1504\.00/)).toBeInTheDocument());
+    expect(within(bidDialog).getByText(getMessage('bid.leadingBadge', 'zh-CN', { name: '别名用户' }))).toBeInTheDocument();
   });
 
   it('does not start the quick-bid interval after a rejected first bid', async () => {
@@ -1943,9 +2317,12 @@ describe('App flow', () => {
     await user.click(await within(detailDialog).findByRole('button', { name: getMessage('product.bidNow') }));
 
     const bidDialog = await screen.findByRole('dialog', { name: getMessage('bid.confirmTitle') });
-    expect(within(bidDialog).getAllByText(/1\.00/).length).toBeGreaterThan(0);
+    const quickBidSelector = bidDialog.querySelector('.quick-bid-selector') as HTMLElement;
+    const incrementLabel = Array.from(quickBidSelector.querySelectorAll('span'))
+      .map((node) => node.textContent?.replace(/\s+/g, '').trim())
+      .find((text) => text?.startsWith('加价幅度'));
+    expect(incrementLabel).toBe('加价幅度¥1.00');
     expect(within(bidDialog).getByRole('button', { name: getMessage('bid.increase') })).toBeDisabled();
-    expect(within(bidDialog).queryByText(/2\.00/)).not.toBeInTheDocument();
   });
 
   it('opens only one initial lot detail sheet in strict mode', async () => {
@@ -2643,13 +3020,14 @@ describe('App flow', () => {
           participantCount: 7
         }
       });
-      emitLatestMockControl(sockets, rankingUpdated([{ rank: 1, bidderId: 'u9', bidderNickname: '后端用户', price: 150900 }]));
+      emitLatestMockControl(sockets, rankingUpdated([{ rank: 1, bidderId: 'u9', nickname: '后端昵称用户', price: 150900 }]));
     });
 
     expect((await screen.findAllByText(/1509\.00/)).length).toBeGreaterThan(0);
     await user.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
     const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
-    expect(within(detailDialog).getByText('后端用户')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('后端昵称用户')).toBeInTheDocument();
+    expect(detailDialog).not.toHaveTextContent('u9');
   });
 
   it('updates the live ranking immediately from bid.accepted while ranking snapshot is delayed', async () => {
@@ -2794,7 +3172,8 @@ describe('App flow', () => {
       expect(rankingRail).toBeInTheDocument();
       expect(document.querySelectorAll('.live-ranking-row')).toHaveLength(9);
       expect(rankingRail).toHaveTextContent('用户**09');
-      expect(rankingRail).toHaveTextContent('我');
+      expect(rankingRail).toHaveTextContent('竞拍用户001');
+      expect(rankingRail).not.toHaveTextContent('我');
       expect(rankingRail).not.toHaveTextContent('当前出价前8名');
       expect(screen.getByRole('button', { name: getMessage('live.rankingCollapse') })).toHaveTextContent('收起');
 
@@ -2843,10 +3222,51 @@ describe('App flow', () => {
       expect(document.querySelector('.live-ranking-rank.is-plain')).toHaveTextContent('4');
       expect(document.querySelector('.live-ranking-row.is-leading .live-ranking-name')).toHaveTextContent('石榴与姜冬');
       expect(document.querySelector('.live-ranking-row.is-leading .live-ranking-price')).toHaveClass('is-leading-price');
-      expect(document.querySelector('.live-ranking-current-row')).toHaveTextContent('我');
+      expect(document.querySelector('.live-ranking-current-row')).toHaveTextContent('竞拍用户001');
       expect(document.querySelector('.live-ranking-current-row .live-ranking-rank')).toHaveTextContent('-');
       expect(document.querySelector('.live-ranking-current-row .live-ranking-price')).toHaveTextContent('-');
       expect(document.querySelector('.live-ranking-divider')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('renders ranking avatars from compatible fields and falls back to nickname initial', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installMockControlSocket();
+    try {
+      useSessionStore.getState().setSession({
+        accessToken: 'jwt',
+        refreshToken: 'rft',
+        expiresIn: 43200,
+        user: { id: 'u1', nickname: '竞拍用户001', role: 'buyer', avatarUrl: 'https://cdn.example.com/me.png' }
+      });
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+      await flushApp();
+
+      await act(async () => {
+        emitLatestMockControl(sockets, rankingUpdated([
+          { rank: 1, bidderId: 'u2', bidderNickname: '头像用户', user_avatar_url: 'https://cdn.example.com/u2.png', price: 150100 },
+          { rank: 2, bidderId: 'u3', bidderNickname: '兜底用户', price: 150000 },
+          { rank: 9, bidderId: 'u1', bidderNickname: '我', price: 149900 }
+        ]));
+      });
+
+      const rankingRail = document.querySelector('.live-ranking-rail') as HTMLElement;
+      const avatarRow = rankingRail.querySelector('[data-bidder-id="u2"]') as HTMLElement;
+      const fallbackRow = rankingRail.querySelector('[data-bidder-id="u3"]') as HTMLElement;
+      const currentRow = rankingRail.querySelector('.live-ranking-current-row') as HTMLElement;
+
+      expect(avatarRow.querySelector('.live-ranking-avatar img')).toHaveAttribute('src', 'https://cdn.example.com/u2.png');
+      expect(fallbackRow.querySelector('.live-ranking-avatar')).toHaveTextContent('兜');
+      expect(currentRow.querySelector('.live-ranking-avatar img')).toHaveAttribute('src', 'https://cdn.example.com/me.png');
+      expect(currentRow).toHaveTextContent('竞拍用户001');
+      expect(currentRow).not.toHaveTextContent('我');
+
+      fireEvent.error(avatarRow.querySelector('.live-ranking-avatar img') as HTMLImageElement);
+      expect(avatarRow.querySelector('.live-ranking-avatar')).toHaveTextContent('头');
     } finally {
       vi.useRealTimers();
     }
@@ -4030,7 +4450,7 @@ describe('App flow', () => {
     expect(stage.querySelector('.digital-human-video.talk')).toHaveAttribute('src', '/media/AI_Presenter_Speaking.mp4');
     expect(screen.queryByRole('group', { name: getMessage('live.videoSource') })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: getMessage('live.sourceRecorded') })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: getMessage('live.soundEnable') }));
+    await user.click(screen.getByRole('button', { name: getMessage('live.soundDisable') }));
     expect(screen.getByTestId('digital-human-stage')).not.toHaveClass('is-speaking');
     expect(screen.queryByRole('button', { name: getMessage('digitalHuman.enableAudio') })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: getMessage('digitalHuman.send') })).not.toBeInTheDocument();
@@ -4099,6 +4519,7 @@ describe('App flow', () => {
     renderApp();
 
     expect(await screen.findByTestId('live-room-video')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: getMessage('live.soundDisable') })).toBeInTheDocument());
 
     await act(async () => {
       emitLatestMockControl(sockets, {
@@ -4123,6 +4544,77 @@ describe('App flow', () => {
     expect(screen.queryByTestId('live-room-video')).not.toBeInTheDocument();
   });
 
+  it('keeps digital-human voice muted after the unified live sound switch is disabled', async () => {
+    const sockets = installMockControlSocket();
+    const audio = installMockAudioContext();
+    const user = userEvent.setup();
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+
+    renderApp();
+
+    expect(await screen.findByTestId('live-room-video')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: getMessage('live.soundDisable') }));
+    await waitFor(() => expect(screen.getByRole('button', { name: getMessage('live.soundEnable') })).toBeInTheDocument());
+
+    await act(async () => {
+      emitLatestMockControl(sockets, {
+        type: 'live.voice_broadcast',
+        liveSessionId: 9001,
+        payload: {
+          liveSessionId: 9001,
+          audioBase64: btoa(String.fromCharCode(0, 0, 255, 127, 0, 128)),
+          audioFormat: 'pcm_s16le',
+          sampleRate: 24_000,
+          channels: 1
+        }
+      });
+      await Promise.resolve();
+    });
+
+    const mutedStage = await screen.findByTestId('digital-human-stage');
+    expect(mutedStage).not.toHaveClass('is-speaking');
+    expect(audio.sources).toHaveLength(0);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('stops digital-human voice playback when the unified live sound switch is disabled', async () => {
+    const sockets = installMockControlSocket();
+    const audio = installMockAudioContext();
+    const user = userEvent.setup();
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+
+    renderApp();
+
+    expect(await screen.findByTestId('live-room-video')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: getMessage('live.soundDisable') })).toBeInTheDocument());
+
+    await act(async () => {
+      emitLatestMockControl(sockets, {
+        type: 'live.voice_broadcast',
+        liveSessionId: 9001,
+        payload: {
+          liveSessionId: 9001,
+          audioBase64: btoa(String.fromCharCode(0, 0, 255, 127, 0, 128)),
+          audioFormat: 'pcm_s16le',
+          sampleRate: 24_000,
+          channels: 1
+        }
+      });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(audio.sources[0]?.start).toHaveBeenCalled());
+    expect(await screen.findByTestId('digital-human-stage')).toHaveClass('is-speaking');
+
+    await user.click(screen.getByRole('button', { name: getMessage('live.soundDisable') }));
+
+    await waitFor(() => expect(audio.sources[0]?.stop).toHaveBeenCalled());
+    expect(await screen.findByTestId('digital-human-stage')).not.toHaveClass('is-speaking');
+    expect(screen.getByRole('button', { name: getMessage('live.soundEnable') })).toBeInTheDocument();
+  });
+
   it('waits for a user gesture before replaying blocked live voice broadcast audio', async () => {
     const sockets = installMockControlSocket();
     const audio = installMockAudioContext({ initialState: 'suspended', resumeAllowed: false });
@@ -4132,6 +4624,7 @@ describe('App flow', () => {
     renderApp();
 
     expect(await screen.findByTestId('live-room-video')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: getMessage('live.soundDisable') })).toBeInTheDocument());
 
     await act(async () => {
       emitLatestMockControl(sockets, {

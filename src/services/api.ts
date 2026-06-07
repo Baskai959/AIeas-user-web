@@ -13,10 +13,12 @@ import {
   getDemoUserProfile,
   listDemoCategories,
   listDemoAuctionRecords,
+  listDemoRanking,
   listDemoLots,
   searchDemoLiveRooms,
   searchDemoLots,
   searchDemoMerchants,
+  updateDemoUserAvatar,
   updateDemoUserProfile
 } from './mockData';
 import { defaultDigitalHumanMedia } from './digitalHuman';
@@ -33,6 +35,7 @@ import type {
   Merchant,
   Order,
   PageResult,
+  RankingSnapshotItem,
   RefreshResult,
   SearchLiveRoomsOptions,
   SearchLotsOptions,
@@ -130,12 +133,25 @@ function normalizePage<T>(data: unknown, itemKey: string, normalizer: (raw: Reco
   };
 }
 
+function firstDefined(...values: unknown[]): unknown {
+  return values.find((value) => value !== undefined && value !== null);
+}
+
+function optionalFiniteCount(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  return Math.max(0, Math.floor(parsed));
+}
+
 function normalizeLiveRoom(raw: Record<string, unknown>): LiveRoom {
   const id = String(raw.id);
   const merchantId = String(raw.merchantId ?? '');
   const aiAssistantEnabled = normalizeAIAssistantEnabled(raw);
   const videoSource = normalizeVideoSource(raw.videoSource) ?? (aiAssistantEnabled === true ? 'digitalHuman' : aiAssistantEnabled === false ? 'recorded' : undefined);
   const digitalHuman = normalizeDigitalHuman(raw.digitalHuman) ?? (videoSource === 'digitalHuman' ? defaultDigitalHumanMedia : undefined);
+  const onlineCount = optionalFiniteCount(firstDefined(raw.onlineCount, raw.online_count, raw.online, raw.viewerCount, raw.viewer_count, raw.audienceCount, raw.audience_count));
+  const watcherCount = optionalFiniteCount(firstDefined(raw.watcherCount, raw.watcher_count, raw.viewerTotal, raw.viewer_total, raw.viewerCount, raw.viewer_count, raw.audienceCount, raw.audience_count));
   return {
     id,
     title: String(raw.title),
@@ -148,8 +164,8 @@ function normalizeLiveRoom(raw: Record<string, unknown>): LiveRoom {
     videoUrl: optionalString(raw.videoUrl),
     digitalHuman,
     aiAssistantEnabled,
-    onlineCount: Number(raw.onlineCount ?? 0),
-    watcherCount: Number(raw.viewerTotal ?? 0),
+    onlineCount: onlineCount ?? 0,
+    watcherCount: watcherCount ?? 0,
     likeCount: raw.likeCount === undefined ? undefined : Number(raw.likeCount),
     activeAuctionId: optionalNumberString(raw.activeAuctionId),
     liveSessionId: Number(raw.id),
@@ -239,10 +255,12 @@ function normalizeMerchant(raw: Record<string, unknown>): Merchant {
 }
 
 function normalizeStats(raw: Record<string, unknown>): LiveRoomStats {
+  const onlineCount = optionalFiniteCount(firstDefined(raw.online, raw.onlineCount, raw.online_count, raw.viewerCount, raw.viewer_count, raw.audienceCount, raw.audience_count));
+  const watcherCount = optionalFiniteCount(firstDefined(raw.viewerTotal, raw.viewer_total, raw.watcherCount, raw.watcher_count, raw.viewerCount, raw.viewer_count, raw.audienceCount, raw.audience_count));
   return {
     roomId: String(raw.liveSessionId),
-    onlineCount: Number(raw.online ?? 0),
-    watcherCount: Number(raw.viewerTotal ?? 0),
+    onlineCount: onlineCount ?? Number.NaN,
+    watcherCount: watcherCount ?? Number.NaN,
     bidCount: Number(raw.bidCount ?? 0),
     gmvCent: raw.gmvCent === undefined ? undefined : Number(raw.gmvCent)
   };
@@ -261,35 +279,111 @@ function normalizeState(raw: Record<string, unknown>): AuctionState {
   };
 }
 
-function normalizeOrder(raw: Record<string, unknown>): Order {
-  const status = raw.status ?? raw.orderStatus ?? raw.order_status;
-  const payStatus = raw.payStatus ?? raw.paymentStatus ?? raw.pay_status;
+function normalizeOrderLotSnapshot(value: unknown): Order['lotSnapshot'] {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const imageUrls = Array.isArray(raw.imageUrls) ? raw.imageUrls.map(String).filter(Boolean) : undefined;
   return {
-    id: String(raw.id),
-    auctionId: String(raw.auctionId),
-    buyerId: String(raw.winnerId ?? raw.buyerId ?? ''),
-    merchantId: raw.sellerId === undefined ? undefined : String(raw.sellerId),
-    amount: Number(raw.dealPrice ?? raw.amount ?? raw.payAmount ?? 0),
-    status: String(status ?? ''),
-    payStatus: payStatus === undefined ? undefined : String(payStatus),
-    fulfillmentStatus: raw.fulfillmentStatus === undefined ? undefined : (String(raw.fulfillmentStatus) as Order['fulfillmentStatus']),
-    createdAt: optionalString(raw.createdAt),
-    paidAt: optionalString(raw.paidAt),
-    shippedAt: optionalString(raw.shippedAt),
-    receivedAt: optionalString(raw.receivedAt)
+    auctionId: raw.auctionId === undefined ? undefined : String(raw.auctionId),
+    liveSessionId: raw.liveSessionId === undefined ? undefined : String(raw.liveSessionId),
+    sellerId: raw.sellerId === undefined ? undefined : String(raw.sellerId),
+    winnerId: raw.winnerId === undefined ? undefined : String(raw.winnerId),
+    title: optionalString(raw.title),
+    description: optionalString(raw.description),
+    category: optionalString(raw.category),
+    brand: optionalString(raw.brand),
+    condition: optionalString(raw.condition),
+    coverUrl: optionalString(raw.coverUrl),
+    imageUrls,
+    startPrice: raw.startPrice === undefined ? undefined : Number(raw.startPrice),
+    dealPrice: raw.dealPrice === undefined ? undefined : Number(raw.dealPrice),
+    depositAmount: raw.depositAmount === undefined ? undefined : Number(raw.depositAmount),
+    closedAt: optionalString(raw.closedAt)
   };
 }
 
-function normalizeProfile(raw: Record<string, unknown>): UserProfile {
+function normalizeStatusToken(value: unknown): string {
+  return String(value ?? '').trim().toUpperCase();
+}
+
+function normalizeOrderStatus(value: unknown): Order['status'] {
+  const token = normalizeStatusToken(value);
+  if (['DEAL', 'DEALT', 'PENDING_PAY', 'PENDING_PAYMENT', 'UNPAID', '成交', '待付款', '待支付'].includes(token)) return 'CREATED';
+  if (['SHIPPED', 'DELIVERED', 'PENDING_RECEIPT', '待收货', '已发货'].includes(token)) return 'PAID';
+  if (['RECEIVED', 'COMPLETED', 'FINISHED', 'DONE', '已完成', '完成'].includes(token)) return 'PAID';
+  if (['PENDING_SHIPMENT', 'PENDING_SHIP', 'UNSHIPPED', '待发货'].includes(token)) return 'PAID';
+  return String(value ?? '');
+}
+
+function normalizeOrderPayStatus(value: unknown, status: Order['status']): string | undefined {
+  if (value !== undefined && value !== null && value !== '') {
+    const token = normalizeStatusToken(value);
+    if (['PENDING', 'PENDING_PAY', 'PENDING_PAYMENT', 'CREATED', '待付款', '待支付'].includes(token)) return 'UNPAID';
+    if (['PAID', 'SHIPPED', 'DELIVERED', 'RECEIVED', 'COMPLETED', '待发货', '待收货', '已发货', '已完成'].includes(token)) return 'PAID';
+    return String(value);
+  }
+  if (status === 'CREATED') return 'UNPAID';
+  if (status === 'PAID') return 'PAID';
+  return undefined;
+}
+
+function normalizeOrderFulfillmentStatus(value: unknown, statusSource: unknown): Order['fulfillmentStatus'] | undefined {
+  const token = normalizeStatusToken(value);
+  if (['UNSHIPPED', 'PENDING_SHIPMENT', 'PENDING_SHIP', '待发货'].includes(token)) return 'UNSHIPPED';
+  if (['SHIPPED', 'DELIVERED', 'PENDING_RECEIPT', '待收货', '已发货'].includes(token)) return 'SHIPPED';
+  if (['RECEIVED', 'COMPLETED', 'FINISHED', 'DONE', '已完成', '完成'].includes(token)) return 'RECEIVED';
+  const statusToken = normalizeStatusToken(statusSource);
+  if (['SHIPPED', 'DELIVERED', 'PENDING_RECEIPT', '待收货', '已发货'].includes(statusToken)) return 'SHIPPED';
+  if (['RECEIVED', 'COMPLETED', 'FINISHED', 'DONE', '已完成', '完成'].includes(statusToken)) return 'RECEIVED';
+  if (['PAID', 'PENDING_SHIPMENT', 'PENDING_SHIP', 'UNSHIPPED', '待发货'].includes(statusToken)) return 'UNSHIPPED';
+  return undefined;
+}
+
+function normalizeOrder(raw: Record<string, unknown>): Order {
+  const statusSource = raw.status ?? raw.orderStatus ?? raw.order_status;
+  const status = normalizeOrderStatus(statusSource);
+  const payStatus = normalizeOrderPayStatus(raw.payStatus ?? raw.paymentStatus ?? raw.pay_status ?? raw.payment_status, status);
+  const fulfillmentStatus = normalizeOrderFulfillmentStatus(raw.fulfillmentStatus ?? raw.fulfillment_status ?? raw.shippingStatus ?? raw.shipping_status ?? raw.deliveryStatus ?? raw.delivery_status, statusSource);
   return {
-    userId: String(raw.id),
-    nickname: String(raw.nickname),
-    avatarUrl: optionalString(raw.avatarUrl),
-    reminderCount: 0,
-    favoriteCount: 0,
-    followingCount: 0,
-    footprintCount: 0
+    id: String(raw.id),
+    auctionId: String(raw.auctionId ?? raw.auction_id),
+    liveSessionId: raw.liveSessionId === undefined && raw.live_session_id === undefined ? undefined : String(raw.liveSessionId ?? raw.live_session_id),
+    buyerId: String(raw.winnerId ?? raw.winner_id ?? raw.buyerId ?? raw.buyer_id ?? ''),
+    merchantId: raw.sellerId === undefined && raw.seller_id === undefined ? undefined : String(raw.sellerId ?? raw.seller_id),
+    amount: Number(raw.dealPrice ?? raw.deal_price ?? raw.amount ?? raw.payAmount ?? raw.pay_amount ?? 0),
+    status: String(status ?? ''),
+    payStatus: payStatus === undefined ? undefined : String(payStatus),
+    fulfillmentStatus,
+    lotSnapshot: normalizeOrderLotSnapshot(raw.lotSnapshot ?? raw.lot_snapshot),
+    createdAt: optionalString(raw.createdAt) ?? optionalString(raw.created_at),
+    paidAt: optionalString(raw.paidAt) ?? optionalString(raw.paid_at),
+    shippedAt: optionalString(raw.shippedAt) ?? optionalString(raw.shipped_at),
+    receivedAt: optionalString(raw.receivedAt) ?? optionalString(raw.received_at)
   };
+}
+
+function normalizeProfile(raw: Record<string, unknown>, fallback: Partial<UserProfile> = {}): UserProfile {
+  return {
+    userId: String(raw.id ?? raw.userId ?? fallback.userId ?? ''),
+    nickname: String(raw.nickname ?? fallback.nickname ?? ''),
+    avatarUrl: optionalString(raw.avatarUrl ?? raw.avatar_url) ?? fallback.avatarUrl,
+    reminderCount: Number(raw.reminderCount ?? fallback.reminderCount ?? 0),
+    favoriteCount: Number(raw.favoriteCount ?? fallback.favoriteCount ?? 0),
+    followingCount: Number(raw.followingCount ?? fallback.followingCount ?? 0),
+    footprintCount: Number(raw.footprintCount ?? fallback.footprintCount ?? 0)
+  };
+}
+
+function isFormDataBody(body: unknown): body is FormData {
+  return typeof FormData !== 'undefined' && body instanceof FormData;
+}
+
+function needsIdempotencyKey(method: string): boolean {
+  return !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase());
+}
+
+function createIdempotencyKey(method: string): string {
+  return `${method.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function normalizeAuctionRecord(raw: Record<string, unknown>): UserAuctionRecord {
@@ -316,6 +410,7 @@ function normalizeEnrollResult(raw: Record<string, unknown>): EnrollResult {
     userId: String(raw.userId),
     amount: Number(raw.amount ?? 0),
     status: String(raw.status),
+    participantCount: raw.participantCount === undefined && raw.participant_count === undefined ? undefined : Number(raw.participantCount ?? raw.participant_count),
     relatedOrderId: optionalNumberString(raw.relatedOrderId),
     remark: optionalString(raw.remark),
     createdAt: optionalString(raw.createdAt),
@@ -330,6 +425,7 @@ function orderQuery(options: ListOrderOptions = {}): string {
   if (options.auctionId) params.set('auctionId', options.auctionId);
   if (options.status) params.set('status', options.status);
   if (options.payStatus) params.set('payStatus', options.payStatus);
+  if (options.fulfillmentStatus) params.set('fulfillmentStatus', options.fulfillmentStatus);
   return params.toString();
 }
 
@@ -421,7 +517,15 @@ export class ApiClient {
 
   async updateMyProfile(profile: Partial<UserProfile>): Promise<UserProfile> {
     const data = await this.request('/api/v1/auth/me', { method: 'PATCH', body: { nickname: profile.nickname } });
-    return normalizeProfile(data as Record<string, unknown>);
+    return normalizeProfile(data as Record<string, unknown>, profile);
+  }
+
+  async uploadMyAvatar(avatar: Blob | File, currentProfile?: Partial<UserProfile>): Promise<UserProfile> {
+    const formData = new FormData();
+    const filename = typeof File !== 'undefined' && avatar instanceof File ? avatar.name : 'avatar.jpg';
+    formData.append('avatar', avatar, filename);
+    const data = await this.request('/api/v1/auth/me/avatar', { method: 'POST', body: formData });
+    return normalizeProfile(data as Record<string, unknown>, currentProfile);
   }
 
   async listLiveRooms(): Promise<PageResult<LiveRoom>> {
@@ -489,6 +593,13 @@ export class ApiClient {
     return normalizeState(data as Record<string, unknown>);
   }
 
+  async getAuctionRanking(id: string): Promise<RankingSnapshotItem[]> {
+    const data = await this.request(`/api/v1/auctions/${id}/ranking?limit=10`);
+    const raw = (data ?? {}) as Record<string, unknown>;
+    return (Array.isArray(raw.ranking) ? raw.ranking : Array.isArray(raw.items) ? raw.items : [])
+      .filter((item): item is RankingSnapshotItem => Boolean(item) && typeof item === 'object');
+  }
+
   async enrollAuction(id: string): Promise<EnrollResult> {
     const data = await this.request(`/api/v1/auctions/${id}/enroll`, {
       method: 'POST'
@@ -539,18 +650,22 @@ export class ApiClient {
     path: string,
     options: RequestOptions = {}
   ): Promise<T> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json; charset=utf-8'
-    };
+    const isMultipart = isFormDataBody(options.body);
+    const headers: Record<string, string> = isMultipart ? {} : { 'Content-Type': 'application/json; charset=utf-8' };
     if (!options.omitAuth && this.token) headers.Authorization = `Bearer ${this.token}`;
-    if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
     const url = joinUrl(this.baseUrl, path);
     const method = options.method ?? 'GET';
+    const idempotencyKey = options.idempotencyKey ?? (needsIdempotencyKey(method) ? createIdempotencyKey(method) : undefined);
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+    let requestBody: BodyInit | undefined;
+    if (options.body !== undefined) {
+      requestBody = isFormDataBody(options.body) ? options.body : (JSON.stringify(options.body) ?? undefined);
+    }
 
     const response = await this.fetcher(url, {
       method,
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body)
+      body: requestBody
     });
 
     const envelope = (await response.json()) as ApiEnvelope<T>;
@@ -633,6 +748,18 @@ function demoPage<T>(items: T[]): PageResult<T> {
   };
 }
 
+async function blobToDemoAvatarUrl(blob: Blob): Promise<string> {
+  if (typeof FileReader === 'undefined') {
+    return `demo-avatar://${Date.now()}`;
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => (typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('avatar read failed')));
+    reader.onerror = () => reject(new Error('avatar read failed'));
+    reader.readAsDataURL(blob);
+  });
+}
+
 export class DemoApiClient extends ApiClient {
   private orders = demoOrderPage.items.map(cloneOrder);
   private auctionRecords = listDemoAuctionRecords().items.map(cloneAuctionRecord);
@@ -688,6 +815,11 @@ export class DemoApiClient extends ApiClient {
 
   override async updateMyProfile(profile: Partial<UserProfile>): Promise<UserProfile> {
     return updateDemoUserProfile(profile);
+  }
+
+  override async uploadMyAvatar(avatar: Blob | File, currentProfile?: Partial<UserProfile>): Promise<UserProfile> {
+    const avatarUrl = await blobToDemoAvatarUrl(avatar);
+    return updateDemoUserAvatar(avatarUrl, currentProfile);
   }
 
   override async listLiveRooms(): Promise<PageResult<LiveRoom>> {
@@ -758,6 +890,10 @@ export class DemoApiClient extends ApiClient {
       endTsMs: lot.endTsMs,
       serverTsMs: Date.now()
     };
+  }
+
+  override async getAuctionRanking(id: string): Promise<RankingSnapshotItem[]> {
+    return listDemoRanking(id);
   }
 
   override async enrollAuction(id: string): Promise<EnrollResult> {

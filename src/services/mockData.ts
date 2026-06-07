@@ -15,6 +15,7 @@ import type {
   Merchant,
   Order,
   PageResult,
+  RankingSnapshotItem,
   SearchLiveRoomsOptions,
   SearchLotsOptions,
   SearchMerchantsOptions,
@@ -619,6 +620,48 @@ export const demoLots: LiveRoomLot[] = [
   }
 ];
 
+export function listDemoRanking(auctionId: string): RankingSnapshotItem[] {
+  const lot = findDemoLotByAuctionId(auctionId);
+  if (!lot || !isActiveDemoAuctionStatus(lot.status)) return [];
+  const currentPrice = lot.currentPrice || lot.startPrice;
+  const leaderBidderId = lot.leaderBidderId ?? 'u2';
+  const leaderIsCurrentUser = leaderBidderId === demoLoginResult.user.id;
+  const items: RankingSnapshotItem[] = [
+    {
+      rank: 1,
+      bidderId: leaderBidderId,
+      bidderNickname: leaderIsCurrentUser ? demoLoginResult.user.nickname : '用户**02',
+      bidderAvatarUrl: leaderIsCurrentUser ? demoLoginResult.user.avatarUrl : '/logo.png',
+      price: currentPrice
+    }
+  ];
+  const lastVisibleRank = leaderIsCurrentUser ? 9 : 8;
+  for (let rank = 2; rank <= lastVisibleRank; rank += 1) {
+    const demoUserNumber = leaderIsCurrentUser ? rank : rank + 1;
+    items.push({
+      rank,
+      bidderId: `u${demoUserNumber}`,
+      bidderNickname: `用户**${String(demoUserNumber).padStart(2, '0')}`,
+      bidder_avatar_url: rank % 2 === 0 ? '/logo.png' : undefined,
+      price: Math.max(0, currentPrice - 100 * (rank - 1))
+    });
+  }
+  if (!leaderIsCurrentUser) {
+    items.push({
+      rank: 9,
+      bidderId: demoLoginResult.user.id,
+      bidderNickname: demoLoginResult.user.nickname,
+      bidderAvatarUrl: demoLoginResult.user.avatarUrl,
+      price: Math.max(0, currentPrice - 800)
+    });
+  }
+  return items;
+}
+
+function isActiveDemoAuctionStatus(status: AuctionStatus): boolean {
+  return status === 'RUNNING' || status === 'EXTENDED' || status === 'HAMMER_PENDING';
+}
+
 export const demoLotPage: PageResult<LiveRoomLot> = {
   items: demoLots.filter((lot) => lot.roomId === demoLiveRoom.id),
   total: demoLots.filter((lot) => lot.roomId === demoLiveRoom.id).length,
@@ -866,10 +909,20 @@ export function getDemoUserProfile(): UserProfile {
 }
 
 export function updateDemoUserProfile(profile: Partial<UserProfile>): UserProfile {
-  return {
+  Object.assign(demoUserProfile, {
     ...demoUserProfile,
     ...profile
-  };
+  });
+  demoLoginResult.user.nickname = demoUserProfile.nickname;
+  demoLoginResult.user.avatarUrl = demoUserProfile.avatarUrl;
+  return demoUserProfile;
+}
+
+export function updateDemoUserAvatar(avatarUrl: string, currentProfile: Partial<UserProfile> = {}): UserProfile {
+  return updateDemoUserProfile({
+    ...currentProfile,
+    avatarUrl
+  });
 }
 
 export function listDemoAuctionRecords(): PageResult<UserAuctionRecord> {
