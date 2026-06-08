@@ -34,6 +34,7 @@ type BackendRankingTestEntry = {
   bidderAvatarUrl?: string;
   bidder_avatar_url?: string;
   price: number;
+  createdAtMs?: number;
 };
 
 const rankingUpdated = (ranking: BackendRankingTestEntry[], auctionId = 'auc_2001') => ({
@@ -2264,6 +2265,168 @@ describe('App flow', () => {
     }
   });
 
+  it('keeps an async-queued bid in arbitration without misfiring the sync confirm timeout', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installNativeRealtimeSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      expect(sockets.length).toBeGreaterThan(0);
+      fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
+      await flushApp();
+      const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
+      fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+      await flushApp();
+      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('product.bidNow') }));
+      await flushApp();
+      const bidDialog = screen.getByRole('dialog', { name: getMessage('bid.confirmTitle') });
+
+      fireEvent.click(within(bidDialog).getByRole('button', { name: getMessage('bid.submitNow') }));
+      await flushApp();
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.ack',
+          payload: {
+            mode: 'ASYNC',
+            status: 'QUEUED',
+            bidId: 'bid_async_1',
+            auctionId: 'auc_2001'
+          }
+        });
+      });
+      await flushApp();
+
+      // QUEUED 只表示入队待裁决：显示“裁决中”，不显示成功。
+      expect(within(bidDialog).getByText(getMessage('auction.bidArbitrating'))).toBeInTheDocument();
+      expect(within(bidDialog).queryByText(getMessage('auction.bidAccepted'))).not.toBeInTheDocument();
+
+      // 不被 8s 同步终态超时误判为失败。
+      await act(async () => {
+        vi.advanceTimersByTime(8000);
+      });
+      expect(within(bidDialog).queryByText(getMessage('auction.bidRealtimeTimeout'))).not.toBeInTheDocument();
+      expect(within(bidDialog).getByText(getMessage('auction.bidArbitrating'))).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects an async bid.ack with a friendly queue-full reason', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installNativeRealtimeSocket();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
+      await flushApp();
+      const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
+      fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+      await flushApp();
+      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('product.bidNow') }));
+      await flushApp();
+      const bidDialog = screen.getByRole('dialog', { name: getMessage('bid.confirmTitle') });
+
+      fireEvent.click(within(bidDialog).getByRole('button', { name: getMessage('bid.submitNow') }));
+      await flushApp();
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.ack',
+          payload: {
+            mode: 'ASYNC',
+            status: 'REJECTED',
+            bidId: 'bid_async_2',
+            auctionId: 'auc_2001',
+            reason: 'HOT_AUCTION_QUEUE_FULL'
+          }
+        });
+      });
+      await flushApp();
+
+      expect(within(bidDialog).getByText(getMessage('auction.bidQueueFull'))).toBeInTheDocument();
+    } finally {
+      warnSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('finalizes an async bid via bid.result and acknowledges it idempotently', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installNativeRealtimeSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
+      await flushApp();
+      const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
+      fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+      await flushApp();
+      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('product.bidNow') }));
+      await flushApp();
+      const bidDialog = screen.getByRole('dialog', { name: getMessage('bid.confirmTitle') });
+
+      fireEvent.click(within(bidDialog).getByRole('button', { name: getMessage('bid.submitNow') }));
+      await flushApp();
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.ack',
+          payload: { mode: 'ASYNC', status: 'QUEUED', bidId: 'bid_async_3', auctionId: 'auc_2001' }
+        });
+      });
+      await flushApp();
+
+      const socket = sockets[sockets.length - 1];
+      const sentTypes = () => socket.sent.map((raw) => JSON.parse(raw) as { type: string; payload?: { bidId?: string } });
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.result',
+          payload: {
+            bidId: 'bid_async_3',
+            auctionId: 'auc_2001',
+            finalStatus: 'ACCEPTED',
+            currentPrice: 150500,
+            leaderBidderId: 'u1',
+            endTimeMs: now + 120_000,
+            serverTimeMs: now,
+            resultSeq: 1
+          }
+        });
+      });
+      await flushApp();
+
+      // 最终成功反馈与回发 bid.result.ack。
+      expect(within(bidDialog).getAllByText(/1505\.00/).length).toBeGreaterThan(0);
+      const acks = sentTypes().filter((m) => m.type === 'bid.result.ack' && m.payload?.bidId === 'bid_async_3');
+      expect(acks.length).toBe(1);
+
+      // 幂等：重复 bid.result 仍回 ack，但不重复处理。
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.result',
+          payload: { bidId: 'bid_async_3', auctionId: 'auc_2001', finalStatus: 'ACCEPTED', currentPrice: 150500, resultSeq: 2 }
+        });
+      });
+      await flushApp();
+      const acksAfter = sentTypes().filter((m) => m.type === 'bid.result.ack' && m.payload?.bidId === 'bid_async_3');
+      expect(acksAfter.length).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('caps quick-bid increases to the backend max bid steps rule', async () => {
     const maxStepLotsPage = {
       items: [
@@ -3128,9 +3291,6 @@ describe('App flow', () => {
     expect(within(detailDialog).getByText('旧榜用户')).toBeInTheDocument();
     const rankingRail = document.querySelector('.live-ranking-rail') as HTMLElement;
     expect(rankingRail.querySelector('.live-ranking-top-list [data-bidder-id="u8"] .live-ranking-name')).toHaveTextContent('旧榜用户');
-    expect(document.querySelector('.live-ranking-ghost')).not.toBeInTheDocument();
-    expect(document.querySelector('.live-ranking-row.is-entering')).not.toBeInTheDocument();
-    expect(document.querySelector('.live-ranking-row.is-shifted-down')).not.toBeInTheDocument();
 
     await act(async () => {
       emitLatestMockControl(sockets, rankingUpdated([{ rank: 1, bidderId: 'u10', bidderNickname: '右侧同步用户', price: 151000 }]));
@@ -3139,9 +3299,6 @@ describe('App flow', () => {
     expect(within(detailDialog).getByText('右侧同步用户')).toBeInTheDocument();
     expect(rankingRail.querySelector('.live-ranking-top-list [data-bidder-id="u10"] .live-ranking-name')).toHaveTextContent('右侧同步用户');
     expect(rankingRail).toHaveTextContent('1510.00');
-    expect(document.querySelector('.live-ranking-ghost')).not.toBeInTheDocument();
-    expect(document.querySelector('.live-ranking-row.is-entering')).not.toBeInTheDocument();
-    expect(document.querySelector('.live-ranking-row.is-shifted-down')).not.toBeInTheDocument();
   });
 
   it('shows a right-docked live ranking rail, appends the current user, and collapses it', async () => {
@@ -3340,6 +3497,172 @@ describe('App flow', () => {
     }
   });
 
+  it('updates ranking.updated snapshots without starting the bid animation', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+      await flushApp();
+
+      const baseItems = [
+        { rank: 1, bidderId: 'u2', bidderNickname: '用户**02', price: 150100 },
+        { rank: 2, bidderId: 'u3', bidderNickname: '用户**03', price: 150000 },
+        { rank: 3, bidderId: 'u4', bidderNickname: '用户**04', price: 149900 },
+        { rank: 4, bidderId: 'u5', bidderNickname: '用户**05', price: 149800 },
+        { rank: 5, bidderId: 'u6', bidderNickname: '用户**06', price: 149700 },
+        { rank: 6, bidderId: 'u7', bidderNickname: '用户**07', price: 149600 },
+        { rank: 7, bidderId: 'u8', bidderNickname: '用户**08', price: 149500 },
+        { rank: 8, bidderId: 'u9', bidderNickname: '用户**09', price: 149400 }
+      ];
+
+      await act(async () => {
+        emitLatestMockControl(sockets, rankingUpdated(baseItems));
+      });
+      expect(document.querySelector('.live-ranking-ghost')).not.toBeInTheDocument();
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          ...rankingUpdated(baseItems.map((item, index) => ({ ...item, createdAtMs: now + 10_000 + index }))),
+          seq: 5000
+        });
+      });
+      expect(document.querySelector('.live-ranking-ghost')).not.toBeInTheDocument();
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          ...rankingUpdated([
+            { rank: 1, bidderId: 'u5', bidderNickname: '用户**05', price: 150200 },
+            { rank: 2, bidderId: 'u2', bidderNickname: '用户**02', price: 150100 },
+            { rank: 3, bidderId: 'u3', bidderNickname: '用户**03', price: 150000 },
+            { rank: 4, bidderId: 'u4', bidderNickname: '用户**04', price: 149900 },
+            { rank: 5, bidderId: 'u6', bidderNickname: '用户**06', price: 149700 },
+            { rank: 6, bidderId: 'u7', bidderNickname: '用户**07', price: 149600 },
+            { rank: 7, bidderId: 'u8', bidderNickname: '用户**08', price: 149500 },
+            { rank: 8, bidderId: 'u9', bidderNickname: '用户**09', price: 149400 }
+          ]),
+          seq: 5000
+        });
+      });
+
+      const rankingRail = document.querySelector('.live-ranking-rail') as HTMLElement;
+      expect(rankingRail.querySelector('.live-ranking-top-list [data-bidder-id="u5"] .live-ranking-name')).toHaveTextContent('用户**05');
+      expect(rankingRail).toHaveTextContent('1502.00');
+      expect(document.querySelector('.live-ranking-ghost')).not.toBeInTheDocument();
+      expect(document.querySelector('[data-bidder-id="u2"]')).not.toHaveClass('is-shifted-down');
+      expect(document.querySelector('[data-bidder-id="u5"]')).not.toHaveClass('is-moving-target');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the bid.accepted animation when ranking.updated corrects bidder metadata', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+      await flushApp();
+
+      const baseItems = [
+        { rank: 1, bidderId: 'u2', bidderNickname: '用户**02', price: 150100 },
+        { rank: 2, bidderId: 'u3', bidderNickname: '用户**03', price: 150000 },
+        { rank: 3, bidderId: 'u4', bidderNickname: '用户**04', price: 149900 },
+        { rank: 4, bidderId: 'u5', bidderNickname: '用户**05', price: 149800 }
+      ];
+
+      await act(async () => {
+        emitLatestMockControl(sockets, rankingUpdated(baseItems));
+      });
+
+      await act(async () => {
+        emitLatestMockControl(sockets, { type: 'bid.accepted', payload: { auctionId: 'auc_2001', bidderId: 'u5', price: 150200, currentPrice: 150200, leaderBidderId: 'u5', accepted: true, endTime: new Date(now + 120_000).toISOString() } });
+        emitLatestMockControl(sockets, rankingUpdated([
+          { rank: 1, bidderId: 'u5', bidderNickname: '后端校准用户', bidderAvatarUrl: 'https://cdn.example.com/u5.png', price: 150200 },
+          { rank: 2, bidderId: 'u2', bidderNickname: '用户**02', price: 150100 },
+          { rank: 3, bidderId: 'u3', bidderNickname: '用户**03', price: 150000 },
+          { rank: 4, bidderId: 'u4', bidderNickname: '用户**04', price: 149900 }
+        ]));
+      });
+      await flushApp();
+
+      expect(document.querySelector('.live-ranking-ghost.is-other-bid')).toBeInTheDocument();
+      expect(document.querySelector('.live-ranking-ghost.is-top-slot-to-first')).toBeInTheDocument();
+      expect(document.querySelector('[data-bidder-id="u5"]')).toHaveClass('is-moving-target');
+      expect(document.querySelector('[data-bidder-id="u5"] .live-ranking-avatar img')).not.toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(499);
+      });
+      await flushApp();
+      expect(document.querySelector('[data-bidder-id="u5"] .live-ranking-avatar img')).not.toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
+      await flushApp();
+      expect(document.querySelector('[data-bidder-id="u5"] .live-ranking-avatar img')).toHaveAttribute('src', 'https://cdn.example.com/u5.png');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('animates an accepted bid.result for the current user when no bid.accepted broadcast arrives', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+      await flushApp();
+
+      const baseItems = [
+        { rank: 1, bidderId: 'u2', bidderNickname: '用户**02', price: 150100 },
+        { rank: 2, bidderId: 'u3', bidderNickname: '用户**03', price: 150000 },
+        { rank: 3, bidderId: 'u4', bidderNickname: '用户**04', price: 149900 },
+        { rank: 4, bidderId: 'u5', bidderNickname: '用户**05', price: 149800 },
+        { rank: 5, bidderId: 'u6', bidderNickname: '用户**06', price: 149700 },
+        { rank: 6, bidderId: 'u7', bidderNickname: '用户**07', price: 149600 },
+        { rank: 7, bidderId: 'u8', bidderNickname: '用户**08', price: 149500 },
+        { rank: 8, bidderId: 'u9', bidderNickname: '用户**09', price: 149400 }
+      ];
+
+      await act(async () => {
+        emitLatestMockControl(sockets, rankingUpdated(baseItems));
+      });
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.result',
+          payload: {
+            bidId: 'bid_async_ranking_1',
+            auctionId: 'auc_2001',
+            finalStatus: 'ACCEPTED',
+            currentPrice: 150400,
+            leaderBidderId: 'u1',
+            endTimeMs: now + 120_000,
+            serverTimeMs: now + 1000,
+            resultSeq: 21
+          }
+        });
+      });
+      await flushApp();
+
+      const ghost = document.querySelector('.live-ranking-ghost') as HTMLElement;
+      expect(ghost).toBeInTheDocument();
+      expect(ghost).toHaveClass('is-current-row-to-first');
+      expect(ghost).toHaveClass('is-self-bid');
+      expect(ghost.querySelector('.live-ranking-price')).toHaveTextContent('1504.00');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('uses a top-slot origin when a visible bidder jumps to first place', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
@@ -3477,7 +3800,7 @@ describe('App flow', () => {
       await act(async () => {
         emitLatestMockControl(sockets, { type: 'bid.accepted', payload: { auctionId: 'auc_2001', bidderId: 'u1', price: 150400, currentPrice: 150400, leaderBidderId: 'u1', accepted: true, endTime: new Date(now + 120_000).toISOString() } });
         emitLatestMockControl(sockets, rankingUpdated([
-          { rank: 1, bidderId: 'u1', bidderNickname: '我', price: 150400 },
+          { rank: 1, bidderId: 'u1', bidderNickname: '后端校准我', price: 150400 },
           { rank: 2, bidderId: 'u2', bidderNickname: '用户**02', price: 150100 },
           { rank: 3, bidderId: 'u3', bidderNickname: '用户**03', price: 150000 },
           { rank: 4, bidderId: 'u4', bidderNickname: '用户**04', price: 149900 },
@@ -3500,6 +3823,7 @@ describe('App flow', () => {
       expect(currentRow).not.toHaveClass('is-shifted-down');
       expect(currentRow.querySelector('.live-ranking-rank')).toHaveTextContent('9');
       expect(currentRow.querySelector('.live-ranking-price')).toHaveTextContent('1488.00');
+      expect(currentRow.querySelector('.live-ranking-name')).not.toHaveTextContent('后端校准我');
 
       const exitRow = document.querySelector('.live-ranking-exit-row') as HTMLElement;
       expect(exitRow).toHaveClass('live-ranking-row');
@@ -3512,6 +3836,18 @@ describe('App flow', () => {
 
       expect(currentRow.querySelector('.live-ranking-rank')).toHaveTextContent('1');
       expect(currentRow.querySelector('.live-ranking-price')).toHaveTextContent('1504.00');
+      expect(currentRow.querySelector('.live-ranking-name')).not.toHaveTextContent('后端校准我');
+
+      await act(async () => {
+        vi.advanceTimersByTime(479);
+      });
+      expect(currentRow.querySelector('.live-ranking-name')).not.toHaveTextContent('后端校准我');
+
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
+      await flushApp();
+      expect(currentRow.querySelector('.live-ranking-name')).toHaveTextContent('后端校准我');
     } finally {
       vi.useRealTimers();
     }

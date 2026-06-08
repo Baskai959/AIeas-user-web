@@ -61,7 +61,7 @@ VITE_REALTIME_MODE=websocket
 VITE_WS_URL=
 ```
 
-连接当前真实后端 `47.97.82.143:8888` 时，开发期推荐使用 Vite 反代，浏览器只访问前端同源的 `/api` 与 `/ws`，由 dev server 转发到后端，避免触发跨域预检问题。
+连接当前真实后端 `127.0.0.1:8888` 时，开发期推荐使用 Vite 反代，浏览器只访问前端同源的 `/api` 与 `/ws`，由 dev server 转发到后端，避免触发跨域预检问题。
 
 PowerShell 本地反代联调：
 
@@ -70,7 +70,7 @@ $env:VITE_API_MODE='remote'
 $env:VITE_API_BASE_URL=''
 $env:VITE_REALTIME_MODE='websocket'
 $env:VITE_WS_URL=''
-$env:VITE_DEV_PROXY_TARGET='http://47.97.82.143:8888'
+$env:VITE_DEV_PROXY_TARGET='http://127.0.0.1:8888'
 npm run dev -- --host 127.0.0.1 --port 5176
 ```
 
@@ -98,7 +98,7 @@ Nginx 反代示例：
 
 ```nginx
 location /api/ {
-  proxy_pass http://47.97.82.143:8888/api/;
+  proxy_pass http://127.0.0.1:8888/api/;
   proxy_set_header Host $host;
   proxy_set_header X-Real-IP $remote_addr;
   proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -106,7 +106,7 @@ location /api/ {
 }
 
 location /ws/ {
-  proxy_pass http://47.97.82.143:8888/ws/;
+  proxy_pass http://127.0.0.1:8888/ws/;
   proxy_http_version 1.1;
   proxy_set_header Upgrade $http_upgrade;
   proxy_set_header Connection "upgrade";

@@ -3217,6 +3217,7 @@ function formatDateMs(value: number): string {
 type QuickBidFeedback =
   | { status: 'idle' }
   | { status: 'submitting'; requestId: string; message: string }
+  | { status: 'arbitrating'; requestId: string; message: string }
   | { status: 'success'; requestId?: string; message: string }
   | { status: 'error'; requestId?: string; message: string };
 
@@ -3232,6 +3233,9 @@ const AUCTION_CARD_ANIMATION_MS = 380;
 const WIN_CELEBRATION_DURATION_MS = 4200;
 const LIVE_SHEET_Z_INDEX_BASE = 110;
 const BID_CONFIRM_TIMEOUT_MS = 8000;
+const BID_ARBITRATION_TIMEOUT_MS = 15000;
+const RANKING_BID_ANIMATION_DURATION_MS = 500;
+const RANKING_SELF_BID_ANIMATION_DURATION_MS = 1000;
 const SCHEDULED_AUCTION_REFRESH_RETRY_DELAYS_MS = [0, 1000, 3000, 8000, 15000] as const;
 
 type LiveSheetVariant = keyof typeof LIVE_SHEET_ANIMATION_MS;
@@ -3287,7 +3291,7 @@ type RankingBidHint = {
   bidTsMs: number;
 };
 
-type RankingAnimationSource = 'bid.accepted' | 'snapshot';
+type RankingAnimationSource = 'initial' | 'bid.accepted' | 'snapshot';
 type RankingAnimationKind = 'top-slot-to-first' | 'divider-to-first' | 'current-row-to-first' | 'price-only';
 type RankingAnimationOrigin = 'top-slot' | 'divider' | 'current-row' | 'price';
 
@@ -3468,7 +3472,7 @@ function LiveRoomPage({
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [chatMessages, setChatMessages] = useState<LiveChatMessage[]>(() => initialLiveChatMessages(roomId));
   const [ranking, setRanking] = useState<RankingItem[]>([]);
-  const [rankingAnimationSource, setRankingAnimationSource] = useState<RankingAnimationSource>('snapshot');
+  const [rankingAnimationSource, setRankingAnimationSource] = useState<RankingAnimationSource>('initial');
   const [enrolledAuctions, setEnrolledAuctions] = useState<Set<string>>(() => new Set());
   const [lotStates, setLotStates] = useState<Record<string, AuctionState>>({});
   const [liveStats, setLiveStats] = useState<LiveRoomStats>(demoLiveRoomStats);
@@ -3503,6 +3507,10 @@ function LiveRoomPage({
   const countdownExtensionTimerRef = useRef<number>();
   const scheduledAuctionRefreshAttemptsRef = useRef<Set<string>>(new Set());
   const bidConfirmTimerRef = useRef<number>();
+  const settledBidResultIdsRef = useRef<Set<string>>(new Set());
+  const rankingSnapshotDelayUntilRef = useRef(0);
+  const delayedRankingSnapshotTimerRef = useRef<number>();
+  const delayedRankingSnapshotMessageRef = useRef<RealtimeMessage>();
   const likeBurstTimerRef = useRef<number>();
   const commentsViewportRef = useRef<HTMLDivElement>(null);
   const commentsEndRef = useRef<HTMLDivElement>(null);
@@ -3517,6 +3525,14 @@ function LiveRoomPage({
     if (next === current) return;
     rankingRef.current = next;
     setRanking(next);
+  }, []);
+  const clearDelayedRankingSnapshot = useCallback(() => {
+    if (delayedRankingSnapshotTimerRef.current) {
+      window.clearTimeout(delayedRankingSnapshotTimerRef.current);
+      delayedRankingSnapshotTimerRef.current = undefined;
+    }
+    delayedRankingSnapshotMessageRef.current = undefined;
+    rankingSnapshotDelayUntilRef.current = 0;
   }, []);
   const followedRooms = useLiveActivityStore((state) => state.followedRooms);
   const roomLocalLikeCount = useLiveActivityStore((state) => state.roomLikeCounts[roomId] ?? 0);
@@ -3624,9 +3640,10 @@ function LiveRoomPage({
     liveSoundAutoplayBlockedRef.current = false;
     liveVoicePermissionPromptVisibleRef.current = false;
     pendingLiveVoicePayloadsRef.current = [];
+    clearDelayedRankingSnapshot();
     liveVoicePlayerRef.current?.stop();
     commentsShouldStickRef.current = true;
-  }, [roomId]);
+  }, [clearDelayedRankingSnapshot, roomId]);
 
   useEffect(() => {
     return () => {
@@ -3935,6 +3952,30 @@ function LiveRoomPage({
     [clearBidConfirmTimer]
   );
 
+  // 异步裁决（bid.ack mode=ASYNC status=QUEUED）等待 bid.result 的超时。
+  // 超时不置 success/error 终态，只提示“裁决中，请稍候/可刷新”，避免把排队中误判为成功或失败。
+  const scheduleBidArbitrationTimeout = useCallback(
+    (requestId: string) => {
+      clearBidConfirmTimer();
+      bidConfirmTimerRef.current = window.setTimeout(() => {
+        bidConfirmTimerRef.current = undefined;
+        console.warn('[bid.place] arbitration wait timeout', { requestId });
+        let stillArbitrating = false;
+        setQuickBidFeedback((prev) => {
+          if (prev.status === 'arbitrating' && prev.requestId === requestId) {
+            stillArbitrating = true;
+            return { status: 'arbitrating', requestId, message: t('auction.bidArbitrationTimeout') };
+          }
+          return prev;
+        });
+        if (stillArbitrating) {
+          void refetchAuctionStateRef.current();
+        }
+      }, BID_ARBITRATION_TIMEOUT_MS);
+    },
+    [clearBidConfirmTimer]
+  );
+
   useEffect(() => clearBidConfirmTimer, [clearBidConfirmTimer]);
 
   const stopDigitalHumanSpeaking = useCallback(() => {
@@ -4104,6 +4145,27 @@ function LiveRoomPage({
   }, []);
 
   const handleBidAck = useCallback((requestId: string | undefined, payload: Record<string, unknown>) => {
+    // 异步形态：payload 含 mode:"ASYNC"、status:"QUEUED"|"REJECTED"。同步形态（无 mode）走下方原有逻辑。
+    if (String(payload.mode ?? '').toUpperCase() === 'ASYNC') {
+      const status = String(payload.status ?? '').toUpperCase();
+      if (status === 'REJECTED') {
+        // 入队前校验/队列保护失败，是终态失败。
+        logBidRejectedDebug('bid.ack', requestId, payload);
+        clearBidConfirmTimer();
+        setQuickBidFeedback((prev) => (prev.status === 'submitting' && (!requestId || prev.requestId === requestId) ? { status: 'error', requestId, message: formatBidRejectedMessage(payload) } : prev));
+        return;
+      }
+      // QUEUED（或其他未知异步状态）：仅入队待裁决，进入“裁决中”，等待 bid.result，不按 8s 终态超时误判。
+      let arbitrationRequestId: string | undefined;
+      setQuickBidFeedback((prev) => {
+        if (prev.status !== 'submitting' || (requestId && prev.requestId !== requestId)) return prev;
+        const effectiveRequestId = requestId ?? prev.requestId;
+        arbitrationRequestId = effectiveRequestId;
+        return { status: 'arbitrating', requestId: effectiveRequestId, message: t('auction.bidArbitrating') };
+      });
+      if (arbitrationRequestId) scheduleBidArbitrationTimeout(arbitrationRequestId);
+      return;
+    }
     if (payload.accepted === false) {
       logBidRejectedDebug('bid.ack', requestId, payload);
       clearBidConfirmTimer();
@@ -4125,7 +4187,7 @@ function LiveRoomPage({
       return;
     }
     setQuickBidFeedback((prev) => (prev.status === 'submitting' && (!requestId || prev.requestId === requestId) ? { ...prev, message: t('auction.bidSubmitted') } : prev));
-  }, [clearBidConfirmTimer, userId]);
+  }, [clearBidConfirmTimer, scheduleBidArbitrationTimeout, userId]);
 
   const handleBidAcceptedFeedback = useCallback(
     (requestId: string | undefined, payload: Record<string, unknown>) => {
@@ -4154,6 +4216,46 @@ function LiveRoomPage({
     clearBidConfirmTimer();
     setQuickBidFeedback((prev) => (prev.status === 'submitting' && (!requestId || prev.requestId === requestId) ? { status: 'error', requestId, message: formatBidRejectedMessage(payload) } : prev));
   }, [clearBidConfirmTimer]);
+
+  // 异步裁决的最终结果（bid.result，定向推送）。无论是否重复都要回发 bid.result.ack 让后端释放 pending、停止重发。
+  // 返回 true 表示本次为首次终态（可应用价格/排行更新）；返回 false 表示重复（仅回 ack，不重复改价/提示）。
+  const handleBidResult = useCallback((payload: Record<string, unknown>): boolean => {
+    const bidId = String(payload.bidId ?? '').trim();
+    // 始终回发 bid.result.ack（含 bidId），即使重复或无法匹配本次出价。
+    if (bidId) {
+      realtimeRef.current?.send({ type: 'bid.result.ack', requestId: makeRequestId('bidResultAck'), payload: { bidId } });
+    }
+    // 幂等：同一 bidId 已处理终态后再次收到，直接忽略（只回 ack，不重复弹提示/不重复改价）。
+    if (bidId && settledBidResultIdsRef.current.has(bidId)) return false;
+    if (bidId) settledBidResultIdsRef.current.add(bidId);
+
+    const finalStatus = String(payload.finalStatus ?? '').toUpperCase();
+    const auctionId = String(payload.auctionId ?? '').trim();
+    if (finalStatus === 'ACCEPTED') {
+      // bid.result 是本次出价的定向结果，ACCEPTED 即本人出价最终成功。
+      clearBidConfirmTimer();
+      const acceptedPrice = realtimeNumber(realtimeBidPriceValue(payload), Number.NaN);
+      if (auctionId && Number.isFinite(acceptedPrice)) {
+        lastRankingBidRef.current = {
+          auctionId,
+          bidderId: userId,
+          price: acceptedPrice,
+          bidTsMs: parseRealtimeTimestampMs(payload.bidTsMs ?? payload.serverTimeMs ?? payload.serverTime, Date.now())
+        };
+      }
+      if (auctionId) setLastBidAtByAuction((prev) => ({ ...prev, [auctionId]: Date.now() }));
+      setQuickBidFeedback((prev) => (prev.status === 'submitting' || prev.status === 'arbitrating' ? { status: 'success', requestId: prev.requestId, message: t('auction.bidAccepted') } : prev));
+      return true;
+    }
+    if (finalStatus === 'REJECTED') {
+      logBidRejectedDebug('bid.ack', undefined, payload);
+      clearBidConfirmTimer();
+      setQuickBidFeedback((prev) => (prev.status === 'submitting' || prev.status === 'arbitrating' ? { status: 'error', requestId: prev.requestId, message: formatBidRejectedMessage(payload) } : prev));
+      void refetchAuctionStateRef.current();
+      return true;
+    }
+    return true;
+  }, [clearBidConfirmTimer, userId]);
 
   const sendComment = useCallback(() => {
     const content = commentDraft.trim();
@@ -4249,11 +4351,7 @@ function LiveRoomPage({
             })
           : undefined;
     realtimeRef.current = client;
-    const handleMessage = (message: RealtimeMessage) => {
-      if (!isFreshRealtimeMessageByDomain(message, realtimeSeqCursorRef.current)) return;
-      realtimeSeqCursorRef.current = nextRealtimeSeqByDomain(message, realtimeSeqCursorRef.current);
-      lastSeqRef.current = realtimeSeqCursorRef.current.bid ?? lastSeqRef.current;
-      syncServerTimeOffset(message.payload);
+    const consumeRealtimeMessage = (message: RealtimeMessage) => {
       if (isBidAcceptedRealtimeType(message.type)) {
         const payload = message.payload as Record<string, unknown>;
         const auctionId = String(payload.auctionId ?? latestContext.current.activeLot?.auctionId ?? '');
@@ -4275,6 +4373,12 @@ function LiveRoomPage({
             price: acceptedPrice,
             bidTsMs: Number(payload.bidTsMs ?? Date.now())
           };
+        }
+        const nextRanking = mergeRealtimeBidIntoRankingItems(rankingRef.current, payload, userId, context.activeLot?.auctionId, userNickname, userAvatarUrl);
+        const rankingAnimation = buildRankingAnimation(rankingRef.current, nextRanking, userId, lastRankingBidRef.current);
+        clearDelayedRankingSnapshot();
+        if (rankingAnimation) {
+          rankingSnapshotDelayUntilRef.current = Date.now() + rankingAnimation.durationMs;
         }
       }
       if (message.type === 'timer.extended') {
@@ -4421,6 +4525,7 @@ function LiveRoomPage({
           setRuntimeStartedAuctionId((current) => (current === auctionId ? undefined : current));
           setHiddenAuctionCardId((current) => (current === auctionId ? undefined : current));
           lastRankingBidRef.current = undefined;
+          clearDelayedRankingSnapshot();
           rankingRef.current = [];
           setRankingAnimationSource('snapshot');
           setRanking([]);
@@ -4488,19 +4593,64 @@ function LiveRoomPage({
         setNotice: pushNotice,
         applyRankingUpdate,
         getCurrentRanking: () => rankingRef.current,
+        getLastRankingBid: () => lastRankingBidRef.current,
         setRankingAnimationSource,
         onChatAck: acknowledgeChatMessage,
         onChatMessage: appendChatMessage,
-      onChatError: failChatMessage,
-      onBidAck: handleBidAck,
-      onBidAccepted: handleBidAcceptedFeedback,
-      onBidRejected: handleBidRejectedFeedback,
-      onSnapshotRequired: () => {
-        void refetchAuctionStateRef.current();
-        const activeAuctionId = latestContext.current.activeLot?.auctionId;
-        if (activeAuctionId) void queryClient.invalidateQueries({ queryKey: ['auction-ranking', activeAuctionId] });
+        onChatError: failChatMessage,
+        onBidAck: handleBidAck,
+        onBidAccepted: handleBidAcceptedFeedback,
+        onBidRejected: handleBidRejectedFeedback,
+        onBidResult: handleBidResult,
+        onSnapshotRequired: () => {
+          void refetchAuctionStateRef.current();
+          const activeAuctionId = latestContext.current.activeLot?.auctionId;
+          if (activeAuctionId) void queryClient.invalidateQueries({ queryKey: ['auction-ranking', activeAuctionId] });
+        }
+      });
+    };
+    const consumeDelayedRankingSnapshot = () => {
+      delayedRankingSnapshotTimerRef.current = undefined;
+      const delayedMessage = delayedRankingSnapshotMessageRef.current;
+      delayedRankingSnapshotMessageRef.current = undefined;
+      rankingSnapshotDelayUntilRef.current = 0;
+      if (!delayedMessage) return;
+      if (
+        !shouldConsumeDelayedRankingUpdatedMessage(
+          delayedMessage,
+          latestContext.current.activeLot?.auctionId,
+          rankingRef.current,
+          userId,
+          userNickname,
+          userAvatarUrl
+        )
+      ) {
+        return;
       }
-    });
+      consumeRealtimeMessage(delayedMessage);
+    };
+    const scheduleDelayedRankingSnapshot = (message: RealtimeMessage, delayMs: number) => {
+      delayedRankingSnapshotMessageRef.current = message;
+      if (delayedRankingSnapshotTimerRef.current) window.clearTimeout(delayedRankingSnapshotTimerRef.current);
+      delayedRankingSnapshotTimerRef.current = window.setTimeout(consumeDelayedRankingSnapshot, delayMs);
+    };
+    const handleMessage = (message: RealtimeMessage) => {
+      if (
+        message.type === 'ranking.updated' &&
+        !shouldConsumeRankingUpdatedMessage(message, latestContext.current.activeLot?.auctionId, rankingRef.current, userId, userNickname, userAvatarUrl)
+      ) {
+        return;
+      }
+      if (!isFreshRealtimeMessageByDomain(message, realtimeSeqCursorRef.current)) return;
+      realtimeSeqCursorRef.current = nextRealtimeSeqByDomain(message, realtimeSeqCursorRef.current);
+      lastSeqRef.current = realtimeSeqCursorRef.current.bid ?? lastSeqRef.current;
+      syncServerTimeOffset(message.payload);
+      const rankingDelayMs = message.type === 'ranking.updated' ? rankingSnapshotDelayUntilRef.current - Date.now() : 0;
+      if (rankingDelayMs > 0) {
+        scheduleDelayedRankingSnapshot(message, rankingDelayMs);
+        return;
+      }
+      consumeRealtimeMessage(message);
     };
     const controlClient =
       (isTestMode || import.meta.env.VITE_REALTIME_MODE !== 'websocket') && import.meta.env.VITE_MOCK_CONTROL_URL
@@ -4515,10 +4665,11 @@ function LiveRoomPage({
     return () => {
       unsubscribe?.();
       unsubscribeControl?.();
+      clearDelayedRankingSnapshot();
       controlClient?.disconnect();
       client?.disconnect();
     };
-  }, [accessToken, acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, applyRankingUpdate, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, playLiveVoiceBroadcast, pushAuctionAtmosphereAlert, pushNotice, queryClient, requestFloatingAuctionCard, roomId, syncServerTimeOffset, userAvatarUrl, userId, userNickname]);
+  }, [accessToken, acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, applyRankingUpdate, clearDelayedRankingSnapshot, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, handleBidResult, playLiveVoiceBroadcast, pushAuctionAtmosphereAlert, pushNotice, queryClient, requestFloatingAuctionCard, roomId, syncServerTimeOffset, userAvatarUrl, userId, userNickname]);
 
   const enrollMutation = useMutation({
     mutationFn: (auctionId: string) => apiClient.enrollAuction(auctionId),
@@ -5234,6 +5385,7 @@ function LiveRankingRail({
   const dividerRef = useRef<HTMLDivElement | null>(null);
   const currentRowRef = useRef<HTMLDivElement | null>(null);
   const previousItemsRef = useRef<RankingItem[]>([]);
+  const activeAnimationRef = useRef<RankingAnimation>();
   const animationTimerRef = useRef<number>();
   const pinnedCurrentUserTimerRef = useRef<number>();
   const [animation, setAnimation] = useState<RankingAnimation>();
@@ -5259,8 +5411,7 @@ function LiveRankingRail({
   const panelStyle = animation ? ({ '--ranking-duration-ms': `${animation.durationMs}ms` } as CSSProperties) : undefined;
   const resolvedAnimationLayout = animation ? (animationLayout?.id === animation.id ? animationLayout : fallbackRankingAnimationLayout(animation)) : undefined;
 
-  useEffect(() => {
-    const previousItems = previousItemsRef.current;
+  const clearRankingAnimationTimers = useCallback(() => {
     if (animationTimerRef.current) {
       window.clearTimeout(animationTimerRef.current);
       animationTimerRef.current = undefined;
@@ -5269,16 +5420,34 @@ function LiveRankingRail({
       window.clearTimeout(pinnedCurrentUserTimerRef.current);
       pinnedCurrentUserTimerRef.current = undefined;
     }
+  }, []);
+
+  const clearRankingAnimation = useCallback(() => {
+    clearRankingAnimationTimers();
+    activeAnimationRef.current = undefined;
+    setAnimation(undefined);
+    setAnimationLayout(undefined);
+    setPinnedCurrentUser(undefined);
+  }, [clearRankingAnimationTimers]);
+
+  useEffect(() => {
+    const previousItems = previousItemsRef.current;
 
     if (!animateChanges) {
-      setAnimation(undefined);
-      setAnimationLayout(undefined);
-      setPinnedCurrentUser(undefined);
       previousItemsRef.current = items;
+      if (activeAnimationRef.current) return;
+      clearRankingAnimation();
       return;
     }
 
     const nextAnimation = buildRankingAnimation(previousItems, items, userId, lastBid);
+    if (!nextAnimation && activeAnimationRef.current) {
+      previousItemsRef.current = items;
+      return;
+    }
+
+    clearRankingAnimationTimers();
+    activeAnimationRef.current = nextAnimation;
     setAnimation(nextAnimation);
     setAnimationLayout(nextAnimation ? fallbackRankingAnimationLayout(nextAnimation) : undefined);
     if (nextAnimation?.kind === 'current-row-to-first' && nextAnimation.isSelfBid) {
@@ -5292,6 +5461,7 @@ function LiveRankingRail({
     }
     if (nextAnimation) {
       animationTimerRef.current = window.setTimeout(() => {
+        activeAnimationRef.current = undefined;
         setAnimation(undefined);
         setAnimationLayout(undefined);
         setPinnedCurrentUser(undefined);
@@ -5299,14 +5469,14 @@ function LiveRankingRail({
       }, nextAnimation.durationMs);
     }
     previousItemsRef.current = items;
-  }, [animateChanges, items, lastBid, userId]);
+  }, [animateChanges, clearRankingAnimation, clearRankingAnimationTimers, items, lastBid, userId]);
 
   useEffect(() => {
     return () => {
-      if (animationTimerRef.current) window.clearTimeout(animationTimerRef.current);
-      if (pinnedCurrentUserTimerRef.current) window.clearTimeout(pinnedCurrentUserTimerRef.current);
+      clearRankingAnimationTimers();
+      activeAnimationRef.current = undefined;
     };
-  }, []);
+  }, [clearRankingAnimationTimers]);
 
   useLayoutEffect(() => {
     if (!animation || animation.kind === 'price-only') return;
@@ -5566,7 +5736,7 @@ function buildRankingAnimation(previousItems: RankingItem[], nextItems: RankingI
     fromRank: previousRank,
     toRank: 1,
     isSelfBid,
-    durationMs: isSelfBid && kind !== 'price-only' ? 1000 : 500,
+    durationMs: isSelfBid && kind !== 'price-only' ? RANKING_SELF_BID_ANIMATION_DURATION_MS : RANKING_BID_ANIMATION_DURATION_MS,
     movingItem,
     exitItem,
     shiftedIds,
@@ -5687,6 +5857,29 @@ function rankingSnapshotItemsEqual(previousItems: RankingItem[], nextItems: Rank
   });
 }
 
+function normalizeRankingUpdatedMessage(message: RealtimeMessage, activeAuctionId: string | undefined, userId: string, userNickname?: string, userAvatarUrl?: string): RankingItem[] | undefined {
+  const payload = realtimePayloadRecord(message.payload);
+  const auctionId = String(payload.auctionId ?? '').trim();
+  if (activeAuctionId && auctionId && auctionId !== activeAuctionId) return undefined;
+  return normalizeRealtimeRankingItems(extractRealtimeRankingItems(payload), userId, userNickname, userAvatarUrl);
+}
+
+function shouldConsumeRankingUpdatedMessage(message: RealtimeMessage, activeAuctionId: string | undefined, currentItems: RankingItem[], userId: string, userNickname?: string, userAvatarUrl?: string): boolean {
+  const nextRanking = normalizeRankingUpdatedMessage(message, activeAuctionId, userId, userNickname, userAvatarUrl);
+  return Boolean(nextRanking && !rankingSnapshotItemsEqual(currentItems, nextRanking));
+}
+
+function shouldConsumeDelayedRankingUpdatedMessage(message: RealtimeMessage, activeAuctionId: string | undefined, currentItems: RankingItem[], userId: string, userNickname?: string, userAvatarUrl?: string): boolean {
+  const nextRanking = normalizeRankingUpdatedMessage(message, activeAuctionId, userId, userNickname, userAvatarUrl);
+  return Boolean(nextRanking && shouldApplyRankingSnapshot(currentItems, nextRanking));
+}
+
+function rankingSnapshotMatchesBidHint(snapshotItems: RankingItem[], bid?: RankingBidHint): boolean {
+  if (!bid || !snapshotItems.length) return false;
+  const leader = sortRankingItems(snapshotItems)[0];
+  return leader?.bidderId === bid.bidderId && leader.price === bid.price;
+}
+
 function shouldApplyRankingSnapshot(currentItems: RankingItem[], snapshotItems: RankingItem[]): boolean {
   if (rankingSnapshotItemsEqual(currentItems, snapshotItems)) return false;
   if (!currentItems.length) return true;
@@ -5786,6 +5979,7 @@ interface RealtimeHandlerOptions {
   setNotice: (notice: string) => void;
   applyRankingUpdate: (updater: (current: RankingItem[]) => RankingItem[]) => void;
   getCurrentRanking: () => RankingItem[];
+  getLastRankingBid: () => RankingBidHint | undefined;
   setRankingAnimationSource: Dispatch<SetStateAction<RankingAnimationSource>>;
   onChatAck: (payload: Record<string, unknown>) => void;
   onChatMessage: (message: LiveChatMessage) => void;
@@ -5793,6 +5987,7 @@ interface RealtimeHandlerOptions {
   onBidAck?: (requestId: string | undefined, payload: Record<string, unknown>) => void;
   onBidAccepted?: (requestId: string | undefined, payload: Record<string, unknown>) => void;
   onBidRejected?: (requestId: string | undefined, payload: Record<string, unknown>) => void;
+  onBidResult?: (payload: Record<string, unknown>) => boolean;
   onSnapshotRequired?: () => void;
 }
 
@@ -5859,11 +6054,37 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
   if (message.type === 'bid.ack') {
     const payload = message.payload as Record<string, unknown>;
     const requestId = realtimeMessageRequestId(message, payload);
-    if (payload.accepted === true) {
+    const isAsync = String(payload.mode ?? '').toUpperCase() === 'ASYNC';
+    if (!isAsync && payload.accepted === true) {
       updateLotStateFromBidPayload(payload, options, false);
     }
     options.onBidAck?.(requestId, payload);
-    options.setNotice(payload.accepted === false ? formatBidRejectedMessage(payload) : payload.accepted === true ? t('auction.bidAccepted') : t('auction.bidSubmitted'));
+    if (isAsync) {
+      // 异步形态：QUEUED 仅入队待裁决（裁决中），REJECTED 为终态失败；都不是“出价成功”。
+      options.setNotice(String(payload.status ?? '').toUpperCase() === 'REJECTED' ? formatBidRejectedMessage(payload) : t('auction.bidArbitrating'));
+    } else {
+      options.setNotice(payload.accepted === false ? formatBidRejectedMessage(payload) : payload.accepted === true ? t('auction.bidAccepted') : t('auction.bidSubmitted'));
+    }
+  }
+  if (message.type === 'bid.result') {
+    const payload = message.payload as Record<string, unknown>;
+    // 始终回发 ack 并做幂等处理；重复结果不再改价/提示。
+    const isFresh = options.onBidResult?.(payload) ?? true;
+    if (isFresh) {
+      const finalStatus = String(payload.finalStatus ?? '').toUpperCase();
+      if (finalStatus === 'ACCEPTED') {
+        updateLotStateFromBidPayload({ ...payload, endTime: payload.endTimeMs, serverTime: payload.serverTimeMs }, options, true);
+        options.setRankingAnimationSource('bid.accepted');
+        options.applyRankingUpdate((prev) => mergeRealtimeBidIntoRankingItems(prev, { ...payload, bidderId: options.userId }, options.userId, options.activeAuctionId, options.userNickname, options.userAvatarUrl));
+        options.setNotice(t('auction.bidAccepted'));
+      } else if (finalStatus === 'REJECTED') {
+        // 刷新最新价格（currentPrice），不改排行（领先者由后端 leaderBidderId 决定）。
+        if (payload.currentPrice !== undefined) {
+          updateLotStateFromBidPayload({ auctionId: payload.auctionId, currentPrice: payload.currentPrice, leaderBidderId: payload.leaderBidderId, endTime: payload.endTimeMs, serverTime: payload.serverTimeMs }, options, false);
+        }
+        options.setNotice(formatBidRejectedMessage(payload));
+      }
+    }
   }
   if (message.type === 'chat.ack') {
     options.onChatAck(message.payload as Record<string, unknown>);
@@ -5889,12 +6110,10 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
     options.setNotice(String(payload.bidderId ?? payload.leaderBidderId) === options.userId ? t('auction.bidAccepted') : t('live.chat.bid'));
   }
   if (message.type === 'ranking.updated') {
-    const payload = realtimePayloadRecord(message.payload);
-    const auctionId = String(payload.auctionId ?? '').trim();
-    if (options.activeAuctionId && auctionId && auctionId !== options.activeAuctionId) return;
-    const nextRanking = normalizeRealtimeRankingItems(extractRealtimeRankingItems(payload), options.userId, options.userNickname, options.userAvatarUrl);
+    const nextRanking = normalizeRankingUpdatedMessage(message, options.activeAuctionId, options.userId, options.userNickname, options.userAvatarUrl);
+    if (!nextRanking) return;
     if (!rankingSnapshotItemsEqual(options.getCurrentRanking(), nextRanking)) {
-      options.setRankingAnimationSource('snapshot');
+      options.setRankingAnimationSource(rankingSnapshotMatchesBidHint(nextRanking, options.getLastRankingBid()) ? 'bid.accepted' : 'snapshot');
       options.applyRankingUpdate(() => nextRanking);
     }
   }
@@ -6529,8 +6748,10 @@ function BidSheet({
     setSelectedPrice(getQuickBidPrice(rule, nextSteps));
   };
 
-  const canDecrease = stepCount > 1 && !isClosed && feedback.status !== 'submitting';
-  const canIncrease = stepCount < maxBidSteps && selectedPrice < (rule.capPrice ?? Number.MAX_SAFE_INTEGER) && !isClosed && feedback.status !== 'submitting';
+  // submitting（已发送待确认）与 arbitrating（异步裁决中）都属于“出价处理中”，按钮禁用且不可加减价。
+  const isBidPending = feedback.status === 'submitting' || feedback.status === 'arbitrating';
+  const canDecrease = stepCount > 1 && !isClosed && !isBidPending;
+  const canIncrease = stepCount < maxBidSteps && selectedPrice < (rule.capPrice ?? Number.MAX_SAFE_INTEGER) && !isClosed && !isBidPending;
   const disabledReason =
     isClosed
       ? t('bid.currentAuctionEnded')
@@ -6541,8 +6762,14 @@ function BidSheet({
           : !isUserLeader && intervalRemainingMs > 0
             ? t('bid.intervalWaiting', { seconds: Math.ceil(intervalRemainingMs / 1000) })
             : '';
-  const canSubmit = !disabledReason && feedback.status !== 'submitting';
-  const submitText = isClosed ? t('bid.endedAutoReturn', { seconds: closedCountdown }) : feedback.status === 'submitting' ? t('auction.bidSubmitted') : t('bid.submitNow');
+  const canSubmit = !disabledReason && !isBidPending;
+  const submitText = isClosed
+    ? t('bid.endedAutoReturn', { seconds: closedCountdown })
+    : feedback.status === 'arbitrating'
+      ? feedback.message
+      : feedback.status === 'submitting'
+        ? t('auction.bidSubmitted')
+        : t('bid.submitNow');
 
   return (
     <AnimatedSheetFrame variant={variant} phase={phase} zIndex={zIndex} accessibilityHidden={accessibilityHidden} className="bid-sheet quick-bid-sheet" label={t('bid.confirmTitle')} showBackdrop={false} onClose={onClose}>
@@ -7291,6 +7518,8 @@ function formatBidRejectedMessage(payload: Record<string, unknown>): string {
   if (reason === 'belowMinimum' || reason === 'BELOW_MIN_INCREMENT' || reason === 'invalidStep') return t('auction.bidTooSlow');
   if (reason === 'FREQ_LIMIT') return t('auction.bidTooFrequent');
   if (reason === 'ABOVE_MAX_BID_STEPS' || reason === 'ABOVE_EXPECTED_MAX_BID_STEPS') return t('auction.bidAboveMaxStepsGeneric');
+  if (reason === 'HOT_AUCTION_QUEUE_FULL') return t('auction.bidQueueFull');
+  if (reason === 'USER_BID_ALREADY_PENDING') return t('auction.bidAlreadyPending');
   if (reason === 'AUCTION_CLOSED' || reason === 'INVALID_STATE') return t('auction.closed');
   if (typeof payload.message === 'string' && payload.message.trim()) return payload.message;
   return t('auction.bidRejected');

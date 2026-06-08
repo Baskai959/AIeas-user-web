@@ -191,6 +191,9 @@ describe('mobile layout CSS', () => {
     expect(rule('.live-ranking-current-row')).toContain('min-height: 28px');
     expect(rule('.live-ranking-current-row')).toContain('padding-top: 0');
     expect(rule('.live-ranking-row.is-moving-target')).toContain('animation: ranking-target-reveal var(--ranking-duration-ms');
+    expect(css).toContain('.live-ranking-row.is-moving-target > .live-ranking-name');
+    expect(css).toContain('.live-ranking-row.is-moving-target > .live-ranking-price');
+    expect(css).toContain('opacity: 0');
     expect(rule('.live-ranking-exit-row')).toContain('animation: ranking-row-exit-divider var(--ranking-duration-ms');
     expect(rule('.live-ranking-exit-row')).not.toContain('grid-template-columns:');
     expect(rule('.live-ranking-exit-row')).not.toContain('font-size:');
