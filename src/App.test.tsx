@@ -1404,6 +1404,7 @@ describe('App flow', () => {
 
     await loginAsBuyer(user);
     expect(useLiveActivityStore.getState().footprints).toHaveLength(0);
+    expect(useLiveActivityStore.getState().lotFootprints).toHaveLength(0);
 
     await user.click(await screen.findByRole('button', { name: getMessage('discover.enterLive') }));
     await screen.findByText('云上珠宝');
@@ -1416,7 +1417,127 @@ describe('App flow', () => {
     const footprintHeading = await screen.findByRole('heading', { name: getMessage('profile.footprintTitle') });
     expect(footprintHeading).toBeInTheDocument();
     expect(footprintHeading.closest('.simple-page-header')?.querySelector('.eyebrow')).not.toBeInTheDocument();
+    expect(footprintHeading.closest('.simple-page-header')?.querySelector('.back-button')).toHaveTextContent('');
+    expect(screen.getByRole('tab', { name: getMessage('profile.liveRoomFootprints') })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.getByRole('tab', { name: getMessage('profile.lotFootprints') })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    );
+    expect(screen.getByRole('button', { name: getMessage('profile.enterLiveRoom') })).toHaveClass(
+      'is-red-outline',
+    );
+
+    await user.click(screen.getByRole('tab', { name: getMessage('profile.lotFootprints') }));
+    expect(screen.getByText(getMessage('profile.noLotFootprints'))).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: getMessage('profile.liveRoomFootprints') }));
     expect(await screen.findByText('珠宝严选直播间')).toBeInTheDocument();
+  });
+
+  it('records product footprints separately and can reopen lots from the footprints page', async () => {
+    renderApp();
+    const user = userEvent.setup();
+
+    await loginAsBuyer(user);
+    await user.click(await screen.findByRole('button', { name: getMessage('nav.discover') }));
+    const [firstLotAction] = await screen.findAllByRole('button', { name: getMessage('product.bidNow') });
+    await user.click(firstLotAction);
+
+    await waitFor(() => expect(window.location.pathname).toMatch(/^\/product\//));
+    expect(useLiveActivityStore.getState().footprints).toHaveLength(0);
+    await waitFor(() => expect(useLiveActivityStore.getState().lotFootprints).toHaveLength(1));
+
+    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
+    await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
+    await user.click(screen.getByRole('button', { name: getMessage('profile.footprints') }));
+
+    expect(await screen.findByText(getMessage('profile.noFootprints'))).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: getMessage('profile.lotFootprints') }));
+    const viewLotButton = await screen.findByRole('button', { name: getMessage('profile.viewLot') });
+    expect(viewLotButton).toHaveClass('is-red-outline');
+
+    await user.click(viewLotButton);
+    await waitFor(() => expect(window.location.pathname).toMatch(/^\/product\//));
+  });
+
+  it('shows the total room and product footprint count on the me page', async () => {
+    renderApp();
+    const user = userEvent.setup();
+
+    await loginAsBuyer(user);
+    act(() => {
+      useLiveActivityStore.setState({
+        footprints: [
+          { roomId: 'room_1001', title: 'Room One', merchantName: 'Merchant One', viewedAt: '2026-06-01T10:00:00+08:00' }
+        ],
+        lotFootprints: [
+          { lotId: 'lot_3001', auctionId: 'auc_2001', roomId: 'room_1001', title: 'Lot One', status: 'RUNNING', currentPrice: 100, viewedAt: '2026-06-01T10:01:00+08:00' },
+          { lotId: 'lot_3002', auctionId: 'auc_2002', roomId: 'room_1001', title: 'Lot Two', status: 'READY', currentPrice: 0, viewedAt: '2026-06-01T10:02:00+08:00' }
+        ]
+      });
+    });
+
+    await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
+    const quickLinks = within(screen.getByLabelText(getMessage('profile.quickLinks')));
+    expect(quickLinks.getByRole('button', { name: getMessage('profile.footprints') })).toHaveTextContent('3');
+  });
+
+  it('returns from a product footprint to the lot footprint tab and restores the loaded position', async () => {
+    seedSession();
+    act(() => {
+      useLiveActivityStore.setState({
+        lotFootprints: Array.from({ length: 20 }, (_, index) => ({
+          lotId: `lot_foot_${index + 1}`,
+          auctionId: `auc_foot_${index + 1}`,
+          roomId: 'room_1001',
+          title: `Footprint Lot ${index + 1}`,
+          description: `List intro ${index + 1}`,
+          imageUrl: `/lot-foot-${index + 1}.png`,
+          status: 'READY' as const,
+          currentPrice: 0,
+          viewedAt: new Date(Date.UTC(2026, 5, 1, 2, index, 0)).toISOString()
+        }))
+      });
+    });
+    renderWithRouter('/footprints?tab=lots');
+    const user = userEvent.setup();
+
+    expect(await screen.findByRole('tab', { name: getMessage('profile.lotFootprints') })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await user.click(screen.getByRole('button', { name: getMessage('profile.loadMore') }));
+    const footprintPage = document.querySelector('.footprint-page') as HTMLElement;
+    footprintPage.scrollTop = 160;
+    await user.click(screen.getAllByRole('button', { name: getMessage('profile.viewLot') })[14]);
+    await waitFor(() => expect(window.location.pathname).toMatch(/^\/product\//));
+
+    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
+
+    expect(await screen.findByRole('tab', { name: getMessage('profile.lotFootprints') })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.getAllByRole('button', { name: getMessage('profile.viewLot') })).toHaveLength(20);
+    await waitFor(() => expect((document.querySelector('.footprint-page') as HTMLElement).scrollTop).toBe(160));
+  });
+
+  it('returns to the discover page after opening a merchant from a discover lot card', async () => {
+    renderApp();
+    const user = userEvent.setup();
+
+    await loginAsBuyer(user);
+    await user.click(await screen.findByRole('button', { name: getMessage('nav.discover') }));
+    await waitFor(() => expect(window.location.pathname).toBe('/discover'));
+    await user.click(await screen.findByRole('button', { name: new RegExp(getMessage('product.merchant')) }));
+    await waitFor(() => expect(window.location.pathname).toBe('/merchant/merchant_01'));
+
+    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
+
+    await waitFor(() => expect(window.location.pathname).toBe('/discover'));
+    expect(await screen.findByText(getMessage('discoverLots.title'))).toBeInTheDocument();
   });
 
   it('shows following, footprints, and order shortcuts on the me page, then saves a local nickname from settings', async () => {

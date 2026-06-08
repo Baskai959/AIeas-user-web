@@ -1,12 +1,13 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import type { FollowedLiveRoom, LiveRoom, LiveRoomFootprint } from '../services/types';
+import type { FollowedLiveRoom, LiveRoom, LiveRoomFootprint, LiveRoomLot, LotFootprint } from '../services/types';
 
 const maxFootprints = 100;
 
 interface LiveActivityState {
   followedRooms: FollowedLiveRoom[];
   footprints: LiveRoomFootprint[];
+  lotFootprints: LotFootprint[];
   roomLikeCounts: Record<string, number>;
   commentDrafts: Record<string, string>;
   followRoom: (room: LiveRoom) => void;
@@ -17,6 +18,8 @@ interface LiveActivityState {
   clearCommentDraft: (roomId: string) => void;
   recordFootprint: (room: LiveRoom) => void;
   getFootprintsPage: (offset: number, limit: number) => LiveRoomFootprint[];
+  recordLotFootprint: (lot: LiveRoomLot) => void;
+  getLotFootprintsPage: (offset: number, limit: number) => LotFootprint[];
   clearActivity: () => void;
 }
 
@@ -25,6 +28,7 @@ export const useLiveActivityStore = create<LiveActivityState>()(
     (set, get) => ({
       followedRooms: [],
       footprints: [],
+      lotFootprints: [],
       roomLikeCounts: {},
       commentDrafts: {},
       followRoom: (room) => {
@@ -69,7 +73,14 @@ export const useLiveActivityStore = create<LiveActivityState>()(
         }));
       },
       getFootprintsPage: (offset, limit) => get().footprints.slice(offset, offset + limit),
-      clearActivity: () => set({ followedRooms: [], footprints: [], roomLikeCounts: {}, commentDrafts: {} })
+      recordLotFootprint: (lot) => {
+        const item = lotToFootprint(lot);
+        set((state) => ({
+          lotFootprints: [item, ...state.lotFootprints.filter((footprint) => footprint.lotId !== item.lotId)].slice(0, maxFootprints)
+        }));
+      },
+      getLotFootprintsPage: (offset, limit) => get().lotFootprints.slice(offset, offset + limit),
+      clearActivity: () => set({ followedRooms: [], footprints: [], lotFootprints: [], roomLikeCounts: {}, commentDrafts: {} })
     }),
     {
       name: 'aieas-user-live-activity',
@@ -77,6 +88,7 @@ export const useLiveActivityStore = create<LiveActivityState>()(
       partialize: (state) => ({
         followedRooms: state.followedRooms,
         footprints: state.footprints,
+        lotFootprints: state.lotFootprints,
         roomLikeCounts: state.roomLikeCounts,
         commentDrafts: state.commentDrafts
       })
@@ -100,6 +112,20 @@ function roomToFootprint(room: LiveRoom): LiveRoomFootprint {
     title: room.title,
     merchantName: room.merchantName,
     coverUrl: room.coverUrl,
+    viewedAt: new Date().toISOString()
+  };
+}
+
+function lotToFootprint(lot: LiveRoomLot): LotFootprint {
+  return {
+    lotId: lot.id,
+    auctionId: lot.auctionId,
+    roomId: lot.roomId,
+    title: lot.title,
+    description: lot.subtitle ?? lot.description,
+    imageUrl: lot.imageUrls?.[0] ?? lot.imageUrl,
+    status: lot.status,
+    currentPrice: lot.currentPrice,
     viewedAt: new Date().toISOString()
   };
 }

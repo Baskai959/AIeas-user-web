@@ -157,6 +157,8 @@ export class MockRealtimeClient implements RealtimeClient {
   private onlineCount: number;
   private bidCount = 0;
   private extendCount = 0;
+  private simulatedCompetitorBidCount = 0;
+  private competitorCursor = 5;
   private timers: number[] = [];
 
   constructor(private readonly options: MockOptions) {
@@ -351,6 +353,8 @@ export class MockRealtimeClient implements RealtimeClient {
       this.emitRanking();
       if (this.options.capPrice !== undefined && this.currentPrice >= this.options.capPrice) {
         this.schedule(200, () => this.closeAuction());
+      } else {
+        this.schedule(1_200, () => this.emitSimulatedCompetitorBid());
       }
     });
     return true;
@@ -395,6 +399,48 @@ export class MockRealtimeClient implements RealtimeClient {
         ranking: this.ranking()
       }
     });
+  }
+
+  private emitSimulatedCompetitorBid(): void {
+    if (this.closed || this.simulatedCompetitorBidCount > 0 || this.leaderBidderId !== this.options.userId) return;
+    const requestedPrice = this.currentPrice + this.options.minIncrement;
+    const nextPrice = this.options.capPrice === undefined ? requestedPrice : Math.min(requestedPrice, this.options.capPrice);
+    if (nextPrice <= this.currentPrice) return;
+
+    const bidderId = this.nextCompetitorBidderId();
+    this.simulatedCompetitorBidCount += 1;
+    this.currentPrice = nextPrice;
+    this.leaderBidderId = bidderId;
+    this.bidCount += 1;
+    this.participantCount = Math.max(this.participantCount, 2);
+
+    this.emit({
+      type: 'bid.accepted',
+      requestId: `mock-competitor-bid-${this.simulatedCompetitorBidCount}`,
+      payload: {
+        auctionId: this.options.auctionId,
+        bidId: `bid_${this.seq}`,
+        bidderId,
+        bidderNickname: this.mockBidderNickname(bidderId),
+        bidderAvatarUrl: this.mockBidderAvatarUrl(bidderId),
+        price: this.currentPrice,
+        accepted: true,
+        currentPrice: this.currentPrice,
+        leaderBidderId: bidderId,
+        bidCount: this.bidCount,
+        participantCount: this.participantCount,
+        endTime: new Date(this.endTsMs).toISOString(),
+        extendCount: this.extendCount,
+        seq: this.seq,
+        event: 'bid.accepted',
+        serverTime: new Date().toISOString()
+      }
+    });
+    this.emitRanking();
+
+    if (this.options.capPrice !== undefined && this.currentPrice >= this.options.capPrice) {
+      this.schedule(200, () => this.closeAuction());
+    }
   }
 
   private closeAuction(): void {
@@ -484,22 +530,23 @@ export class MockRealtimeClient implements RealtimeClient {
       {
         rank: 1,
         bidderId: this.leaderBidderId,
-        bidderNickname: leaderIsUser ? currentUserRankingName : '用户**02',
-        bidderAvatarUrl: leaderIsUser ? this.currentUserAvatarUrl() : '/logo.png',
+        bidderNickname: leaderIsUser ? currentUserRankingName : this.mockBidderNickname(this.leaderBidderId),
+        bidderAvatarUrl: leaderIsUser ? this.currentUserAvatarUrl() : this.mockBidderAvatarUrl(this.leaderBidderId),
         price: this.currentPrice
       }
     ];
-    const lastVisibleRank = leaderIsUser ? 9 : 8;
-    for (let rank = 2; rank <= lastVisibleRank; rank += 1) {
-      const demoUserNumber = leaderIsUser ? rank : rank + 1;
+    const competitorIds = this.mockCompetitorIds().filter((bidderId) => bidderId !== this.leaderBidderId && bidderId !== this.options.userId);
+    const visibleCompetitorCount = leaderIsUser ? 8 : 7;
+    competitorIds.slice(0, visibleCompetitorCount).forEach((bidderId, index) => {
+      const rank = index + 2;
       items.push({
         rank,
-        bidderId: `u${demoUserNumber}`,
-        bidderNickname: `用户**${String(demoUserNumber).padStart(2, '0')}`,
-        bidder_avatar_url: rank % 2 === 0 ? '/logo.png' : undefined,
+        bidderId,
+        bidderNickname: this.mockBidderNickname(bidderId),
+        bidder_avatar_url: this.mockBidderAvatarUrl(bidderId),
         price: Math.max(0, this.currentPrice - this.options.minIncrement * (rank - 1))
       });
-    }
+    });
     if (!leaderIsUser) {
       items.push({
         rank: 9,
@@ -510,6 +557,29 @@ export class MockRealtimeClient implements RealtimeClient {
       });
     }
     return items;
+  }
+
+  private nextCompetitorBidderId(): string {
+    const candidates = this.mockCompetitorIds().filter((bidderId) => bidderId !== this.options.userId);
+    const bidderId = candidates[this.competitorCursor % candidates.length] ?? 'u5';
+    this.competitorCursor += 1;
+    return bidderId;
+  }
+
+  private mockCompetitorIds(): string[] {
+    return ['u2', 'u3', 'u4', 'u5', 'u6', 'u7', 'u8', 'u9', 'u10', 'u11', 'u12'];
+  }
+
+  private mockBidderNickname(bidderId: string): string {
+    const numericId = bidderId.match(/^u(\d+)$/i)?.[1];
+    if (numericId) return `用户**${numericId.padStart(2, '0')}`;
+    const suffix = bidderId.replace(/[^\p{L}\p{N}]/gu, '').slice(-2).toUpperCase();
+    return suffix ? `用户**${suffix}` : '用户**';
+  }
+
+  private mockBidderAvatarUrl(bidderId: string): string | undefined {
+    const digits = Number(bidderId.replace(/\D/g, ''));
+    return Number.isFinite(digits) && digits % 2 === 0 ? '/logo.png' : undefined;
   }
 
   private currentUserRankingName(): string {

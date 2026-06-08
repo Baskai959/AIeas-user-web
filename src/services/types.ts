@@ -219,6 +219,18 @@ export interface LiveRoomFootprint {
   viewedAt: string;
 }
 
+export interface LotFootprint {
+  lotId: string;
+  auctionId: string;
+  roomId: string;
+  title: string;
+  description?: string;
+  imageUrl?: string;
+  status: AuctionStatus;
+  currentPrice: number;
+  viewedAt: string;
+}
+
 export type OrderFulfillmentStatus = 'UNSHIPPED' | 'SHIPPED' | 'RECEIVED';
 
 export interface UserAuctionRecord {

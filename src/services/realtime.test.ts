@@ -287,6 +287,50 @@ describe('realtime', () => {
     vi.useRealTimers();
   });
 
+  it('emits a paired competitor bid and ranking update after a mock user bid', async () => {
+    vi.useFakeTimers();
+    const client = new MockRealtimeClient({
+      roomId: 'room_1001',
+      auctionId: 'auc_2001',
+      liveSessionId: 9001,
+      currentPrice: 150100,
+      minIncrement: 100,
+      endTsMs: Date.now() + 60_000,
+      userId: 'u1',
+      participantCount: 128,
+      onlineCount: 328
+    });
+    const bidPayloads: Array<Record<string, unknown>> = [];
+    const rankingPayloads: Array<Array<{ bidderId: string; price: number }>> = [];
+    client.onMessage((message) => {
+      if (message.type === 'bid.accepted') {
+        bidPayloads.push(message.payload as Record<string, unknown>);
+      }
+      if (message.type === 'ranking.updated') {
+        const payload = message.payload as { ranking: Array<{ bidderId: string; price: number }> };
+        rankingPayloads.push(payload.ranking);
+      }
+    });
+
+    client.connect();
+    await vi.advanceTimersByTimeAsync(1);
+    bidPayloads.length = 0;
+    rankingPayloads.length = 0;
+
+    client.send({ type: 'bid.place', requestId: 'bid-1', payload: { auctionId: 'auc_2001', price: 150200 } });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(bidPayloads[0]).toEqual(expect.objectContaining({ bidderId: 'u1', currentPrice: 150200 }));
+    expect(rankingPayloads.at(-1)?.[0]).toEqual(expect.objectContaining({ bidderId: 'u1', price: 150200 }));
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    const competitorBid = bidPayloads.find((payload) => payload.bidderId !== 'u1');
+    expect(competitorBid).toEqual(expect.objectContaining({ bidderId: expect.any(String), currentPrice: 150300 }));
+    expect(rankingPayloads.at(-1)?.[0]).toEqual(
+      expect.objectContaining({ bidderId: competitorBid?.bidderId, price: competitorBid?.currentPrice })
+    );
+    vi.useRealTimers();
+  });
+
   it('emits chat acknowledgement and broadcast messages in mock mode', async () => {
     vi.useFakeTimers();
     const client = new MockRealtimeClient({

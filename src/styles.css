@@ -4370,6 +4370,32 @@ button {
   max-height: 100vh;
 }
 
+.footprint-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 12px;
+  background: rgba(15, 23, 42, 0.06);
+  border-radius: 999px;
+}
+
+.footprint-tabs button {
+  min-height: 34px;
+  color: #667085;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.footprint-tabs button.is-active {
+  color: #e11d48;
+  background: #fff;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
 .activity-room-list {
   display: grid;
   gap: 10px;
@@ -4384,6 +4410,10 @@ button {
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 8px;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+}
+
+.activity-room-card.is-action-right {
+  grid-template-columns: 86px minmax(0, 1fr);
 }
 
 .activity-room-cover {
@@ -4430,6 +4460,18 @@ button {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
+}
+
+.activity-room-card.is-action-right .activity-room-actions {
+  justify-content: flex-end;
+}
+
+.activity-primary-action.is-red-outline {
+  --adm-color-primary: #e11d48;
+  color: #e11d48;
+  background: #fff;
+  border-color: rgba(225, 29, 72, 0.45);
+  box-shadow: 0 8px 18px rgba(225, 29, 72, 0.12);
 }
 
 .load-more-button {

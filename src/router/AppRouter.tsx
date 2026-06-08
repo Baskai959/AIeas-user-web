@@ -69,6 +69,7 @@ import type {
   FollowedLiveRoom,
   LiveRoomFootprint,
   LiveRoomLot,
+  LotFootprint,
   LiveRoomSortKey,
   LiveRoomStats,
   LiveRoomStatusFilter,
@@ -500,26 +501,31 @@ function useAppNavigation() {
     navigateWithTransition(navigate, `/product/${lot.id}`, { state: { returnTo, sourceTab: liveSourceTabFromPath(returnTo) } });
   };
 
+  const openMerchant = (merchantId: string) => {
+    const returnTo = currentPath(location);
+    navigateWithTransition(navigate, `/merchant/${merchantId}`, { state: { returnTo, sourceTab: liveSourceTabFromPath(returnTo) } });
+  };
+
   const openRoom = (roomId: string, lotId?: string, previewMedia?: PreviewMediaSnapshot) => {
     const returnTo = liveReturnPath(location, roomId);
     navigateWithTransition(navigate, livePath(roomId, lotId, liveSourceTabFromPath(returnTo)), { state: { returnTo, previewMedia } });
   };
 
-  return { navigate, openLot, openRoom };
+  return { navigate, openLot, openMerchant, openRoom };
 }
 
 function MainRoutePage({ apiClient, tab }: { apiClient: ApiClient; tab: MainTab }) {
   const user = useSessionStore((state) => state.user);
   const updateUser = useSessionStore((state) => state.updateUser);
   const [searchParams] = useSearchParams();
-  const { navigate, openLot, openRoom } = useAppNavigation();
+  const { navigate, openLot, openMerchant, openRoom } = useAppNavigation();
 
   return (
     <MainTabShell activeTab={tab} onTabChange={(nextTab) => navigateWithTransition(navigate, mainPath(nextTab))} t={t}>
       {tab === 'home' ? (
         <DiscoverPage apiClient={apiClient} focusRoomId={searchParams.get('focusRoomId') ?? undefined} onOpenRoom={(roomId, previewMedia) => openRoom(roomId, undefined, previewMedia)} />
       ) : tab === 'discover' ? (
-        <LotDiscoveryPage apiClient={apiClient} onOpenLot={openLot} onOpenMerchant={(merchantId) => navigateWithTransition(navigate, `/merchant/${merchantId}`)} />
+        <LotDiscoveryPage apiClient={apiClient} onOpenLot={openLot} onOpenMerchant={openMerchant} />
       ) : (
         <MePage
           apiClient={apiClient}
@@ -544,7 +550,7 @@ function CategoryRoutePage({ apiClient }: { apiClient: ApiClient }) {
 
 function SearchRoutePage({ apiClient }: { apiClient: ApiClient }) {
   const [searchParams] = useSearchParams();
-  const { navigate, openLot, openRoom } = useAppNavigation();
+  const { navigate, openLot, openMerchant, openRoom } = useAppNavigation();
   return (
     <SearchPage
       apiClient={apiClient}
@@ -554,15 +560,17 @@ function SearchRoutePage({ apiClient }: { apiClient: ApiClient }) {
       onSearch={(keyword, tab) => navigateWithTransition(navigate, searchPath(keyword.trim(), tab))}
       onOpenRoom={(roomId) => openRoom(roomId)}
       onOpenLot={openLot}
-      onOpenMerchant={(merchantId) => navigateWithTransition(navigate, `/merchant/${merchantId}`)}
+      onOpenMerchant={openMerchant}
     />
   );
 }
 
 function MerchantRoutePage({ apiClient }: { apiClient: ApiClient }) {
   const { merchantId = 'merchant_01' } = useParams();
+  const location = useLocation() as Location<AppLocationState | null>;
   const { navigate, openLot, openRoom } = useAppNavigation();
-  return <MerchantPage apiClient={apiClient} merchantId={merchantId} onBack={() => navigateWithTransition(navigate, '/')} onOpenRoom={(roomId) => openRoom(roomId)} onOpenLot={openLot} />;
+  const returnTo = location.state?.returnTo ?? '/';
+  return <MerchantPage apiClient={apiClient} merchantId={merchantId} onBack={() => navigateWithTransition(navigate, returnTo)} onOpenRoom={(roomId) => openRoom(roomId)} onOpenLot={openLot} />;
 }
 
 function ProductRoutePage({ apiClient }: { apiClient: ApiClient }) {
@@ -719,7 +727,13 @@ function FollowingRoutePage() {
 
 function FootprintsRoutePage() {
   const { navigate, openRoom } = useAppNavigation();
-  return <FootprintsPage onBack={() => navigateWithTransition(navigate, '/me')} onOpenRoom={(roomId) => openRoom(roomId)} />;
+  return (
+    <FootprintsPage
+      onBack={() => navigateWithTransition(navigate, '/me')}
+      onOpenRoom={(roomId) => openRoom(roomId)}
+      onOpenLot={(lotId, returnTo) => navigateWithTransition(navigate, `/product/${lotId}`, { state: { returnTo, sourceTab: 'me' } })}
+    />
+  );
 }
 
 function HistoryRoutePage({ apiClient }: { apiClient: ApiClient }) {
@@ -889,8 +903,8 @@ function CategoryDetailPage({ apiClient, categoryId, onBack, onOpenLot }: { apiC
   return (
     <section className="category-detail-page">
       <header className="simple-page-header">
-        <button className="back-button" type="button" onClick={onBack}>
-          <ArrowLeft size={18} /> {t('common.back')}
+        <button className="back-button" type="button" onClick={onBack} aria-label={t('common.back')}>
+          <ArrowLeft size={18} />
         </button>
         <div>
           <p className="eyebrow">{t('nav.category')}</p>
@@ -1628,15 +1642,20 @@ function ProductPage({ apiClient, lotId, onBack, onOpenRoom }: { apiClient: ApiC
   const lot = useQuery({ queryKey: ['lot', lotId], queryFn: () => apiClient.getLot(lotId) });
   const merchant = useQuery({ queryKey: ['lot-merchant', lot.data?.merchantId], queryFn: () => apiClient.getMerchant(lot.data?.merchantId ?? ''), enabled: Boolean(lot.data?.merchantId) });
   const categories = useQuery({ queryKey: ['categories'], queryFn: () => apiClient.listCategories(), placeholderData: { items: demoCategories, total: demoCategories.length, page: 1, page_size: 20 } });
+  const recordLotFootprint = useLiveActivityStore((state) => state.recordLotFootprint);
   const item = lot.data;
   const state = item ? stateFromLot(item) : undefined;
   const scheduleText = item && state ? scheduledStartText(item, state) : undefined;
   const category = categories.data?.items.find((candidate) => candidate.id === item?.categoryId);
 
+  useEffect(() => {
+    if (item) recordLotFootprint(item);
+  }, [item, recordLotFootprint]);
+
   return (
     <section className="product-page">
-      <button className="back-button" type="button" onClick={onBack}>
-        <ArrowLeft size={18} /> {t('common.back')}
+      <button className="back-button" type="button" onClick={onBack} aria-label={t('common.back')}>
+        <ArrowLeft size={18} />
       </button>
       {item && state ? (
         <>
@@ -1697,7 +1716,7 @@ function MePage({
   const profileOverride = useProfileStore((state) => state.profileOverride);
   const setProfileOverride = useProfileStore((state) => state.setProfileOverride);
   const followedCount = useLiveActivityStore((state) => state.followedRooms.length);
-  const footprintCount = useLiveActivityStore((state) => state.footprints.length);
+  const footprintCount = useLiveActivityStore((state) => state.footprints.length + state.lotFootprints.length);
   const profileQuery = useQuery({ queryKey: ['my-profile'], queryFn: () => apiClient.getMyProfile() });
   const recordsQuery = useQuery({ queryKey: ['my-auction-records'], queryFn: () => apiClient.listMyAuctionRecords(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 }, refetchOnMount: 'always' });
   const ordersQuery = useQuery({ queryKey: ['my-orders'], queryFn: () => apiClient.listMyOrders({ limit: 100 }), placeholderData: { items: [], total: 0, page: 1, page_size: 100 }, refetchOnMount: 'always' });
@@ -1818,8 +1837,8 @@ function SettingsPage({
   return (
     <section className="settings-page">
       <header className="simple-page-header">
-        <button className="back-button" type="button" onClick={onBack}>
-          <ArrowLeft size={18} /> {t('common.back')}
+        <button className="back-button" type="button" onClick={onBack} aria-label={t('common.back')}>
+          <ArrowLeft size={18} />
         </button>
         <div>
           <h1>{t('settings.title')}</h1>
@@ -1935,8 +1954,8 @@ function OrdersPage({
   return (
     <section className="orders-page">
       <header className="simple-page-header">
-        <button className="back-button" type="button" onClick={onBack}>
-          <ArrowLeft size={18} /> {t('common.back')}
+        <button className="back-button" type="button" onClick={onBack} aria-label={t('common.back')}>
+          <ArrowLeft size={18} />
         </button>
         <div>
           <h1>{t('orders.title')}</h1>
@@ -1995,8 +2014,8 @@ function FollowingPage({ onBack, onOpenRoom }: { onBack: () => void; onOpenRoom:
   return (
     <section className="activity-page">
       <header className="simple-page-header">
-        <button className="back-button" type="button" onClick={onBack}>
-          <ArrowLeft size={18} /> {t('common.back')}
+        <button className="back-button" type="button" onClick={onBack} aria-label={t('common.back')}>
+          <ArrowLeft size={18} />
         </button>
         <div>
           <h1>{t('profile.followingTitle')}</h1>
@@ -2024,14 +2043,95 @@ function FollowingPage({ onBack, onOpenRoom }: { onBack: () => void; onOpenRoom:
   );
 }
 
-function FootprintsPage({ onBack, onOpenRoom }: { onBack: () => void; onOpenRoom: (roomId: string) => void }) {
-  const footprints = useLiveActivityStore((state) => state.footprints);
-  const getFootprintsPage = useLiveActivityStore((state) => state.getFootprintsPage);
-  const [visibleCount, setVisibleCount] = useState(10);
-  const visibleFootprints = getFootprintsPage(0, visibleCount);
-  const canLoadMore = visibleCount < footprints.length;
+type FootprintTabKey = 'rooms' | 'lots';
 
-  const loadMore = () => setVisibleCount((count) => Math.min(count + 10, footprints.length));
+function parseFootprintTab(value: string | null): FootprintTabKey {
+  return value === 'lots' ? 'lots' : 'rooms';
+}
+
+function parseFootprintCountParam(value: string | null, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function FootprintsPage({
+  onBack,
+  onOpenRoom,
+  onOpenLot
+}: {
+  onBack: () => void;
+  onOpenRoom: (roomId: string) => void;
+  onOpenLot: (lotId: string, returnTo: string) => void;
+}) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const pageRef = useRef<HTMLElement | null>(null);
+  const footprints = useLiveActivityStore((state) => state.footprints);
+  const lotFootprints = useLiveActivityStore((state) => state.lotFootprints);
+  const getFootprintsPage = useLiveActivityStore((state) => state.getFootprintsPage);
+  const getLotFootprintsPage = useLiveActivityStore((state) => state.getLotFootprintsPage);
+  const [activeTab, setActiveTab] = useState<FootprintTabKey>(() => parseFootprintTab(searchParams.get('tab')));
+  const [visibleRoomCount, setVisibleRoomCount] = useState(() => parseFootprintCountParam(searchParams.get('visibleRooms'), 10));
+  const [visibleLotCount, setVisibleLotCount] = useState(() => parseFootprintCountParam(searchParams.get('visibleLots'), 10));
+  const restoreScrollTop = parseFootprintCountParam(searchParams.get('scroll'), 0);
+  const visibleRoomFootprints = getFootprintsPage(0, visibleRoomCount);
+  const visibleLotFootprints = getLotFootprintsPage(0, visibleLotCount);
+  const canLoadMoreRooms = visibleRoomCount < footprints.length;
+  const canLoadMoreLots = visibleLotCount < lotFootprints.length;
+  const canLoadMore = activeTab === 'rooms' ? canLoadMoreRooms : canLoadMoreLots;
+  const querySignature = searchParams.toString();
+
+  useEffect(() => {
+    setActiveTab(parseFootprintTab(searchParams.get('tab')));
+    setVisibleRoomCount(parseFootprintCountParam(searchParams.get('visibleRooms'), 10));
+    setVisibleLotCount(parseFootprintCountParam(searchParams.get('visibleLots'), 10));
+  }, [querySignature, searchParams]);
+
+  useLayoutEffect(() => {
+    if (!restoreScrollTop || !pageRef.current) return;
+    pageRef.current.scrollTop = restoreScrollTop;
+  }, [restoreScrollTop, activeTab, visibleRoomCount, visibleLotCount]);
+
+  const switchTab = (nextTab: FootprintTabKey) => {
+    setActiveTab(nextTab);
+    const nextParams = new URLSearchParams();
+    if (nextTab === 'lots') {
+      nextParams.set('tab', 'lots');
+    }
+    setSearchParams(nextParams, { replace: true });
+  };
+
+  const buildReturnPath = () => {
+    const params = new URLSearchParams();
+    if (activeTab === 'lots') {
+      params.set('tab', 'lots');
+    }
+    if (visibleRoomCount > 10) {
+      params.set('visibleRooms', String(visibleRoomCount));
+    }
+    if (visibleLotCount > 10) {
+      params.set('visibleLots', String(visibleLotCount));
+    }
+    const scrollTop = Math.max(0, Math.round(pageRef.current?.scrollTop ?? 0));
+    if (scrollTop) {
+      params.set('scroll', String(scrollTop));
+    }
+    const query = params.toString();
+    return query ? `/footprints?${query}` : '/footprints';
+  };
+
+  const openLotFootprint = (lotId: string) => {
+    const returnTo = buildReturnPath();
+    onOpenLot(lotId, returnTo);
+  };
+
+  const loadMore = () => {
+    if (activeTab === 'rooms') {
+      setVisibleRoomCount((count) => Math.min(count + 10, footprints.length));
+      return;
+    }
+    setVisibleLotCount((count) => Math.min(count + 10, lotFootprints.length));
+  };
   const handleScroll = (event: ReactUIEvent<HTMLElement>) => {
     const target = event.currentTarget;
     if (!canLoadMore || target.scrollHeight - target.scrollTop - target.clientHeight > 32) return;
@@ -2039,35 +2139,72 @@ function FootprintsPage({ onBack, onOpenRoom }: { onBack: () => void; onOpenRoom
   };
 
   return (
-    <section className="activity-page footprint-page" onScroll={handleScroll}>
+    <section ref={pageRef} className="activity-page footprint-page" onScroll={handleScroll}>
       <header className="simple-page-header">
-        <button className="back-button" type="button" onClick={onBack}>
-          <ArrowLeft size={18} /> {t('common.back')}
+        <button className="back-button" type="button" onClick={onBack} aria-label={t('common.back')}>
+          <ArrowLeft size={18} />
         </button>
         <div>
           <h1>{t('profile.footprintTitle')}</h1>
         </div>
       </header>
-      {visibleFootprints.length ? (
+      <div className="footprint-tabs" role="tablist" aria-label={t('profile.footprintTitle')}>
+        <button
+          className={activeTab === 'rooms' ? 'is-active' : ''}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'rooms'}
+          onClick={() => switchTab('rooms')}
+        >
+          {t('profile.liveRoomFootprints')}
+        </button>
+        <button
+          className={activeTab === 'lots' ? 'is-active' : ''}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'lots'}
+          onClick={() => switchTab('lots')}
+        >
+          {t('profile.lotFootprints')}
+        </button>
+      </div>
+      {activeTab === 'rooms' ? (
+        visibleRoomFootprints.length ? (
+          <div className="activity-room-list">
+            {visibleRoomFootprints.map((room) => (
+              <LiveActivityRoomCard
+                key={room.roomId}
+                item={room}
+                timeLabel={t('profile.viewedAt')}
+                timeValue={room.viewedAt}
+                primaryAction={t('profile.enterLiveRoom')}
+                primaryActionClassName="is-red-outline"
+                actionAlign="right"
+                onPrimary={() => onOpenRoom(room.roomId)}
+              />
+            ))}
+            {canLoadMoreRooms ? (
+              <button className="load-more-button" type="button" onClick={loadMore}>
+                {t('profile.loadMore')}
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <EmptyState text={t('profile.noFootprints')} />
+        )
+      ) : visibleLotFootprints.length ? (
         <div className="activity-room-list">
-          {visibleFootprints.map((room) => (
-            <LiveActivityRoomCard
-              key={room.roomId}
-              item={room}
-              timeLabel={t('profile.viewedAt')}
-              timeValue={room.viewedAt}
-              primaryAction={t('profile.enterLiveRoom')}
-              onPrimary={() => onOpenRoom(room.roomId)}
-            />
+          {visibleLotFootprints.map((lot) => (
+            <LiveActivityLotCard key={lot.lotId} item={lot} onOpen={() => openLotFootprint(lot.lotId)} />
           ))}
-          {canLoadMore ? (
+          {canLoadMoreLots ? (
             <button className="load-more-button" type="button" onClick={loadMore}>
               {t('profile.loadMore')}
             </button>
           ) : null}
         </div>
       ) : (
-        <EmptyState text={t('profile.noFootprints')} />
+        <EmptyState text={t('profile.noLotFootprints')} />
       )}
     </section>
   );
@@ -2080,7 +2217,9 @@ function LiveActivityRoomCard({
   primaryAction,
   onPrimary,
   secondaryAction,
-  onSecondary
+  onSecondary,
+  primaryActionClassName,
+  actionAlign = 'inline'
 }: {
   item: FollowedLiveRoom | LiveRoomFootprint;
   timeLabel: string;
@@ -2089,9 +2228,11 @@ function LiveActivityRoomCard({
   onPrimary: () => void;
   secondaryAction?: string;
   onSecondary?: () => void;
+  primaryActionClassName?: string;
+  actionAlign?: 'inline' | 'right';
 }) {
   return (
-    <article className="activity-room-card">
+    <article className={actionAlign === 'right' ? 'activity-room-card is-action-right' : 'activity-room-card'}>
       <button className="activity-room-cover" type="button" onClick={onPrimary}>
         <VisualPlaceholder title={item.title} imageUrl={item.coverUrl} tone="blue" />
       </button>
@@ -2100,7 +2241,7 @@ function LiveActivityRoomCard({
         <p>{item.merchantName}</p>
         <span>{timeLabel} {formatDate(timeValue)}</span>
         <div className="activity-room-actions">
-          <Button size="small" color="primary" onClick={onPrimary}>
+          <Button className={primaryActionClassName ? `activity-primary-action ${primaryActionClassName}` : 'activity-primary-action'} size="small" color="primary" onClick={onPrimary}>
             {primaryAction}
           </Button>
           {secondaryAction && onSecondary ? (
@@ -2108,6 +2249,26 @@ function LiveActivityRoomCard({
               {secondaryAction}
             </Button>
           ) : null}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function LiveActivityLotCard({ item, onOpen }: { item: LotFootprint; onOpen: () => void }) {
+  return (
+    <article className="activity-room-card activity-lot-card is-action-right">
+      <button className="activity-room-cover" type="button" onClick={onOpen}>
+        <VisualPlaceholder title={item.title} imageUrl={item.imageUrl} tone="gold" />
+      </button>
+      <div>
+        <h2>{item.title}</h2>
+        {item.description ? <p>{item.description}</p> : null}
+        <span>{t('profile.viewedAt')} {formatDate(item.viewedAt)}</span>
+        <div className="activity-room-actions">
+          <Button className="activity-primary-action is-red-outline" size="small" color="primary" onClick={onOpen}>
+            {t('profile.viewLot')}
+          </Button>
         </div>
       </div>
     </article>
@@ -5730,8 +5891,8 @@ function RoomStatePage({ room, lots, status, onBack, onPay }: { room: LiveRoom; 
   const visibleLots = status === 'ended' ? lots : lots.filter((lot) => lot.status === 'READY' || lot.status === 'WARMING_UP');
   return (
     <section className="room-state-page">
-      <button className="back-button" type="button" onClick={onBack}>
-        <ArrowLeft size={18} /> {t('common.back')}
+      <button className="back-button" type="button" onClick={onBack} aria-label={t('common.back')}>
+        <ArrowLeft size={18} />
       </button>
       <div className="room-state-hero">
         <Radio size={38} />
@@ -6731,8 +6892,8 @@ function ResultPage({ apiClient, auctionId, onBack, onPay }: { apiClient: ApiCli
   const order = orders.data?.items[0];
   return (
     <section className="page-content result-page">
-      <button className="back-button" onClick={onBack} type="button">
-        <ArrowLeft size={18} /> {t('common.back')}
+      <button className="back-button" onClick={onBack} type="button" aria-label={t('common.back')}>
+        <ArrowLeft size={18} />
       </button>
       <Trophy size={48} />
       <h1>{t('result.title')}</h1>
@@ -6894,8 +7055,8 @@ function PayPage({
   const buttonLabel = paymentComplete ? t('pay.paid') : paymentClosed ? t('pay.closedStatus') : paymentUnavailable ? t('pay.errorStatus') : t('pay.submit');
   return (
     <section className="page-content result-page">
-      <button className="back-button" onClick={() => onBack(targetAuctionId)} type="button">
-        <ArrowLeft size={18} /> {t('common.back')}
+      <button className="back-button" onClick={() => onBack(targetAuctionId)} type="button" aria-label={t('common.back')}>
+        <ArrowLeft size={18} />
       </button>
       <PaymentStatusAnimation status={status} />
       <h1>{t('pay.title')}</h1>
@@ -6912,8 +7073,8 @@ function HistoryPage({ apiClient, onBack }: { apiClient: ApiClient; onBack: () =
   const orders = useQuery({ queryKey: ['my-orders'], queryFn: () => apiClient.listMyOrders(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 } });
   return (
     <section className="page-content">
-      <button className="back-button" onClick={onBack} type="button">
-        <ArrowLeft size={18} /> {t('common.back')}
+      <button className="back-button" onClick={onBack} type="button" aria-label={t('common.back')}>
+        <ArrowLeft size={18} />
       </button>
       <h1>{t('history.title')}</h1>
       <Tabs>

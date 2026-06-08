@@ -28,11 +28,12 @@
 - 未登录访问业务深链时会跳转 `/login`，登录后回到原始目标路径；已登录访问 `/login` 会跳回目标页或默认首页。
 - 直播间进入来源通过 React Router location state 和 `from / focusRoomId` 查询参数共同承载，刷新后仍能回到稳定兜底页面。
 
-## 快速启动
+## 运行指南
+
+先安装依赖：
 
 ```bash
 npm install
-npm run dev
 ```
 
 常用脚本：
@@ -45,25 +46,29 @@ npm run test:run
 npm run lint
 ```
 
-## 环境配置
+### 方式一：前端 Demo 独立运行
 
-默认 API 模式使用本地 Demo 数据。联调真实 REST 服务时配置 `remote`；`VITE_API_BASE_URL` 留空表示走当前站点同源 `/api` 反代：
+适用于 UI 开发、功能演示和不依赖后端的回归验证。该模式使用本地 Demo REST 数据与前端内置 Mock WebSocket，不需要启动后端服务，也不需要配置环境变量。
 
-```env
-VITE_API_MODE=remote
-VITE_API_BASE_URL=
+```bash
+npm run dev
 ```
 
-实时通信默认使用前端内置 mock client。接入真实 WebSocket 时配置 `websocket`；`VITE_WS_URL` 留空表示走当前站点同源 `/ws` 反代：
+访问 Vite 输出的本地地址，例如 `http://127.0.0.1:5173/`。登录页发布版不会预填测试账号；开发演示时可手动输入 `buyer001 / Passw0rd!`。
 
-```env
-VITE_REALTIME_MODE=websocket
-VITE_WS_URL=
-```
+前端 Demo 模式的默认行为：
 
-连接当前真实后端 `47.97.82.143:8888` 时，开发期推荐使用 Vite 反代，浏览器只访问前端同源的 `/api` 与 `/ws`，由 dev server 转发到后端，避免触发跨域预检问题。
+- `VITE_API_MODE` 未设置时使用本地 Demo API。
+- `VITE_REALTIME_MODE` 未设置时使用前端 Mock realtime client。
+- 关注、直播间/拍品足迹、评论草稿和本地点赞保存在浏览器本地存储中。
+- 支付、确认收货、出价、排行榜和竞拍状态均可在前端 Demo 数据中闭环演示。
+- Mock realtime client 会在当前用户首次出价领先后，自动模拟一次其他买家加价，并按现有 `bid.accepted -> ranking.updated` 事件顺序推送，用于验证实时排行榜位次变更动画；该行为不新增或修改正式 WebSocket 协议。
 
-PowerShell 本地反代联调：
+### 方式二：连接真实后端联调
+
+适用于对接真实 REST 与 WebSocket。开发期推荐使用 Vite dev server 同源反代：浏览器只访问前端同源的 `/api` 与 `/ws`，由 Vite 转发到真实后端，避免 CORS 预检和 WebSocket 跨域问题。
+
+PowerShell：
 
 ```powershell
 $env:VITE_API_MODE='remote'
@@ -74,7 +79,32 @@ $env:VITE_DEV_PROXY_TARGET='http://47.97.82.143:8888'
 npm run dev -- --host 127.0.0.1 --port 5176
 ```
 
-生产部署也应通过站点网关或 Nginx 将 `/api` 与 `/ws` 反代到真实后端。前端构建时保持同源路径：
+Bash / Linux：
+
+```bash
+VITE_API_MODE=remote \
+VITE_API_BASE_URL= \
+VITE_REALTIME_MODE=websocket \
+VITE_WS_URL= \
+VITE_DEV_PROXY_TARGET=http://47.97.82.143:8888 \
+npm run dev -- --host 127.0.0.1 --port 5176
+```
+
+配置含义：
+
+- `VITE_API_MODE=remote`：REST 请求使用远程 API 客户端。
+- `VITE_API_BASE_URL=`：留空表示 REST 走当前站点同源 `/api`。
+- `VITE_REALTIME_MODE=websocket`：实时通信使用真实 WebSocket 客户端。
+- `VITE_WS_URL=`：留空表示 WebSocket 走当前站点同源 `/ws`。
+- `VITE_DEV_PROXY_TARGET=http://47.97.82.143:8888`：Vite 将 `/api` 与 `/ws` 转发到该后端。
+
+不推荐在开发期直接把 `VITE_API_BASE_URL` 指向 `http://47.97.82.143:8888`，除非后端已经正确允许当前前端域名的 CORS 预检、正式请求和 WebSocket 升级。
+
+### 方式三：正式部署
+
+正式部署推荐保持前端同源访问后端能力：前端构建产物由站点服务器托管，站点网关或 Nginx 将 `/api` 与 `/ws` 反代到真实后端。这样前端构建时不需要固化公网后端地址，浏览器也不会遇到跨域问题。
+
+PowerShell 构建：
 
 ```powershell
 $env:VITE_API_MODE='remote'
@@ -84,7 +114,7 @@ $env:VITE_WS_URL=''
 npm run build
 ```
 
-Bash / Linux 部署构建：
+Bash / Linux 构建：
 
 ```bash
 VITE_API_MODE=remote \
@@ -94,28 +124,57 @@ VITE_WS_URL= \
 npm run build
 ```
 
-Nginx 反代示例：
+构建完成后，将 `dist/` 目录部署到静态站点根目录。Nginx 示例：
 
 ```nginx
-location /api/ {
-  proxy_pass http://47.97.82.143:8888/api/;
-  proxy_set_header Host $host;
-  proxy_set_header X-Real-IP $remote_addr;
-  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-  proxy_set_header X-Forwarded-Proto $scheme;
-}
+server {
+  listen 80;
+  server_name your-domain.example;
 
-location /ws/ {
-  proxy_pass http://47.97.82.143:8888/ws/;
-  proxy_http_version 1.1;
-  proxy_set_header Upgrade $http_upgrade;
-  proxy_set_header Connection "upgrade";
-  proxy_set_header Host $host;
-  proxy_read_timeout 3600s;
+  root /var/www/aieas-user-web/dist;
+  index index.html;
+
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+
+  location /api/ {
+    proxy_pass http://47.97.82.143:8888/api/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location /ws/ {
+    proxy_pass http://47.97.82.143:8888/ws/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_read_timeout 3600s;
+  }
 }
 ```
 
-注意：Vite 会在构建时固化 `VITE_*` 环境变量。若选择前端直连后端而不使用反代，后端仍需要允许前端域名的 CORS 预检与正式请求。
+正式部署检查点：
+
+- `dist/index.html` 必须由 SPA fallback 处理，刷新 `/login`、`/live/:roomId`、`/orders?tab=...` 等深链时应返回前端入口。
+- `/api/` 反代到后端 REST 的 `/api/`。
+- `/ws/` 必须开启 `Upgrade` 与 `Connection: upgrade`，用于直播间 WebSocket。
+- 构建时 `VITE_API_BASE_URL` 与 `VITE_WS_URL` 保持为空，表示运行时使用当前站点同源地址。
+- 如需前端直连后端而不使用反代，后端必须允许正式前端域名的 CORS 预检、正式请求和 WebSocket 连接。
+
+## 环境变量速查
+
+| 变量 | Demo 独立运行 | 真实后端联调/正式部署 |
+| --- | --- | --- |
+| `VITE_API_MODE` | 留空或不设置 | `remote` |
+| `VITE_API_BASE_URL` | 留空或不设置 | 推荐留空，走同源 `/api` |
+| `VITE_REALTIME_MODE` | 留空或不设置 | `websocket` |
+| `VITE_WS_URL` | 留空或不设置 | 推荐留空，走同源 `/ws` |
+| `VITE_DEV_PROXY_TARGET` | 不设置 | 仅开发期设置，例如 `http://47.97.82.143:8888` |
+| `VITE_TTS_WS_URL` | 可选 | 可选，数字人 TTS 音频流地址 |
 
 真实 WebSocket 连接地址：
 
@@ -146,7 +205,7 @@ VITE_TTS_WS_URL=ws://127.0.0.1:8876/tts
 - `/settings`：个人设置，支持昵称、语言设置和退出登录；退出时可选择保留或清除本机浏览数据。
 - `/orders?tab=...`：竞拍/订单记录，支持 `all / pendingBid / pendingPay / pendingShipment / pendingReceipt / completed`；待支付记录进入支付页时会携带订单页返回路径，支付成功后根据返回的订单状态回到对应页签并高亮该订单；待收货记录可在确认弹层中完成 `确认收货`，成功后进入 `已完成`。
 - `/following`：已关注直播间列表，纯前端本地持久化。
-- `/footprints`：直播间浏览足迹，纯前端本地持久化，最多保留 100 条，按 10 条渐进加载。
+- `/footprints`：浏览足迹，纯前端本地持久化，分为 `直播间 / 拍品` 两个独立页签；两类足迹各自最多保留 100 条，按 10 条渐进加载。
 - `/result/:auctionId`：成交结果。
 - `/pay/:orderId`：模拟支付，包含待支付、支付中、支付成功、支付失败四种内联 SVG 动画状态；当 URL 携带 `returnTo=/orders?...` 时，支付成功后会按 `Order.fulfillmentStatus` 派生目标订单页签。
 - `/history`：历史订单和最近直播间。
@@ -195,7 +254,7 @@ REST 响应统一按以下 envelope 处理：
 - `POST /api/v1/orders/{id}/pay`
 - `POST /api/v1/orders/{id}/receive`（建议后端补齐；本地 Demo 已支持）
 
-关注、足迹、演示点赞和评论草稿不在后端 REST 依赖中定义。当前 `/following`、`/footprints`、直播间关注按钮、完整直播间足迹记录、按房间本地点赞数和未发送评论草稿均由前端 `aieas-user-live-activity` 本地持久化实现，不调用 REST 或 WebSocket；后续若需要跨设备同步，应重新设计接口，不沿用旧草案路径。设置页退出登录时始终清除当前会话；若选择清除浏览数据，会同步清空上述 `aieas-user-live-activity` 数据。语言偏好和昵称/头像本地资料不属于浏览数据清理范围。
+关注、足迹、演示点赞和评论草稿不在后端 REST 依赖中定义。当前 `/following`、`/footprints`、直播间关注按钮、完整直播间足迹记录、拍品详情浏览足迹、按房间本地点赞数和未发送评论草稿均由前端 `aieas-user-live-activity` 本地持久化实现，不调用 REST 或 WebSocket；后续若需要跨设备同步，应重新设计接口，不沿用旧草案路径。设置页退出登录时始终清除当前会话；若选择清除浏览数据，会同步清空上述 `aieas-user-live-activity` 数据。语言偏好和昵称/头像本地资料不属于浏览数据清理范围。
 
 `LiveRoom.likeCount?` 用于直播间顶部商家胶囊的基础点赞展示。所有本地 Demo 直播间默认点赞数为 0；远程接口未返回 `likeCount` 时也按 0 处理。用户点击直播间底部点赞按钮时，前端按 `roomId` 本地累加演示点赞数，并与基础点赞数相加显示；按钮首次点击后进入红色“已点赞”状态，每次点击都会播放一圈中等尺寸的红、黄、蓝三色发散粒子反馈，粒子运动速度先快后慢。该演示点赞不调用 REST 或 WebSocket。
 
@@ -251,17 +310,18 @@ REST 响应统一按以下 envelope 处理：
 
 仅保留最近三次重要变更：
 
+### 2026-06-08 返回键与浏览足迹拆分
+
+- 各页面左上角返回按钮统一只显示左箭头，保留 `aria-label` 作为无障碍名称，不再显示额外 `返回` 文本。
+- `/footprints` 改为 `直播间 / 拍品` 两个隔离页签。直播间足迹入口按钮右侧对齐并使用白底红字；拍品详情页浏览会记录拍品足迹，两类足迹均由前端 `aieas-user-live-activity` 本地持久化、各自最多 100 条并按 10 条渐进加载。
+- “我的”页足迹统计展示直播间足迹与拍品足迹总数；从拍品足迹进入商品详情页时会把当前页签、已加载条数和滚动位置写入返回路径，返回后继续停留在 `拍品` 页签原浏览位置。
+
+### 2026-06-08 Mock 实时排行榜动画覆盖
+
+- 前端 Mock realtime client 在当前用户首次出价领先后，会自动模拟一次其他买家加价，并按现有 `bid.accepted -> ranking.updated` 顺序推送事件，覆盖“用户领先后被其他人超越”的实时排行榜位次动画测试场景。
+- 本轮只增强本地 Demo 与测试覆盖，不修改 REST 或 WebSocket 协议；真实后端仍按现有 `bid.accepted` 与 `ranking.updated` 事件驱动排行榜动画。
+
 ### 2026-06-08 发布版登录页视觉收口
 
 - `/login` 保留深色沉浸背景、品牌视觉居中和底部登录面板的短视频 App 风格，但删除解释性文案、演示提示和测试账号预填，发布版界面只展示品牌、账号密码、登录按钮和账号辅助入口。
 - 登录请求体、登录守卫和深链回跳逻辑保持不变；`注册账号` 与 `忘记密码` 仍为预留入口，当前不新增路由或后端接口，点击后仅显示本地化“功能暂未开放”提示。
-
-### 2026-06-07 支付后订单状态闭环与 Demo 状态持久化
-
-- 本地 `DemoApiClient` 会在当前 SPA 会话内保存 `payOrder` 和 `confirmReceipt` 后的订单状态，并同步 `getOrder`、`listMyOrders` 与 `listMyAuctionRecords`，保证“出价中标 -> 支付 -> 订单分组 -> 确认收货”演示链路不被旧 Demo 数据覆盖。
-- 从 `/orders?tab=...` 进入 `/pay/:orderId` 时会携带 `returnTo`。支付成功后前端根据返回的 `Order` 派生目标页签并跳转到 `/orders?tab=...&orderId=...` 高亮订单；已支付且 `fulfillmentStatus=UNSHIPPED` 的订单进入 `待发货`，不会被误判为 `待收货`。本轮不修改 REST 或 WebSocket 协议。
-
-### 2026-06-07 倒计时提醒并入竞拍提醒层
-
-- `/live/:roomId` 不再渲染独立全屏倒计时层。当前竞拍商品进入最后 10 秒时，倒计时复用 `LiveAuctionAlertLayer` 展示为低优先级提醒；有 `领先 / 被超越 / 竞拍延时 / 竞拍结束 / 竞拍成功` 等更高优先级提醒时，倒计时不会同屏出现。
-- 当前竞拍拍品小窗和快速出价弹层仍保留临近结束倒计时样式；收到 `auction.closed` 后倒计时提醒立即退出，并交由竞拍结束/成功提醒展示。
