@@ -36,7 +36,7 @@ import closeCommentIconUrl from '../../Icon/close_comment.svg';
 import likeIconUrl from '../../Icon/like.svg';
 import logoUrl from '../../logo.png';
 import { createTranslator, defaultLocale, type Locale, type MessageKey } from '../i18n/messages';
-import { classifyAuctionRecord, groupAuctionRecords, hasPaidDeposit, hasZeroDepositEnrollment, myAuctionTabKeys, previewLotStatusKind, selectCurrentRunningLot, selectPreviewLot } from '../services/auctionViews';
+import { classifyAuctionRecord, groupAuctionRecords, hasZeroDepositEnrollment, myAuctionTabKeys, previewLotStatusKind, selectCurrentRunningLot, selectPreviewLot } from '../services/auctionViews';
 import {
   buildBidPlacePayload,
   getMinBidIntervalMs,
@@ -809,7 +809,6 @@ function LoginPage({ apiClient, onLoggedIn }: { apiClient: ApiClient; onLoggedIn
 }
 
 function LotDiscoveryPage({ apiClient, onOpenLot, onOpenMerchant }: { apiClient: ApiClient; onOpenLot: (lot: LiveRoomLot) => void; onOpenMerchant: (id: string) => void }) {
-  const user = useSessionStore((state) => state.user);
   const [searchParams, setSearchParams] = useSearchParams();
   const [lotSort, setLotSort] = useState<LotSortKey>(() => parseLotSort(searchParams.get('sort')));
   const [lotStatus, setLotStatus] = useState<LotStatusFilter>(() => parseLotStatus(searchParams.get('status')));
@@ -819,24 +818,6 @@ function LotDiscoveryPage({ apiClient, onOpenLot, onOpenMerchant }: { apiClient:
     queryKey: ['discover-lots', lotSort, lotStatus, categoryId],
     queryFn: () => apiClient.searchLots({ sort: lotSort, status: lotStatus, categoryId })
   });
-  const myAuctionRecords = useQuery({
-    queryKey: ['my-auction-records'],
-    queryFn: () => apiClient.listMyAuctionRecords(),
-    placeholderData: { items: [], total: 0, page: 1, page_size: 20 }
-  });
-  const myOrders = useQuery({
-    queryKey: ['my-orders'],
-    queryFn: () => apiClient.listMyOrders(),
-    placeholderData: { items: [], total: 0, page: 1, page_size: 20 }
-  });
-  const enrolledAuctionIds = useMemo(() => {
-    const ids = new Set<string>();
-    (myAuctionRecords.data?.items ?? []).forEach((record) => {
-      if (hasPaidDeposit(record)) ids.add(record.lot.auctionId);
-    });
-    return ids;
-  }, [myAuctionRecords.data?.items]);
-  const orderByAuctionId = useMemo(() => buildOrderByAuctionId(myAuctionRecords.data?.items, myOrders.data?.items), [myAuctionRecords.data?.items, myOrders.data?.items]);
   const updateFilters = (nextFilters: Partial<{ sort: LotSortKey; status: LotStatusFilter; categoryId: string }>) => {
     const nextSort = nextFilters.sort ?? lotSort;
     const nextStatus = nextFilters.status ?? lotStatus;
@@ -875,12 +856,6 @@ function LotDiscoveryPage({ apiClient, onOpenLot, onOpenMerchant }: { apiClient:
           <LotResultCard
             key={lot.id}
             lot={lot}
-            action={deriveLotListAction({
-              state: stateFromLot(lot),
-              enrolled: enrolledAuctionIds.has(lot.auctionId),
-              order: orderByAuctionId.get(lot.auctionId),
-              userId: user?.id ?? 'u1'
-            })}
             onOpen={() => onOpenLot(lot)}
             onOpenMerchant={onOpenMerchant}
           />
@@ -1968,22 +1943,19 @@ function OrdersPage({
           </button>
         ))}
       </div>
-      <section className="record-list-section order-list-page-section">
-        <SectionTitle eyebrow={t('profile.records')} title={recordStatusLabel(activeTab)} />
-        <ResultList loading={recordsQuery.isLoading || ordersQuery.isLoading} empty={!groupedRecords[activeTab].length}>
-          {groupedRecords[activeTab].map((record) => (
-            <AuctionRecordCard
-              key={record.id}
-              record={record}
-              highlighted={Boolean(record.order?.id && record.order.id === highlightedOrderId)}
-              onOpen={() => onOpenLot(record.lot)}
-              onPay={record.order ? () => onOpenPay(record.order?.id ?? '', record.lot.auctionId) : undefined}
-              onConfirmReceipt={record.order ? () => setReceiptTarget(record) : undefined}
-              confirmingReceipt={confirmReceipt.isPending && confirmReceipt.variables === record.order?.id}
-            />
-          ))}
-        </ResultList>
-      </section>
+      <ResultList loading={recordsQuery.isLoading || ordersQuery.isLoading} empty={!groupedRecords[activeTab].length}>
+        {groupedRecords[activeTab].map((record) => (
+          <AuctionRecordCard
+            key={record.id}
+            record={record}
+            highlighted={Boolean(record.order?.id && record.order.id === highlightedOrderId)}
+            onOpen={() => onOpenLot(record.lot)}
+            onPay={record.order ? () => onOpenPay(record.order?.id ?? '', record.lot.auctionId) : undefined}
+            onConfirmReceipt={record.order ? () => setReceiptTarget(record) : undefined}
+            confirmingReceipt={confirmReceipt.isPending && confirmReceipt.variables === record.order?.id}
+          />
+        ))}
+      </ResultList>
       {receiptTarget?.order ? (
         <div className="receipt-confirm-backdrop" role="dialog" aria-modal="true" aria-label={t('orders.confirmReceiptTitle')}>
           <div className="receipt-confirm-panel">
@@ -2334,43 +2306,50 @@ function LiveRoomResultCard({ room, onOpen }: { room: LiveRoom; onOpen: () => vo
   );
 }
 
-function LotResultCard({ lot, action, onOpen, onOpenMerchant }: { lot: LiveRoomLot; action?: LotListAction; onOpen: () => void; onOpenMerchant?: (merchantId: string) => void }) {
+function LotResultCard({ lot, onOpen, onOpenMerchant }: { lot: LiveRoomLot; onOpen: () => void; onOpenMerchant?: (merchantId: string) => void }) {
   const state = stateFromLot(lot);
-  const buttonAction = action ?? deriveFallbackLotResultAction(state.status);
-  const scheduleText = scheduledStartText(lot, state);
+  const openFromKeyboard = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    onOpen();
+  };
   return (
-    <article className="search-result-card lot-result-card">
-      <button className="result-media" type="button" onClick={onOpen}>
-        <VisualPlaceholder title={lot.title} imageUrl={lot.imageUrl} tone="red" />
-      </button>
-      <div>
-        <span className="status-badge">{lotStatusLabel(state.status)}</span>
+    <article
+      className="search-result-card lot-result-card"
+      role="button"
+      tabIndex={0}
+      aria-label={`${t('common.view')} ${lot.title}`}
+      onClick={onOpen}
+      onKeyDown={openFromKeyboard}
+    >
+      <div className="lot-media-wrap">
+        <div className="result-media">
+          <VisualPlaceholder title={lot.title} imageUrl={lot.imageUrl} tone="red" />
+        </div>
+        <div className="lot-status-line">
+          <span className="status-badge">{lotStatusLabel(state.status)}</span>
+        </div>
+      </div>
+      <div className="lot-info">
         <h3>{lot.title}</h3>
         <p>{lot.subtitle}</p>
         <div className="lot-price-line">
           <span>{priceLabel(lot, state)}</span>
           <strong>{formatMoney(priceValue(lot, state))}</strong>
         </div>
-        {scheduleText ? <div className="lot-schedule-line">{scheduleText}</div> : null}
         {lot.merchantId && onOpenMerchant ? (
-          <button className="text-link" type="button" onClick={() => onOpenMerchant(lot.merchantId ?? '')}>
-            {t('product.merchant')} <ChevronRight size={13} />
+          <button
+            className="lot-merchant-link"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenMerchant(lot.merchantId ?? '');
+            }}
+          >
+            <span className="lot-merchant-link-label">{t('product.merchant')}&gt;</span>
           </button>
         ) : null}
       </div>
-      <Button
-        size="small"
-        color={buttonAction.color}
-        fill={buttonAction.fill}
-        disabled={buttonAction.disabled}
-        className={lotListActionClassName(buttonAction)}
-        onClick={() => {
-          if (buttonAction.disabled) return;
-          onOpen();
-        }}
-      >
-        {t(buttonAction.label)}
-      </Button>
     </article>
   );
 }
@@ -6610,16 +6589,6 @@ function lotListActionClassName(action: LotListAction): string {
     action.disabled ? 'is-disabled' : '',
     action.kind === 'pay' || action.kind === 'quickBid' ? 'is-primary-action' : ''
   ].filter(Boolean).join(' ');
-}
-
-function deriveFallbackLotResultAction(status: AuctionState['status']): LotListAction {
-  if (status === 'RUNNING' || status === 'EXTENDED') {
-    return { kind: 'quickBid', label: 'product.bidNow', color: 'danger', fill: 'solid' };
-  }
-  if (isUpcomingAuctionStatus(status)) {
-    return { kind: 'look', label: 'product.openDetail', color: 'primary', fill: 'outline' };
-  }
-  return { kind: 'look', label: 'product.viewResult', color: 'primary', fill: 'solid' };
 }
 
 function deriveLotListAction({

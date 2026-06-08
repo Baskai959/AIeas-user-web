@@ -885,15 +885,15 @@ export function findDemoLiveRoomStats(roomId: string): LiveRoomStats {
 }
 
 export function listDemoLots(roomId: string): PageResult<LiveRoomLot> {
-  return toPage(demoLots.filter((lot) => lot.roomId === roomId).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)));
+  return toPage(demoLots.filter((lot) => lot.roomId === roomId).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)).map(withDemoMerchantName));
 }
 
 export function findDemoLot(id: string): LiveRoomLot {
-  return demoLots.find((lot) => lot.id === id) ?? demoLots[0];
+  return withDemoMerchantName(demoLots.find((lot) => lot.id === id) ?? demoLots[0]);
 }
 
 export function findDemoLotByAuctionId(auctionId: string): LiveRoomLot {
-  return demoLots.find((lot) => lot.auctionId === auctionId) ?? demoLots[0];
+  return withDemoMerchantName(demoLots.find((lot) => lot.auctionId === auctionId) ?? demoLots[0]);
 }
 
 export function findDemoMerchant(id: string): Merchant {
@@ -936,7 +936,8 @@ export function searchDemoLots(options: SearchLotsOptions = {}): PageResult<Live
     .filter((lot) => !options.merchantId || lot.merchantId === options.merchantId)
     .filter((lot) => !options.categoryId || options.categoryId === 'all' || lot.categoryId === options.categoryId)
     .filter((lot) => matchLotStatus(lot.status, options.status ?? 'all'))
-    .sort(lotSorter(options.sort ?? 'default'));
+    .sort(lotSorter(options.sort ?? 'default'))
+    .map(withDemoMerchantName);
   return toPage(items);
 }
 
@@ -957,6 +958,12 @@ export function searchDemoMerchants(options: SearchMerchantsOptions = {}): PageR
 
 function normalizeKeyword(value?: string): string {
   return (value ?? '').trim().toLocaleLowerCase();
+}
+
+function withDemoMerchantName(lot: LiveRoomLot): LiveRoomLot {
+  if (lot.merchantName || !lot.merchantId) return lot;
+  const merchant = demoMerchants.find((item) => item.id === lot.merchantId);
+  return merchant ? { ...lot, merchantName: merchant.name } : lot;
 }
 
 function liveRoomMatchesKeyword(room: LiveRoom, keyword: string): boolean {

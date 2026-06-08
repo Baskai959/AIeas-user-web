@@ -132,6 +132,7 @@ export interface LiveRoomLot {
   auctionId: string;
   roomId: string;
   merchantId?: string;
+  merchantName?: string;
   categoryId?: string;
   title: string;
   subtitle?: string;

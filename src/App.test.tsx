@@ -1244,7 +1244,9 @@ describe('App flow', () => {
     expect(await screen.findByText('18K 金钻石项链')).toBeInTheDocument();
     await waitFor(() => expect(api.searchLots).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'default', status: 'all', categoryId: 'all' })));
 
-    await user.click(screen.getByRole('button', { name: getMessage('product.bidNow') }));
+    const runningLotCard = screen.getByText('18K 金钻石项链').closest('.lot-result-card') as HTMLElement;
+    expect(runningLotCard).not.toBeNull();
+    await user.click(runningLotCard);
     await waitFor(() => expect(window.location.pathname).toBe('/product/lot_3001'));
     expect(await screen.findByRole('button', { name: getMessage('product.goLive') })).toBeInTheDocument();
 
@@ -1275,7 +1277,9 @@ describe('App flow', () => {
     expect(window.location.search).toBe('?sort=priceDesc&status=READY&categoryId=jewelry');
     await waitFor(() => expect(api.searchLots).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'priceDesc', status: 'READY', categoryId: 'jewelry' })));
 
-    await user.click(screen.getByRole('button', { name: getMessage('product.bidNow') }));
+    const filteredLotCard = screen.getByText('18K 金钻石项链').closest('.lot-result-card') as HTMLElement;
+    expect(filteredLotCard).not.toBeNull();
+    await user.click(filteredLotCard);
     await waitFor(() => expect(window.location.pathname).toMatch(/^\/product\//));
 
     await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
@@ -1286,7 +1290,7 @@ describe('App flow', () => {
     expect(screen.getByLabelText(getMessage('filter.category'))).toHaveValue('jewelry');
   });
 
-  it('derives discover lot action buttons from deposit and order state', async () => {
+  it('opens discover lots from the whole card without rendering per-card action buttons', async () => {
     const baseLot = {
       roomId: 'room_1001',
       merchantId: 'merchant_01',
@@ -1319,12 +1323,87 @@ describe('App flow', () => {
       return row as HTMLElement;
     };
 
-    expect(within(rowByTitle('Enrolled Running Lot')).getByRole('button', { name: getMessage('product.bidNow') })).toHaveClass('lot-action-button', 'is-primary-action');
-    expect(within(rowByTitle('Hammer Pending Lot')).getByRole('button', { name: getMessage('auction.hammerInProgress') })).toBeDisabled();
-    expect(within(rowByTitle('Hammer Pending Lot')).getByRole('button', { name: getMessage('auction.hammerInProgress') })).toHaveClass('is-disabled');
-    expect(within(rowByTitle('Won Pending Pay Lot')).getByRole('button', { name: getMessage('auction.pay') })).toHaveClass('lot-action-button', 'is-primary-action');
-    expect(within(rowByTitle('Closed Failed Lot')).getByRole('button', { name: getMessage('status.ended') })).toBeDisabled();
-    expect(within(rowByTitle('Closed Failed Lot')).getByRole('button', { name: getMessage('status.ended') })).toHaveClass('is-disabled');
+    expect(document.querySelector('.lot-action-stack')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: getMessage('product.bidNow') })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: getMessage('auction.hammerInProgress') })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: getMessage('auction.pay') })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: getMessage('status.ended') })).not.toBeInTheDocument();
+
+    await user.click(rowByTitle('Enrolled Running Lot'));
+    await waitFor(() => expect(window.location.pathname).toBe('/product/lot_3001'));
+  });
+
+  it('embeds discover lot status in the thumbnail and keeps merchant as the only nested action', async () => {
+    vi.mocked(api.searchLots).mockResolvedValueOnce({
+      items: [
+        {
+          id: 'lot_schedule_merchant',
+          auctionId: 'auc_schedule_merchant',
+          roomId: 'room_1001',
+          merchantId: 'merchant_01',
+          merchantName: 'Cloud Jewelry Select Long Merchant',
+          categoryId: 'jewelry',
+          title: 'Scheduled Merchant Lot',
+          subtitle: 'Short product intro',
+          status: 'READY',
+          startPrice: 10000,
+          currentPrice: 10000,
+          startTsMs: now + 3_600_000,
+          endTsMs: now + 7_200_000,
+          ruleSnapshot: { incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 } }
+        }
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20
+    });
+    renderApp();
+    const user = userEvent.setup();
+
+    await loginAsBuyer(user);
+    await user.click(await screen.findByRole('button', { name: getMessage('nav.discover') }));
+
+    const row = (await screen.findByText('Scheduled Merchant Lot')).closest('.lot-result-card') as HTMLElement;
+    expect(row).not.toBeNull();
+    const merchantButton = within(row).getByRole('button', { name: `${getMessage('product.merchant')}>` });
+    expect(merchantButton).toHaveClass('lot-merchant-link');
+    expect(merchantButton).toHaveTextContent(`${getMessage('product.merchant')}>`);
+    expect(merchantButton).not.toHaveTextContent('Cloud Jewelry Select Long Merchant');
+
+    const statusLine = row.querySelector('.lot-status-line');
+    expect(statusLine).not.toBeNull();
+    expect(statusLine?.closest('.lot-media-wrap')).toBe(row.querySelector('.lot-media-wrap'));
+    const status = statusLine?.querySelector('.status-badge');
+    expect(status).not.toBeNull();
+    expect(status).toHaveTextContent(getMessage('auction.upcoming'));
+    expect(statusLine?.querySelector('.lot-schedule-time')).toBeNull();
+    expect(row).not.toHaveTextContent(/\d{2}\/\d{2} \d{2}:\d{2}/);
+
+    const price = row.querySelector('.lot-price-line');
+    expect(price).toBeInTheDocument();
+    expect(row.querySelector('.lot-info .lot-schedule-line')).toBeNull();
+    expect(row.querySelector('.lot-action-stack .lot-schedule-line')).toBeNull();
+    expect(row.querySelector('.lot-action-stack')).toBeNull();
+    expect(row.querySelector('.lot-media-wrap .result-media')).toBeInTheDocument();
+
+    await user.click(merchantButton);
+    await waitFor(() => expect(window.location.pathname).toBe('/merchant/merchant_01'));
+  });
+
+  it('keeps order tabs fixed while only the direct record list scrolls', async () => {
+    seedSession();
+    renderWithRouter('/orders?tab=all');
+
+    expect(await screen.findByRole('heading', { name: getMessage('orders.title') })).toBeInTheDocument();
+    expect(document.querySelector('.order-list-page-section')).not.toBeInTheDocument();
+    const list = await waitFor(() => {
+      const resultList = document.querySelector('.orders-page > .result-list');
+      expect(resultList).toBeInTheDocument();
+      return resultList as HTMLElement;
+    });
+    expect(document.querySelector('.orders-page > .orders-tab-row')).toBeInTheDocument();
+    expect(list.previousElementSibling).toHaveClass('orders-tab-row');
+    expect(document.querySelector('.orders-page .compact-heading')).not.toBeInTheDocument();
   });
 
   it('sends, drafts, likes, and toggles live-room comments', async () => {
@@ -1443,8 +1522,9 @@ describe('App flow', () => {
 
     await loginAsBuyer(user);
     await user.click(await screen.findByRole('button', { name: getMessage('nav.discover') }));
-    const [firstLotAction] = await screen.findAllByRole('button', { name: getMessage('product.bidNow') });
-    await user.click(firstLotAction);
+    const firstLotCard = (await screen.findByText('18K 金钻石项链')).closest('.lot-result-card') as HTMLElement;
+    expect(firstLotCard).not.toBeNull();
+    await user.click(firstLotCard);
 
     await waitFor(() => expect(window.location.pathname).toMatch(/^\/product\//));
     expect(useLiveActivityStore.getState().footprints).toHaveLength(0);

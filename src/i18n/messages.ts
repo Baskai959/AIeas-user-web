@@ -161,7 +161,7 @@ export const messages = {
     'merchant.enterLive': '进入直播',
     'merchant.noLive': '暂无直播间',
     'profile.defaultNickname': '竞拍用户',
-    'profile.userId': '用户ID {id}',
+    'profile.userId': 'ID {id}',
     'profile.records': '我的竞拍',
     'profile.reminders': '提醒',
     'profile.favorites': '收藏',

@@ -186,6 +186,7 @@ function normalizeLot(raw: Record<string, unknown>): LiveRoomLot {
     auctionId,
     roomId: raw.liveSessionId === undefined ? '' : String(raw.liveSessionId),
     merchantId: raw.sellerId === undefined ? undefined : String(raw.sellerId),
+    merchantName: optionalString(raw.merchantName ?? raw.merchant_name ?? raw.sellerName ?? raw.seller_name),
     categoryId: raw.categoryId === undefined ? undefined : String(raw.categoryId),
     title: String(raw.title),
     subtitle: optionalString(raw.brand),
