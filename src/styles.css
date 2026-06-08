@@ -1043,6 +1043,13 @@ button {
   animation: ranking-target-reveal var(--ranking-duration-ms, 500ms) steps(1, end) forwards;
 }
 
+.live-ranking-row.is-moving-target > .live-ranking-rank,
+.live-ranking-row.is-moving-target > .live-ranking-avatar,
+.live-ranking-row.is-moving-target > .live-ranking-name,
+.live-ranking-row.is-moving-target > .live-ranking-price {
+  opacity: 0;
+}
+
 .live-ranking-row.is-price-updating {
   z-index: 1;
 }

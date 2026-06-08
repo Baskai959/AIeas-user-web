@@ -16,6 +16,45 @@ export interface BidInput {
   expectedCurrentPrice: number;
 }
 
+export type AsyncBidStatus = 'QUEUED' | 'REJECTED';
+export type BidResultFinalStatus = 'ACCEPTED' | 'REJECTED';
+
+/**
+ * bid.ack（S→C）有两种形态：
+ * - 同步形态（现状）：含 accepted/code/reason/currentPrice，是裁决终态。
+ * - 异步形态（新增）：含 mode:"ASYNC"、status:"QUEUED"|"REJECTED"，QUEUED 仅表示入队待裁决。
+ */
+export interface BidAckPayload {
+  mode?: 'ASYNC' | string;
+  status?: AsyncBidStatus | string;
+  accepted?: boolean;
+  code?: number;
+  reason?: string;
+  bidId?: string;
+  auctionId?: string | number;
+  currentPrice?: number;
+  [key: string]: unknown;
+}
+
+/** bid.result（S→C，定向推送）：异步裁决的最终结果。 */
+export interface BidResultPayload {
+  bidId: string;
+  auctionId?: string | number;
+  finalStatus: BidResultFinalStatus | string;
+  reason?: string;
+  currentPrice?: number;
+  leaderBidderId?: string;
+  endTimeMs?: number;
+  serverTimeMs?: number;
+  resultSeq?: number;
+  [key: string]: unknown;
+}
+
+/** bid.result.ack（C→S）：前端收到 bid.result 后必须回发。 */
+export interface BidResultAckPayload {
+  bidId: string;
+}
+
 export interface ChatSendInput {
   roomId: string;
   content: string;
@@ -126,6 +165,8 @@ export function nextRealtimeSeq(message: Pick<RealtimeMessage, 'seq'>, lastSeq: 
 
 export function realtimeMessageSeqDomain(message: Pick<RealtimeMessage, 'type' | 'seq'>): RealtimeSeqDomain | undefined {
 	if (typeof message.seq !== 'number' || message.seq <= 0) return undefined;
+	// bid.result 是点对点定向帧，不占房间 seq，幂等由 bidId 保证（重发也要重新回 ack）。
+	if (message.type === 'bid.result') return undefined;
 	return message.type === 'bid.accepted' || message.type === 'bid.accept' || message.type === 'bid.rejected' ? 'bid' : 'room';
 }
 

@@ -8,7 +8,8 @@ import {
   NativeWebSocketClient,
   nextNativeReconnectDelay,
   nextRealtimeSeqByDomain,
-  realtimeLastSeqStorageKey
+  realtimeLastSeqStorageKey,
+  realtimeMessageSeqDomain
 } from './realtime';
 
 function createFakeWebSocketHarness() {
@@ -103,6 +104,15 @@ describe('realtime', () => {
     expect(isFreshRealtimeMessageByDomain({ type: 'ranking.updated', seq: 13, payload: {} }, cursor)).toBe(true);
     expect(isFreshRealtimeMessageByDomain({ type: 'bid.accepted', seq: 1, payload: {} }, cursor)).toBe(false);
     expect(isFreshRealtimeMessageByDomain({ type: 'bid.accepted', seq: 2, payload: {} }, cursor)).toBe(true);
+  });
+
+  it('treats bid.result as a point-to-point frame that does not occupy room seq dedup', () => {
+    // bid.result 幂等由 bidId 保证，不应按房间/出价 seq 去重，避免重发被误丢弃。
+    expect(realtimeMessageSeqDomain({ type: 'bid.result', seq: 5 })).toBeUndefined();
+    const cursor = nextRealtimeSeqByDomain({ type: 'room.online', seq: 99, payload: {} }, {});
+    expect(isFreshRealtimeMessageByDomain({ type: 'bid.result', seq: 1, payload: {} }, cursor)).toBe(true);
+    // 同一帧重复到达也视为 fresh（不占 seq），由上层按 bidId 幂等处理。
+    expect(isFreshRealtimeMessageByDomain({ type: 'bid.result', seq: 1, payload: {} }, cursor)).toBe(true);
   });
 
   it('calculates native reconnect delay with exponential backoff and jitter', () => {
