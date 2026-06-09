@@ -3,11 +3,20 @@ export function formatMoney(cents: number): string {
   return `¥${(normalized / 100).toFixed(2)}`;
 }
 
-export function formatCountdown(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+export const countdownMillisecondsThresholdMs = 10_000;
+
+export function shouldShowCountdownMilliseconds(ms: number): boolean {
+  return Math.max(0, Math.floor(ms)) < countdownMillisecondsThresholdMs;
+}
+
+export function formatCountdown(ms: number, options: { milliseconds?: boolean } = {}): string {
+  const normalizedMs = Math.max(0, Math.floor(ms));
+  const totalSeconds = Math.floor(normalizedMs / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  const base = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  if (!options.milliseconds || !shouldShowCountdownMilliseconds(normalizedMs)) return base;
+  return `${base}.${String(normalizedMs % 1000).padStart(3, '0')}`;
 }
 
 export function getServerOffsetMs(serverTsMs: number, clientNowMs: number): number {

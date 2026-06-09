@@ -4488,7 +4488,7 @@ describe('App flow', () => {
       status: 'RUNNING',
       currentPrice: 150100,
       leaderBidderId: 'u2',
-      endTsMs: now + 9000,
+      endTsMs: now + 9999,
       serverTsMs: now,
       bidCount: 36,
       participantCount: 128
@@ -4502,10 +4502,106 @@ describe('App flow', () => {
       const pressureLayer = document.querySelector('.live-auction-alert.is-countdown.is-warning');
       expect(pressureLayer).toBeInTheDocument();
       expect(pressureLayer).toHaveTextContent('9');
+      expect(pressureLayer).not.toHaveTextContent('10');
       expect(document.querySelector('.live-auction-alert-layer')).toContainElement(pressureLayer);
       expect(document.querySelector('.live-countdown-pressure')).not.toBeInTheDocument();
       expect(document.querySelector('.auction-float-countdown.is-warning')).toBeInTheDocument();
       expect(document.querySelector('.live-auction-alert.is-countdown.is-critical')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resets the final countdown alert after bid extensions and re-enters with the latest remaining time', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    vi.mocked(api.getAuctionState).mockResolvedValueOnce({
+      auctionId: 'auc_2001',
+      status: 'RUNNING',
+      currentPrice: 150100,
+      leaderBidderId: 'u2',
+      endTsMs: now + 9999,
+      serverTsMs: now,
+      bidCount: 36,
+      participantCount: 128
+    });
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      const initialAlert = document.querySelector('.live-auction-alert.is-countdown.is-warning');
+      expect(initialAlert).toBeInTheDocument();
+      expect(initialAlert).toHaveTextContent('9');
+      expect(document.querySelector('.auction-float-countdown')).toHaveTextContent('00:09.999');
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.accepted',
+          payload: {
+            auctionId: 'auc_2001',
+            bidderId: 'u3',
+            currentPrice: 150200,
+            leaderBidderId: 'u3',
+            endTimeMs: now + 25000,
+            bidTsMs: now + 1000
+          }
+        });
+      });
+      await flushApp();
+      expect(document.querySelector('.live-auction-alert.is-countdown')).not.toBeInTheDocument();
+      expect(document.querySelector('.auction-float-countdown')).not.toHaveClass('is-warning');
+      expect(document.querySelector('.auction-float-countdown')).toHaveTextContent('00:25');
+
+      await act(async () => {
+        vi.advanceTimersByTime(15000);
+      });
+      await flushApp();
+      const reenteredAlert = document.querySelector('.live-auction-alert.is-countdown.is-warning');
+      expect(reenteredAlert).toBeInTheDocument();
+      expect(reenteredAlert).toHaveTextContent('10');
+      expect(document.querySelector('.auction-float-countdown')).toHaveTextContent('00:10');
+      expect(document.querySelector('.auction-float-countdown')).not.toHaveTextContent('.');
+
+      await act(async () => {
+        vi.advanceTimersByTime(100);
+      });
+      await flushApp();
+      expect(document.querySelector('.auction-float-countdown')).toHaveTextContent('00:09.900');
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.accepted',
+          payload: {
+            auctionId: 'auc_2001',
+            bidderId: 'u4',
+            currentPrice: 150300,
+            leaderBidderId: 'u4',
+            endTsMs: now + 45100,
+            bidTsMs: now + 16000
+          }
+        });
+      });
+      await flushApp();
+      expect(document.querySelector('.live-auction-alert.is-countdown')).not.toBeInTheDocument();
+      expect(document.querySelector('.auction-float-countdown')).toHaveTextContent('00:30');
+
+      await act(async () => {
+        vi.advanceTimersByTime(20000);
+      });
+      await flushApp();
+      const secondReenteredAlert = document.querySelector('.live-auction-alert.is-countdown.is-warning');
+      expect(secondReenteredAlert).toBeInTheDocument();
+      expect(secondReenteredAlert).toHaveTextContent('10');
+      expect(document.querySelector('.auction-float-countdown')).toHaveTextContent('00:10');
+
+      await act(async () => {
+        vi.advanceTimersByTime(100);
+      });
+      await flushApp();
+      expect(document.querySelector('.auction-float-countdown')).toHaveTextContent('00:09.900');
     } finally {
       vi.useRealTimers();
     }
@@ -4735,7 +4831,7 @@ describe('App flow', () => {
 	    }
 	  });
 
-	  it('shows hammering locally when the countdown reaches the end before a closed event arrives', async () => {
+	  it('keeps RUNNING/EXTENDED status (no local hammering) when the countdown reaches 0s before a backend HAMMER_PENDING/closed frame arrives', async () => {
 	    vi.useFakeTimers();
 	    vi.setSystemTime(now);
 	    installNativeRealtimeSocket();
@@ -4753,8 +4849,193 @@ describe('App flow', () => {
 	      await flushApp();
 	      const drawer = screen.getByRole('dialog', { name: getMessage('live.goodsList') });
 	      const currentLotRow = within(drawer).getAllByTestId('lot-row')[0];
+	      // 用户明确要求：倒计时归零时不本地切「截拍中」，必须等后端帧。
+	      expect(within(currentLotRow).queryAllByText(getMessage('auction.hammerInProgress'))).toHaveLength(0);
+	      // 仍保持 RUNNING/EXTENDED 状态：状态徽章显示"竞拍中"（auction.running）。
+	      expect(within(currentLotRow).getAllByText(getMessage('auction.running')).length).toBeGreaterThan(0);
+	    } finally {
+	      vi.useRealTimers();
+	    }
+	  });
+
+	  it('switches to hammering UI immediately when backend pushes auction.state status=HAMMER_PENDING (countdown still running)', async () => {
+	    vi.useFakeTimers();
+	    vi.setSystemTime(now);
+	    const sockets = installNativeRealtimeSocket();
+	    try {
+	      seedSession();
+	      window.history.pushState(null, '', '/live/room_1001');
+	      renderApp();
+
+	      await flushApp();
+	      // Countdown is still running; HAMMER_PENDING comes purely from backend frame.
+	      await act(async () => {
+	        emitLatestMockControl(sockets, {
+	          type: 'auction.state',
+	          payload: {
+	            auctionId: 'auc_2001',
+	            status: 'HAMMER_PENDING',
+	            currentPrice: 150100,
+	            leaderBidderId: 'u2',
+	            endTsMs: now + 120_000,
+	            serverTsMs: now
+	          }
+	        });
+	      });
+	      await flushApp();
+
+	      fireEvent.click(screen.getByRole('button', { name: getMessage('live.goodsEntry') }));
+	      await flushApp();
+	      const drawer = screen.getByRole('dialog', { name: getMessage('live.goodsList') });
+	      const currentLotRow = within(drawer).getAllByTestId('lot-row')[0];
 	      expect(within(currentLotRow).getAllByText(getMessage('auction.hammerInProgress')).length).toBeGreaterThan(0);
 	      expect(within(currentLotRow).getByRole('button', { name: getMessage('auction.hammerInProgress') })).toBeDisabled();
+	    } finally {
+	      vi.useRealTimers();
+	    }
+	  });
+
+	  it('does not send bid.place when submitting in HAMMER_PENDING and shows the friendly notice', async () => {
+	    vi.useFakeTimers();
+	    vi.setSystemTime(now);
+	    const sockets = installNativeRealtimeSocket();
+	    try {
+	      seedSession();
+	      window.history.pushState(null, '', '/live/room_1001');
+	      renderApp();
+
+	      await flushApp();
+	      // 进入详情、报名，再打开出价确认对话框（仍在 RUNNING）。
+	      fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
+	      await flushApp();
+	      const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
+	      fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+	      await flushApp();
+	      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('product.bidNow') }));
+	      await flushApp();
+	      const bidDialog = screen.getByRole('dialog', { name: getMessage('bid.confirmTitle') });
+
+	      const socket = sockets[sockets.length - 1];
+	      const placeBefore = socket.sent.filter((raw) => {
+	        try { return (JSON.parse(raw) as { type?: string }).type === 'bid.place'; } catch { return false; }
+	      }).length;
+
+	      // 后端推 HAMMER_PENDING：对话框应即时切到“竞拍已结束”态、提交按钮被禁用，不再发出 bid.place。
+	      await act(async () => {
+	        emitLatestMockControl(sockets, {
+	          type: 'auction.state',
+	          payload: {
+	            auctionId: 'auc_2001',
+	            status: 'HAMMER_PENDING',
+	            currentPrice: 150100,
+	            leaderBidderId: 'u2',
+	            endTsMs: now + 120_000,
+	            serverTsMs: now
+	          }
+	        });
+	      });
+	      await flushApp();
+
+	      const submitButton = bidDialog.querySelector('button.quick-bid-submit') as HTMLButtonElement | null;
+	      expect(submitButton).not.toBeNull();
+	      expect(submitButton).toBeDisabled();
+	      // 即便强行触发点击，也不会发出 bid.place。
+	      fireEvent.click(submitButton as HTMLButtonElement);
+	      await flushApp();
+	      const placeAfter = socket.sent.filter((raw) => {
+	        try { return (JSON.parse(raw) as { type?: string }).type === 'bid.place'; } catch { return false; }
+	      }).length;
+	      expect(placeAfter).toBe(placeBefore);
+	    } finally {
+	      vi.useRealTimers();
+	    }
+	  });
+
+	  it('shows the AUCTION_HAMMER_PENDING bid.ack reason with the friendly hammer-pending message', async () => {
+	    vi.useFakeTimers();
+	    vi.setSystemTime(now);
+	    const sockets = installNativeRealtimeSocket();
+	    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+	    try {
+	      seedSession();
+	      window.history.pushState(null, '', '/live/room_1001');
+	      renderApp();
+
+	      await flushApp();
+	      fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
+	      await flushApp();
+	      const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
+	      fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+	      await flushApp();
+	      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('product.bidNow') }));
+	      await flushApp();
+	      const bidDialog = screen.getByRole('dialog', { name: getMessage('bid.confirmTitle') });
+
+	      fireEvent.click(within(bidDialog).getByRole('button', { name: getMessage('bid.submitNow') }));
+	      await flushApp();
+	      // 异步 REJECTED with reason=AUCTION_HAMMER_PENDING
+	      await act(async () => {
+	        emitLatestMockControl(sockets, {
+	          type: 'bid.ack',
+	          payload: {
+	            mode: 'ASYNC',
+	            status: 'REJECTED',
+	            auctionId: 'auc_2001',
+	            reason: 'AUCTION_HAMMER_PENDING'
+	          }
+	        });
+	      });
+	      await flushApp();
+
+	      expect(within(bidDialog).getAllByText(getMessage('auction.bidRejectedHammerPending')).length).toBeGreaterThan(0);
+	      expect(warnSpy).toHaveBeenCalled();
+	    } finally {
+	      vi.useRealTimers();
+	    }
+	  });
+
+	  it('finalizes the lot via auction.closed after a HAMMER_PENDING transition without breaking winner detection', async () => {
+	    vi.useFakeTimers();
+	    vi.setSystemTime(now);
+	    const sockets = installNativeRealtimeSocket();
+	    try {
+	      seedSession();
+	      window.history.pushState(null, '', '/live/room_1001');
+	      renderApp();
+
+	      await flushApp();
+	      await act(async () => {
+	        emitLatestMockControl(sockets, {
+	          type: 'auction.state',
+	          payload: {
+	            auctionId: 'auc_2001',
+	            status: 'HAMMER_PENDING',
+	            currentPrice: 150100,
+	            leaderBidderId: 'u1',
+	            endTsMs: now + 120_000,
+	            serverTsMs: now
+	          }
+	        });
+	      });
+	      await flushApp();
+
+	      await act(async () => {
+	        emitLatestMockControl(sockets, {
+	          type: 'auction.closed',
+	          payload: {
+	            auctionId: 'auc_2001',
+	            status: 'CLOSED_WON',
+	            winnerId: 'u1',
+	            price: 150200,
+	            closedAt: new Date(Date.now()).toISOString(),
+	            serverTime: new Date(Date.now()).toISOString()
+	          }
+	        });
+	      });
+	      await flushApp();
+
+	      // 中标判定不变：当前用户是 u1 即中标。
+	      expect(document.querySelector('.live-auction-alert.is-won')).toBeInTheDocument();
 	    } finally {
 	      vi.useRealTimers();
 	    }

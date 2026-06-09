@@ -2752,6 +2752,13 @@ button {
   border-radius: 6px;
 }
 
+.quick-bid-countdown-unit.is-milliseconds {
+  min-width: 42px;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  background: #fb7185;
+}
+
 .quick-bid-countdown.is-warning .quick-bid-countdown-unit {
   animation: quick-countdown-warning 900ms ease-in-out infinite;
 }
@@ -2766,6 +2773,11 @@ button {
   font-size: 18px;
   font-weight: 900;
   line-height: 1;
+}
+
+.quick-bid-countdown-separator.is-milliseconds {
+  margin-left: -1px;
+  color: #fb7185;
 }
 
 .quick-bid-summary {

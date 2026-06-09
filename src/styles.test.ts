@@ -330,7 +330,10 @@ describe('mobile layout CSS', () => {
     expect(rule('.quick-bid-countdown-display')).toContain('display: inline-flex');
     expect(rule('.quick-bid-countdown-unit')).toContain('background: #ff8a00');
     expect(rule('.quick-bid-countdown-unit')).toContain('min-width: 34px');
+    expect(rule('.quick-bid-countdown-unit.is-milliseconds')).toContain('min-width: 42px');
+    expect(rule('.quick-bid-countdown-unit.is-milliseconds')).toContain('background: #fb7185');
     expect(rule('.quick-bid-countdown-separator')).toContain('color: #f97316');
+    expect(rule('.quick-bid-countdown-separator.is-milliseconds')).toContain('color: #fb7185');
     expect(rule('.quick-bid-leader-badge')).toContain('background: #ffe3ec');
     expect(rule('.quick-bid-leader-badge')).toContain('border-radius: 999px');
     expect(rule('.quick-bid-leader-avatar')).toContain('background: linear-gradient(135deg, #7da4ff 0%, #6d5dfc 100%)');

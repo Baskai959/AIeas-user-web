@@ -89,7 +89,7 @@ import { useLiveActivityStore } from '../store/liveActivity';
 import { usePreferencesStore } from '../store/preferences';
 import { mergeProfile, useProfileStore } from '../store/profile';
 import { useSessionStore } from '../store/session';
-import { formatCountdown, formatMoney, getServerOffsetMs, makeRequestId } from '../utils/format';
+import { countdownMillisecondsThresholdMs, formatCountdown, formatMoney, getServerOffsetMs, makeRequestId, shouldShowCountdownMilliseconds } from '../utils/format';
 import { MainTabShell, type MainTab } from '../layout/MainTabShell';
 
 let activeLocale: Locale = defaultLocale;
@@ -3518,6 +3518,10 @@ const countdownPressureWarningMs = 10_000;
 const countdownPressureCriticalMs = 3000;
 const countdownPressureExtendedMs = 1200;
 
+function countdownPressureDisplaySeconds(remainMs: number): number {
+  return Math.max(0, Math.floor(remainMs / 1000));
+}
+
 function getCountdownPressurePhase(remainMs: number, status?: AuctionState['status'], extended = false): CountdownPressurePhase {
   if (extended) return 'extended';
   if (status !== 'RUNNING' && status !== 'EXTENDED') return 'idle';
@@ -3714,7 +3718,9 @@ function LiveRoomPage({
   const myAuctionRecordItems = myAuctionRecordsQuery.data?.items;
   const myOrderItems = myOrdersQuery.data?.items;
   const orderByAuctionId = useMemo(() => buildOrderByAuctionId(myAuctionRecordItems, myOrderItems), [myAuctionRecordItems, myOrderItems]);
-  const roomPreviewMediaSource = liveRoomPreviewVideoUrl(room);
+  const roomPreviewMediaSource = room.videoSource === 'recorded'
+    ? room.videoUrl || liveVideoFallback
+    : liveRoomPreviewVideoUrl(room);
   const initialMediaPosition = isPreviewMediaSnapshotApplicable(initialPreviewMedia, room, roomPreviewMediaSource) ? initialPreviewMedia : undefined;
   const activeLot = selectCurrentRunningLot(room, lots, lotStates);
   const selectedLot = lots.find((lot) => lot.id === selectedLotId) ?? activeLot ?? lots[0];
@@ -3741,11 +3747,6 @@ function LiveRoomPage({
   useEffect(() => {
     recordFootprint(room);
   }, [recordFootprint, room]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
 
   const syncServerTimeOffset = useCallback((payload: unknown) => {
     const offsetMs = serverTimeOffsetFromPayload(payload);
@@ -3797,6 +3798,14 @@ function LiveRoomPage({
   const liveSheetOpen = hasBlockingLiveSheet;
   const activeCountdownRemainMs = currentState ? countdownRemainMs(currentState.endTsMs, now, serverTimeOffsetMs) : 0;
   const displayCurrentState = currentState ? stateWithHammerPendingAfterCountdown(currentState, activeCountdownRemainMs) : undefined;
+
+  const useMillisecondCountdownRefresh = Boolean(activeLot?.auctionId && displayCurrentState && activeCountdownRemainMs > 0 && activeCountdownRemainMs <= countdownMillisecondsThresholdMs);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), useMillisecondCountdownRefresh ? 100 : 1000);
+    return () => window.clearInterval(timer);
+  }, [useMillisecondCountdownRefresh]);
+
   const rankingQuery = useQuery({
     queryKey: ['auction-ranking', activeLot?.auctionId],
     queryFn: () => {
@@ -3825,11 +3834,11 @@ function LiveRoomPage({
   );
   const countdownAlert = useMemo<LiveAuctionAlert | undefined>(() => {
     if (!activeLot || !displayCurrentState || activeCountdownPressurePhase === 'idle') return undefined;
-    const seconds = Math.max(0, Math.ceil(activeCountdownRemainMs / 1000));
+    const seconds = countdownPressureDisplaySeconds(activeCountdownRemainMs);
     const isExtended = activeCountdownPressurePhase === 'extended';
     const subtitle = isExtended ? t('countdownPressure.extendedSubtitle') : t('countdownPressure.subtitle');
     return {
-      id: `countdown-${activeLot.auctionId}-${activeCountdownPressurePhase}-${seconds}`,
+      id: `countdown-${activeLot.auctionId}-${displayCurrentState.endTsMs}-${activeCountdownPressurePhase}-${seconds}`,
       kind: 'countdown',
       auctionId: activeLot.auctionId,
       lotId: activeLot.id,
@@ -4527,7 +4536,7 @@ function LiveRoomPage({
         const auctionId = String(payload.auctionId ?? context.activeLot?.auctionId ?? '');
         const extendedLot = context.lots.find((lot) => lot.auctionId === auctionId);
         if (auctionId && extendedLot && context.activeLot?.auctionId === auctionId) {
-          const newEndTsMs = parseRealtimeTimestampMs(payload.endTime, context.currentState?.endTsMs ?? Date.now());
+          const newEndTsMs = parseRealtimeTimestampMs(realtimeEndTimeValue(payload), context.currentState?.endTsMs ?? Date.now());
           if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
           setCountdownExtensionPulse({ auctionId, id: Date.now() });
           countdownExtensionTimerRef.current = window.setTimeout(() => {
@@ -4554,7 +4563,7 @@ function LiveRoomPage({
             status: 'RUNNING' as const,
             currentPrice: realtimeNumber(payload.currentPrice, baseStartedState.currentPrice ?? 0),
             leaderBidderId: payload.leaderBidderId === undefined ? baseStartedState.leaderBidderId : String(payload.leaderBidderId),
-            endTsMs: parseRealtimeTimestampMs(payload.endTime, baseStartedState.endTsMs ?? Date.now()),
+            endTsMs: parseRealtimeTimestampMs(realtimeEndTimeValue(payload), baseStartedState.endTsMs ?? Date.now()),
             serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now()),
             bidCount: payload.bidCount === undefined ? baseStartedState.bidCount : realtimeNumber(payload.bidCount, baseStartedState.bidCount ?? 0),
             participantCount: payload.participantCount === undefined ? baseStartedState.participantCount : realtimeNumber(payload.participantCount, baseStartedState.participantCount ?? 0)
@@ -4860,6 +4869,14 @@ function LiveRoomPage({
   });
 
   const submitBid = (lot: LiveRoomLot, state: AuctionState, price: number) => {
+    if (state.status === 'HAMMER_PENDING') {
+      // 后端进入截拍中后任何 bid.place 都会被异步拒（reason=AUCTION_HAMMER_PENDING）。
+      // 这里本地直接拦截，不再发出 ws 帧，给出友好文案。
+      const message = t('auction.bidRejectedHammerPending');
+      setQuickBidFeedback({ status: 'error', message });
+      pushNotice(message);
+      return;
+    }
     const rule = bidRuleFromLot(lot, state);
     const validation = validateBidPrice(price, rule);
     if (!validation.valid) {
@@ -5285,6 +5302,7 @@ const LiveRoomVideoSurface = forwardRef<LiveRoomVideoSurfaceHandle, LiveRoomVide
   const videoRef = useRef<HTMLVideoElement>(null);
   const appliedInitialMediaKeyRef = useRef<string>();
   const initialMediaKey = useMemo(() => previewMediaSnapshotKey(initialMediaPosition), [initialMediaPosition]);
+  const recordedVideoUrl = room.videoSource === 'recorded' ? room.videoUrl || liveVideoFallback : undefined;
   const setAudiblePlayback = useCallback(async (enabled: boolean) => {
     const video = videoRef.current;
     if (!video) return true;
@@ -5327,20 +5345,20 @@ const LiveRoomVideoSurface = forwardRef<LiveRoomVideoSurfaceHandle, LiveRoomVide
 
   useEffect(() => {
     appliedInitialMediaKeyRef.current = undefined;
-  }, [room.id, room.videoUrl]);
+  }, [room.id, recordedVideoUrl]);
 
   useEffect(() => {
     if (room.videoSource !== 'recorded') return;
     syncRecordedVideoPosition();
-  }, [room.videoSource, room.videoUrl, soundEnabled, syncRecordedVideoPosition]);
+  }, [room.videoSource, recordedVideoUrl, soundEnabled, syncRecordedVideoPosition]);
 
-  if (room.videoSource === 'recorded' && room.videoUrl) {
+  if (room.videoSource === 'recorded' && recordedVideoUrl) {
     return (
       <video
         ref={videoRef}
         className="live-video"
         data-testid="live-room-video"
-        src={room.videoUrl}
+        src={recordedVideoUrl}
         poster={room.coverUrl}
         muted={!soundEnabled}
         autoPlay
@@ -6160,11 +6178,40 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
             leaderBidderId: payload.leaderBidderId === undefined ? previous.leaderBidderId : String(payload.leaderBidderId),
             bidCount: payload.bidCount === undefined ? previous.bidCount : realtimeNumber(payload.bidCount, previous.bidCount ?? 0),
             participantCount: payload.participantCount === undefined ? previous.participantCount : realtimeNumber(payload.participantCount, previous.participantCount ?? 0),
-            endTsMs: parseRealtimeTimestampMs(payload.endTime, previous.endTsMs ?? Date.now()),
+            endTsMs: parseRealtimeTimestampMs(realtimeEndTimeValue(payload), previous.endTsMs ?? Date.now()),
             serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now())
           }
         };
       });
+    }
+  }
+  if (message.type === 'auction.state') {
+    // 后端在倒计时到点时会广播 auction.state status=HAMMER_PENDING；其它状态变化也会复用此帧。
+    // 复用 lotStates 写入路径：根据 payload 更新 status/currentPrice 等字段，HAMMER_PENDING 在 UI 中即按截拍中显示。
+    const payload = realtimePayloadRecord(message.payload);
+    const auctionId = String(payload.auctionId ?? options.activeAuctionId ?? '');
+    if (auctionId) {
+      options.setLotStates((prev) => {
+        const previous = prev[auctionId] ?? fallbackAuctionState(auctionId);
+        const nextStatus = String(payload.status ?? previous.status) as AuctionState['status'];
+        return {
+          ...prev,
+          [auctionId]: {
+            ...previous,
+            auctionId,
+            status: nextStatus,
+            currentPrice: realtimeNumber(payload.currentPrice, previous.currentPrice ?? 0),
+            leaderBidderId: payload.leaderBidderId === undefined ? previous.leaderBidderId : String(payload.leaderBidderId),
+            bidCount: payload.bidCount === undefined ? previous.bidCount : realtimeNumber(payload.bidCount, previous.bidCount ?? 0),
+            participantCount: payload.participantCount === undefined ? previous.participantCount : realtimeNumber(payload.participantCount, previous.participantCount ?? 0),
+            endTsMs: parseRealtimeTimestampMs(realtimeEndTimeValue(payload), previous.endTsMs ?? Date.now()),
+            serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now())
+          }
+        };
+      });
+      if (String(payload.status ?? '').toUpperCase() === 'HAMMER_PENDING') {
+        options.setNotice(t('auction.hammerPendingNotice'));
+      }
     }
   }
   if (message.type === 'auction.participant_updated') {
@@ -6213,14 +6260,14 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
     if (isFresh) {
       const finalStatus = String(payload.finalStatus ?? '').toUpperCase();
       if (finalStatus === 'ACCEPTED') {
-        updateLotStateFromBidPayload({ ...payload, endTime: payload.endTimeMs, serverTime: payload.serverTimeMs }, options, true);
+        updateLotStateFromBidPayload({ ...payload, endTime: realtimeEndTimeValue(payload), serverTime: payload.serverTime ?? payload.serverTimeMs }, options, true);
         options.setRankingAnimationSource('bid.accepted');
         options.applyRankingUpdate((prev) => mergeRealtimeBidIntoRankingItems(prev, { ...payload, bidderId: options.userId }, options.userId, options.activeAuctionId, options.userNickname, options.userAvatarUrl));
         options.setNotice(t('auction.bidAccepted'));
       } else if (finalStatus === 'REJECTED') {
         // 刷新最新价格（currentPrice），不改排行（领先者由后端 leaderBidderId 决定）。
         if (payload.currentPrice !== undefined) {
-          updateLotStateFromBidPayload({ auctionId: payload.auctionId, currentPrice: payload.currentPrice, leaderBidderId: payload.leaderBidderId, endTime: payload.endTimeMs, serverTime: payload.serverTimeMs }, options, false);
+          updateLotStateFromBidPayload({ auctionId: payload.auctionId, currentPrice: payload.currentPrice, leaderBidderId: payload.leaderBidderId, endTime: realtimeEndTimeValue(payload), serverTime: payload.serverTime ?? payload.serverTimeMs }, options, false);
         }
         options.setNotice(formatBidRejectedMessage(payload));
       }
@@ -6266,7 +6313,7 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
         ...(prev[auctionId] ?? fallbackAuctionState(auctionId)),
         auctionId,
         status: 'EXTENDED',
-        endTsMs: parseRealtimeTimestampMs(payload.endTime, prev[auctionId]?.endTsMs ?? Date.now()),
+        endTsMs: parseRealtimeTimestampMs(realtimeEndTimeValue(payload), prev[auctionId]?.endTsMs ?? Date.now()),
         serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now())
       }
     }));
@@ -6285,7 +6332,7 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
           status: 'RUNNING',
           currentPrice: realtimeNumber(payload.currentPrice, previous.currentPrice ?? 0),
           leaderBidderId: payload.leaderBidderId === undefined ? previous.leaderBidderId : String(payload.leaderBidderId),
-          endTsMs: parseRealtimeTimestampMs(payload.endTime, previous.endTsMs ?? Date.now()),
+          endTsMs: parseRealtimeTimestampMs(realtimeEndTimeValue(payload), previous.endTsMs ?? Date.now()),
           serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now()),
           bidCount: payload.bidCount === undefined ? previous.bidCount : realtimeNumber(payload.bidCount, previous.bidCount ?? 0),
           participantCount: payload.participantCount === undefined ? previous.participantCount : realtimeNumber(payload.participantCount, previous.participantCount ?? 0)
@@ -6358,14 +6405,14 @@ function AuctionFloatingCard({
         <h2>{lot.title}</h2>
         <strong>{formatMoney(priceValue(lot, state))}</strong>
         <p>{leader ?? t('bid.startPriceBidder')}</p>
-        <small className={countdownClassName}>{ended ? t('auction.endShort') : formatCountdown(remainMs)}</small>
+        <small className={countdownClassName}>{ended ? t('auction.endShort') : formatCountdown(remainMs, { milliseconds: true })}</small>
         <div className="float-card-legacy" aria-hidden="true">
           <span className="status-badge">{lotStatusLabel(state.status)}</span>
           <h2>{lot.title}</h2>
           <p>{priceLabel(lot, state)}</p>
           <strong>{formatMoney(priceValue(lot, state))}</strong>
           <small>
-            {t('auction.countdown')} {formatCountdown(remainMs)}
+            {t('auction.countdown')} {formatCountdown(remainMs, { milliseconds: true })}
             {leader ? ` · ${leader}` : ''}
           </small>
         </div>
@@ -6844,6 +6891,7 @@ function BidSheet({
     ? t('bid.highestPriceNotice')
     : t('bid.aboveCurrentPriceNotice', { amount: formatQuickBidDeltaAmount(selectedPrice - currentBidPrice) });
   const countdownParts = formatCountdownParts(remainMs);
+  const countdownAriaLabel = [countdownParts.hours, countdownParts.minutes, countdownParts.seconds].join(':') + (countdownParts.milliseconds ? `.${countdownParts.milliseconds}` : '');
   const countdownPhase = getCountdownPressurePhase(remainMs, state.status);
   const countdownClassName = ['quick-bid-countdown', countdownPhase !== 'idle' ? `is-${countdownPhase}` : ''].filter(Boolean).join(' ');
   const closedCountdown = isClosed ? Math.max(0, Math.ceil(((closedAtMs ?? nowMs) + AUCTION_ENDED_HOLD_MS - nowMs) / 1000)) : 5;
@@ -6859,7 +6907,7 @@ function BidSheet({
     const nextSteps = Math.max(1, Math.min(maxBidSteps, stepCount));
     if (nextSteps !== stepCount) setStepCount(nextSteps);
     setSelectedPrice(getQuickBidPrice(rule, nextSteps));
-  }, [rule.currentPrice, rule.minIncrement, rule.capPrice, maxBidSteps, stepCount]);
+  }, [rule, maxBidSteps, stepCount]);
 
   useEffect(() => {
     setClosedAtMs((current) => {
@@ -6911,12 +6959,18 @@ function BidSheet({
           ) : (
             <h2 className={countdownClassName}>
               <span className="quick-bid-countdown-label">{t('bid.countdownPrefix')}</span>
-              <span className="quick-bid-countdown-display" aria-label={`${countdownParts.hours}:${countdownParts.minutes}:${countdownParts.seconds}`}>
+              <span className="quick-bid-countdown-display" aria-label={countdownAriaLabel}>
                 <span className="quick-bid-countdown-unit">{countdownParts.hours}</span>
                 <span className="quick-bid-countdown-separator">:</span>
                 <span className="quick-bid-countdown-unit">{countdownParts.minutes}</span>
                 <span className="quick-bid-countdown-separator">:</span>
                 <span className="quick-bid-countdown-unit">{countdownParts.seconds}</span>
+                {countdownParts.milliseconds ? (
+                  <>
+                    <span className="quick-bid-countdown-separator is-milliseconds">.</span>
+                    <span className="quick-bid-countdown-unit is-milliseconds">{countdownParts.milliseconds}</span>
+                  </>
+                ) : null}
               </span>
             </h2>
           )}
@@ -7385,6 +7439,10 @@ function realtimeBidPriceValue(payload: Record<string, unknown>): unknown {
   return payload.currentPrice ?? payload.current_price ?? payload.amount ?? payload.price;
 }
 
+function realtimeEndTimeValue(payload: Record<string, unknown>): unknown {
+  return firstRealtimeDefined(payload.endTime, payload.endTimeMs, payload.endTsMs, payload.end_time, payload.end_time_ms, payload.end_ts_ms);
+}
+
 function updateLotStateFromBidPayload(payload: Record<string, unknown>, options: RealtimeHandlerOptions, incrementMissingBidCount: boolean) {
   const auctionId = String(payload.auctionId ?? options.activeAuctionId ?? '');
   if (!auctionId) return;
@@ -7407,7 +7465,7 @@ function updateLotStateFromBidPayload(payload: Record<string, unknown>, options:
         leaderBidderId: hasLeader ? String(payload.leaderBidderId ?? payload.bidderId) : previous.leaderBidderId,
         bidCount: nextBidCount,
         participantCount: payload.participantCount === undefined ? previous.participantCount : realtimeNumber(payload.participantCount, previous.participantCount ?? 0),
-        endTsMs: parseRealtimeTimestampMs(payload.endTime, previous.endTsMs ?? Date.now()),
+        endTsMs: parseRealtimeTimestampMs(realtimeEndTimeValue(payload), previous.endTsMs ?? Date.now()),
         serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now())
       }
     };
@@ -7437,9 +7495,11 @@ function countdownRemainMs(endTsMs: number, clientNowMs: number, serverTimeOffse
 }
 
 function stateWithHammerPendingAfterCountdown(state: AuctionState, remainMs: number): AuctionState {
-  if (remainMs <= 0 && isRunningAuctionStatus(state.status)) {
-    return { ...state, status: 'HAMMER_PENDING' };
-  }
+  // 倒计时归零仅停在 0s，不本地强制切「截拍中」：必须收到后端 auction.state{status:HAMMER_PENDING}
+  // 或 auction.closed 帧后才切相应状态。这样即使 anti-sniping 即将延长 endTime（异步链路有少
+  // 许排队延迟），用户也不会被本地预切的"截拍中"误导。
+  // 保留 helper 名称避免破坏调用点；remainMs<=0 时返回原 state，让 UI 显示 0s。
+  void remainMs;
   return state;
 }
 
@@ -7651,6 +7711,7 @@ function formatBidRejectedMessage(payload: Record<string, unknown>): string {
   if (reason === 'HOT_AUCTION_QUEUE_FULL') return t('auction.bidQueueFull');
   if (reason === 'USER_BID_ALREADY_PENDING') return t('auction.bidAlreadyPending');
   if (reason === 'AUCTION_CLOSED' || reason === 'INVALID_STATE') return t('auction.closed');
+  if (reason === 'AUCTION_HAMMER_PENDING') return t('auction.bidRejectedHammerPending');
   if (typeof payload.message === 'string' && payload.message.trim()) return payload.message;
   return t('auction.bidRejected');
 }
@@ -7679,15 +7740,17 @@ function formatQuickBidDeltaAmount(cents: number): string {
   return `${text}元`;
 }
 
-function formatCountdownParts(ms: number): { hours: string; minutes: string; seconds: string } {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+function formatCountdownParts(ms: number): { hours: string; minutes: string; seconds: string; milliseconds?: string } {
+  const normalizedMs = Math.max(0, Math.floor(ms));
+  const totalSeconds = Math.floor(normalizedMs / 1000);
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   return {
     hours: String(hours).padStart(2, '0'),
     minutes: String(minutes).padStart(2, '0'),
-    seconds: String(seconds).padStart(2, '0')
+    seconds: String(seconds).padStart(2, '0'),
+    milliseconds: shouldShowCountdownMilliseconds(normalizedMs) ? String(normalizedMs % 1000).padStart(3, '0') : undefined
   };
 }
 
