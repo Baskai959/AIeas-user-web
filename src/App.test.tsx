@@ -1369,6 +1369,32 @@ describe('App flow', () => {
     expect(screen.getByLabelText(getMessage('filter.category'))).toHaveValue('jewelry');
   });
 
+  it('reveals the discover lot header and filters when the user pulls the list downward', async () => {
+    renderApp();
+    const user = userEvent.setup();
+
+    await loginAsBuyer(user);
+    await user.click(await screen.findByRole('button', { name: getMessage('nav.discover') }));
+
+    const discoverLotsPage = await waitFor(() => {
+      const page = document.querySelector('.discover-lots-page');
+      expect(page).toBeInTheDocument();
+      return page as HTMLElement;
+    });
+    const toolbar = discoverLotsPage.querySelector('.discover-lots-toolbar') as HTMLElement | null;
+    expect(toolbar).toBeInTheDocument();
+    expect(toolbar?.querySelector('.discover-lots-header')).toBeInTheDocument();
+    expect(toolbar?.querySelector('.filter-row')).toBeInTheDocument();
+
+    discoverLotsPage.scrollTop = 180;
+    fireEvent.scroll(discoverLotsPage);
+    expect(discoverLotsPage).toHaveClass('is-controls-hidden');
+
+    discoverLotsPage.scrollTop = 120;
+    fireEvent.scroll(discoverLotsPage);
+    expect(discoverLotsPage).not.toHaveClass('is-controls-hidden');
+  });
+
   it('opens discover lots from the whole card without rendering per-card action buttons', async () => {
     const baseLot = {
       roomId: 'room_1001',
@@ -2802,6 +2828,8 @@ describe('App flow', () => {
           merchantId: 'merchant_01',
           categoryId: 'jewelry',
           title: 'Upcoming first lot',
+          subtitle: 'Upcoming compact intro',
+          description: 'Upcoming detail description',
           status: 'WARMING_UP',
           startPrice: 0,
           currentPrice: 0,
@@ -2816,6 +2844,8 @@ describe('App flow', () => {
           merchantId: 'merchant_01',
           categoryId: 'jewelry',
           title: 'Running second lot',
+          subtitle: 'Running compact intro',
+          description: 'Running detail description',
           status: 'RUNNING',
           startPrice: 0,
           currentPrice: 86000,
@@ -2858,11 +2888,15 @@ describe('App flow', () => {
     expect(firstSequence).toHaveTextContent('2');
     expect(firstSequence).toHaveAttribute('aria-label', '#2');
     expect(within(rows[0]).getByText('Running second lot')).toBeInTheDocument();
+    expect(within(rows[0]).getByText('Running compact intro')).toBeInTheDocument();
+    expect(within(rows[0]).queryByText('Running detail description')).not.toBeInTheDocument();
     expect(rows[1]).toHaveAttribute('data-original-index', '1');
     const secondSequence = rows[1].querySelector('.lot-thumb-frame .lot-sequence');
     expect(secondSequence).toHaveTextContent('1');
     expect(secondSequence).toHaveAttribute('aria-label', '#1');
     expect(within(rows[1]).getByText('Upcoming first lot')).toBeInTheDocument();
+    expect(within(rows[1]).getByText('Upcoming compact intro')).toBeInTheDocument();
+    expect(within(rows[1]).queryByText('Upcoming detail description')).not.toBeInTheDocument();
     expect(within(rows[1]).getByText(scheduledStartTime)).toBeInTheDocument();
     expect(within(rows[1]).queryByText(scheduledStartLabel)).not.toBeInTheDocument();
     const secondMeta = rows[1].querySelector('.lot-row-meta') as HTMLElement;
@@ -2873,6 +2907,7 @@ describe('App flow', () => {
     await user.click(rows[1]);
     const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
     expect(detailDialog).toHaveClass('detail-sheet');
+    expect(within(detailDialog).getByText('Upcoming detail description')).toBeInTheDocument();
     expect(within(detailDialog).getByText(scheduledStartLabel)).toBeInTheDocument();
     expect(within(detailDialog).getByRole('button', { name: detailWaitingText })).toBeDisabled();
     expect(screen.getByRole('dialog', { name: getMessage('live.goodsList') })).toBeInTheDocument();
@@ -4608,6 +4643,117 @@ describe('App flow', () => {
       expect(document.querySelector('.live-countdown-pressure')).not.toBeInTheDocument();
       expect(document.querySelector('.auction-float-countdown.is-warning')).toBeInTheDocument();
       expect(document.querySelector('.live-auction-alert.is-countdown.is-critical')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts the side countdown ambient bands at 30 seconds and tracks progress', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    vi.mocked(api.getAuctionState).mockResolvedValue({
+      auctionId: 'auc_2001',
+      status: 'RUNNING',
+      currentPrice: 150100,
+      leaderBidderId: 'u2',
+      endTsMs: now + 30_000,
+      serverTsMs: 0,
+      bidCount: 36,
+      participantCount: 128
+    });
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      const ambient = document.querySelector('.live-countdown-ambient.is-other') as HTMLElement | null;
+      expect(ambient).toBeInTheDocument();
+      expect(ambient?.style.getPropertyValue('--countdown-ambient-progress')).toBe('0.0%');
+      expect(document.querySelector('.live-countdown-ambient-band.is-left')).toBeInTheDocument();
+      expect(document.querySelector('.live-countdown-ambient-band.is-right')).toBeInTheDocument();
+      expect(document.querySelectorAll('.live-countdown-ambient-particle')).toHaveLength(24);
+
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+      });
+      await flushApp();
+      const updatedAmbient = document.querySelector('.live-countdown-ambient') as HTMLElement | null;
+      expect(updatedAmbient).toBeInTheDocument();
+      expect(updatedAmbient).toHaveClass('is-other');
+      expect(updatedAmbient?.style.getPropertyValue('--countdown-ambient-progress')).toBe('50.0%');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('switches countdown ambient tone on bids, pulses, and hides after lot cancellation', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    vi.mocked(api.getAuctionState).mockResolvedValueOnce({
+      auctionId: 'auc_2001',
+      status: 'RUNNING',
+      currentPrice: 150000,
+      leaderBidderId: undefined,
+      endTsMs: now + 25_000,
+      serverTsMs: 0,
+      bidCount: 0,
+      participantCount: 128
+    });
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      expect(document.querySelector('.live-countdown-ambient.is-empty')).toBeInTheDocument();
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.accepted',
+          payload: {
+            auctionId: 'auc_2001',
+            bidderId: 'u3',
+            currentPrice: 150100,
+            leaderBidderId: 'u3',
+            endTsMs: now + 24_000,
+            bidTsMs: now + 1000
+          }
+        });
+      });
+      await flushApp();
+      expect(document.querySelector('.live-countdown-ambient.is-other')).toBeInTheDocument();
+      expect(document.querySelector('.live-countdown-ambient-pulse')).toBeInTheDocument();
+      expect(document.querySelectorAll('.live-countdown-ambient-pulse-spark')).toHaveLength(20);
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.accepted',
+          payload: {
+            auctionId: 'auc_2001',
+            bidderId: 'u1',
+            currentPrice: 150200,
+            leaderBidderId: 'u1',
+            endTsMs: now + 23_000,
+            bidTsMs: now + 2000
+          }
+        });
+      });
+      await flushApp();
+      expect(document.querySelector('.live-countdown-ambient.is-self')).toBeInTheDocument();
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'live_session.lot_changed',
+          payload: {
+            auctionId: 'auc_2001',
+            action: 'cancelled'
+          }
+        });
+      });
+      await flushApp();
+      expect(document.querySelector('.live-countdown-ambient')).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }

@@ -816,6 +816,8 @@ function LotDiscoveryPage({ apiClient, onOpenLot, onOpenMerchant }: { apiClient:
   const [lotSort, setLotSort] = useState<LotSortKey>(() => parseLotSort(searchParams.get('sort')));
   const [lotStatus, setLotStatus] = useState<LotStatusFilter>(() => parseLotStatus(searchParams.get('status')));
   const [categoryId, setCategoryId] = useState(() => searchParams.get('categoryId') ?? 'all');
+  const [controlsHidden, setControlsHidden] = useState(false);
+  const lastScrollTopRef = useRef(0);
   const categories = useQuery({ queryKey: ['categories'], queryFn: () => apiClient.listCategories(), placeholderData: { items: demoCategories, total: demoCategories.length, page: 1, page_size: 20 } });
   const lots = useQuery({
     queryKey: ['discover-lots', lotSort, lotStatus, categoryId],
@@ -829,31 +831,49 @@ function LotDiscoveryPage({ apiClient, onOpenLot, onOpenMerchant }: { apiClient:
     setLotStatus(nextStatus);
     setCategoryId(nextCategoryId);
     setSearchParams(discoverLotSearchParams({ sort: nextSort, status: nextStatus, categoryId: nextCategoryId }));
+    setControlsHidden(false);
+  };
+
+  const handleScroll = (event: ReactUIEvent<HTMLElement>) => {
+    const nextScrollTop = event.currentTarget.scrollTop;
+    const delta = nextScrollTop - lastScrollTopRef.current;
+    if (nextScrollTop <= 24) {
+      setControlsHidden(false);
+    } else if (delta > 8) {
+      setControlsHidden(true);
+    } else if (delta < -6) {
+      setControlsHidden(false);
+    }
+    lastScrollTopRef.current = nextScrollTop;
   };
 
   useEffect(() => {
     setLotSort(parseLotSort(searchParams.get('sort')));
     setLotStatus(parseLotStatus(searchParams.get('status')));
     setCategoryId(searchParams.get('categoryId') ?? 'all');
+    setControlsHidden(false);
+    lastScrollTopRef.current = 0;
   }, [searchParams]);
 
   return (
-    <section className="search-page discover-lots-page">
-      <header className="simple-page-header discover-lots-header">
-        <div>
-          <h1>{t('discoverLots.title')}</h1>
-        </div>
-      </header>
-      <FilterRow>
-        <FilterSelect label={t('filter.sort')} value={lotSort} onChange={(value) => updateFilters({ sort: value as LotSortKey })} options={lotSortOptions()} />
-        <FilterSelect label={t('filter.status')} value={lotStatus} onChange={(value) => updateFilters({ status: value as LotStatusFilter })} options={lotStatusOptions()} />
-        <FilterSelect
-          label={t('filter.category')}
-          value={categoryId}
-          onChange={(value) => updateFilters({ categoryId: value })}
-          options={[{ value: 'all', label: t('status.all') }, ...(categories.data?.items ?? []).map((item) => ({ value: item.id, label: item.name }))]}
-        />
-      </FilterRow>
+    <section className={controlsHidden ? 'search-page discover-lots-page is-controls-hidden' : 'search-page discover-lots-page'} onScroll={handleScroll}>
+      <div className="discover-lots-toolbar">
+        <header className="simple-page-header discover-lots-header">
+          <div>
+            <h1>{t('discoverLots.title')}</h1>
+          </div>
+        </header>
+        <FilterRow>
+          <FilterSelect label={t('filter.sort')} value={lotSort} onChange={(value) => updateFilters({ sort: value as LotSortKey })} options={lotSortOptions()} />
+          <FilterSelect label={t('filter.status')} value={lotStatus} onChange={(value) => updateFilters({ status: value as LotStatusFilter })} options={lotStatusOptions()} />
+          <FilterSelect
+            label={t('filter.category')}
+            value={categoryId}
+            onChange={(value) => updateFilters({ categoryId: value })}
+            options={[{ value: 'all', label: t('status.all') }, ...(categories.data?.items ?? []).map((item) => ({ value: item.id, label: item.name }))]}
+          />
+        </FilterRow>
+      </div>
       <ResultList loading={lots.isLoading} empty={!lots.data?.items.length}>
         {(lots.data?.items ?? []).map((lot) => (
           <LotResultCard
@@ -3549,6 +3569,44 @@ const winningConfettiPieces = [
   { x: 298, y: -254, rotate: 280, delay: 300, color: '#56d07f', shape: 'ribbon' }
 ] as const;
 
+const countdownAmbientParticles = [
+  { offset: '1px', bottom: '6%', size: '2px', delay: '0ms', duration: '1320ms', drift: '5px' },
+  { offset: '7px', bottom: '13%', size: '2px', delay: '120ms', duration: '1580ms', drift: '4px' },
+  { offset: '4px', bottom: '20%', size: '3px', delay: '240ms', duration: '1460ms', drift: '6px' },
+  { offset: '12px', bottom: '27%', size: '2px', delay: '360ms', duration: '1700ms', drift: '4px' },
+  { offset: '2px', bottom: '35%', size: '2px', delay: '500ms', duration: '1500ms', drift: '5px' },
+  { offset: '9px', bottom: '43%', size: '2px', delay: '640ms', duration: '1840ms', drift: '3px' },
+  { offset: '5px', bottom: '51%', size: '3px', delay: '760ms', duration: '1640ms', drift: '6px' },
+  { offset: '14px', bottom: '60%', size: '2px', delay: '900ms', duration: '1760ms', drift: '4px' },
+  { offset: '3px', bottom: '69%', size: '2px', delay: '1040ms', duration: '1560ms', drift: '5px' },
+  { offset: '10px', bottom: '77%', size: '2px', delay: '1180ms', duration: '1920ms', drift: '4px' },
+  { offset: '6px', bottom: '85%', size: '3px', delay: '1320ms', duration: '1680ms', drift: '6px' },
+  { offset: '15px', bottom: '93%', size: '2px', delay: '1460ms', duration: '1980ms', drift: '4px' }
+] as const;
+
+const countdownAmbientPulseSparks = [
+  { bottom: '8%', size: '3px', delay: '0ms', duration: '520ms', travelX: 'clamp(118px, 32vw, 178px)', travelY: '-8px', scale: '1.3' },
+  { bottom: '12%', size: '2px', delay: '14ms', duration: '560ms', travelX: 'clamp(146px, 40vw, 218px)', travelY: '10px', scale: '1.1' },
+  { bottom: '17%', size: '2px', delay: '28ms', duration: '500ms', travelX: 'clamp(96px, 26vw, 152px)', travelY: '-18px', scale: '1.2' },
+  { bottom: '22%', size: '3px', delay: '42ms', duration: '620ms', travelX: 'clamp(180px, 48vw, 264px)', travelY: '18px', scale: '1.35' },
+  { bottom: '27%', size: '2px', delay: '56ms', duration: '540ms', travelX: 'clamp(132px, 36vw, 206px)', travelY: '-24px', scale: '1.05' },
+  { bottom: '32%', size: '2px', delay: '70ms', duration: '590ms', travelX: 'clamp(206px, 56vw, 300px)', travelY: '6px', scale: '1.25' },
+  { bottom: '38%', size: '3px', delay: '84ms', duration: '560ms', travelX: 'clamp(156px, 42vw, 236px)', travelY: '-14px', scale: '1.4' },
+  { bottom: '43%', size: '2px', delay: '98ms', duration: '640ms', travelX: 'clamp(226px, 62vw, 330px)', travelY: '22px', scale: '1.1' },
+  { bottom: '49%', size: '2px', delay: '112ms', duration: '540ms', travelX: 'clamp(116px, 30vw, 186px)', travelY: '-30px', scale: '1.2' },
+  { bottom: '54%', size: '3px', delay: '126ms', duration: '620ms', travelX: 'clamp(196px, 54vw, 288px)', travelY: '2px', scale: '1.35' },
+  { bottom: '59%', size: '2px', delay: '140ms', duration: '500ms', travelX: 'clamp(144px, 38vw, 220px)', travelY: '-12px', scale: '1.15' },
+  { bottom: '64%', size: '2px', delay: '154ms', duration: '680ms', travelX: 'clamp(238px, 66vw, 344px)', travelY: '28px', scale: '1.05' },
+  { bottom: '69%', size: '3px', delay: '168ms', duration: '580ms', travelX: 'clamp(168px, 46vw, 254px)', travelY: '-26px', scale: '1.45' },
+  { bottom: '74%', size: '2px', delay: '182ms', duration: '620ms', travelX: 'clamp(214px, 58vw, 314px)', travelY: '12px', scale: '1.18' },
+  { bottom: '79%', size: '2px', delay: '196ms', duration: '520ms', travelX: 'clamp(122px, 34vw, 196px)', travelY: '-20px', scale: '1.2' },
+  { bottom: '84%', size: '3px', delay: '210ms', duration: '660ms', travelX: 'clamp(248px, 68vw, 356px)', travelY: '18px', scale: '1.3' },
+  { bottom: '88%', size: '2px', delay: '224ms', duration: '560ms', travelX: 'clamp(188px, 50vw, 276px)', travelY: '-32px', scale: '1.12' },
+  { bottom: '91%', size: '2px', delay: '238ms', duration: '600ms', travelX: 'clamp(154px, 44vw, 238px)', travelY: '6px', scale: '1.24' },
+  { bottom: '94%', size: '3px', delay: '252ms', duration: '640ms', travelX: 'clamp(226px, 60vw, 332px)', travelY: '-18px', scale: '1.42' },
+  { bottom: '96%', size: '2px', delay: '266ms', duration: '520ms', travelX: 'clamp(104px, 28vw, 166px)', travelY: '16px', scale: '1.08' }
+] as const;
+
 type LiveAuctionAlertKind = 'countdown' | 'leading' | 'outbid' | 'extended' | 'closed' | 'won';
 type AuctionEventAlertKind = Exclude<LiveAuctionAlertKind, 'countdown'>;
 
@@ -3573,6 +3631,13 @@ type LiveAuctionAlertInput = Omit<LiveAuctionAlert, 'id' | 'priority' | 'duratio
 };
 
 type CountdownPressurePhase = 'idle' | 'warning' | 'critical' | 'extended';
+type CountdownAmbientTone = 'empty' | 'other' | 'self';
+type CountdownAmbientState = {
+  auctionId: string;
+  tone: CountdownAmbientTone;
+  progress: number;
+  pulseId?: number;
+};
 
 const liveAuctionAlertPriority: Record<LiveAuctionAlertKind, number> = {
   countdown: 10,
@@ -3595,6 +3660,8 @@ const liveAuctionAlertDurationMs: Record<LiveAuctionAlertKind, number> = {
 const countdownPressureWarningMs = 10_000;
 const countdownPressureCriticalMs = 3000;
 const countdownPressureExtendedMs = 1200;
+const countdownAmbientThresholdMs = 30_000;
+const countdownAmbientBidPulseMs = 780;
 
 function countdownPressureDisplaySeconds(remainMs: number): number {
   return Math.max(0, Math.floor(remainMs / 1000));
@@ -3607,6 +3674,17 @@ function getCountdownPressurePhase(remainMs: number, status?: AuctionState['stat
   if (remainMs <= countdownPressureCriticalMs) return 'critical';
   if (remainMs <= countdownPressureWarningMs) return 'warning';
   return 'idle';
+}
+
+function countdownAmbientProgress(remainMs: number): number {
+  if (!Number.isFinite(remainMs)) return 0;
+  return Math.max(0, Math.min(1, (countdownAmbientThresholdMs - remainMs) / countdownAmbientThresholdMs));
+}
+
+function countdownAmbientTone(state: AuctionState, userId: string): CountdownAmbientTone {
+  const hasLeaderBid = Boolean(state.leaderBidderId) && (state.bidCount === undefined || state.bidCount > 0);
+  if (!hasLeaderBid) return 'empty';
+  return state.leaderBidderId === userId ? 'self' : 'other';
 }
 
 function useLiveAuctionAlerts() {
@@ -3697,6 +3775,7 @@ function LiveRoomPage({
   const [lotStates, setLotStates] = useState<Record<string, AuctionState>>({});
   const [liveStats, setLiveStats] = useState<LiveRoomStats>(demoLiveRoomStats);
   const [countdownExtensionPulse, setCountdownExtensionPulse] = useState<{ auctionId: string; id: number } | undefined>();
+  const [countdownAmbientPulse, setCountdownAmbientPulse] = useState<{ auctionId: string; id: number } | undefined>();
   const [likeBurstId, setLikeBurstId] = useState(0);
   const [likeBurstVisible, setLikeBurstVisible] = useState(false);
   const [digitalHumanSpeaking, setDigitalHumanSpeaking] = useState(false);
@@ -3725,6 +3804,7 @@ function LiveRoomPage({
   const floatingAuctionCardRef = useRef<FloatingAuctionCardState>();
   const pendingFloatingAuctionCardRef = useRef<FloatingAuctionCardState>();
   const countdownExtensionTimerRef = useRef<number>();
+  const countdownAmbientPulseTimerRef = useRef<number>();
   const scheduledAuctionRefreshAttemptsRef = useRef<Set<string>>(new Set());
   const bidConfirmTimerRef = useRef<number>();
   const settledBidResultIdsRef = useRef<Set<string>>(new Set());
@@ -3850,6 +3930,25 @@ function LiveRoomPage({
     });
   }, [stateQuery.data?.serverTsMs]);
 
+  const clearCountdownAmbientPulse = useCallback(() => {
+    if (countdownAmbientPulseTimerRef.current) {
+      window.clearTimeout(countdownAmbientPulseTimerRef.current);
+      countdownAmbientPulseTimerRef.current = undefined;
+    }
+    setCountdownAmbientPulse(undefined);
+  }, []);
+
+  const triggerCountdownAmbientPulse = useCallback((auctionId: string) => {
+    if (!auctionId) return;
+    if (countdownAmbientPulseTimerRef.current) window.clearTimeout(countdownAmbientPulseTimerRef.current);
+    const pulse = { auctionId, id: Date.now() };
+    setCountdownAmbientPulse(pulse);
+    countdownAmbientPulseTimerRef.current = window.setTimeout(() => {
+      setCountdownAmbientPulse((current) => (current?.id === pulse.id ? undefined : current));
+      countdownAmbientPulseTimerRef.current = undefined;
+    }, countdownAmbientBidPulseMs);
+  }, []);
+
   useEffect(() => {
     setChatMessages(initialLiveChatMessages(roomId));
     setCommentDraft(useLiveActivityStore.getState().commentDrafts[roomId] ?? '');
@@ -3862,14 +3961,16 @@ function LiveRoomPage({
     liveSoundAutoplayBlockedRef.current = false;
     liveVoicePermissionPromptVisibleRef.current = false;
     pendingLiveVoicePayloadsRef.current = [];
+    clearCountdownAmbientPulse();
     clearDelayedRankingSnapshot();
     liveVoicePlayerRef.current?.stop();
     commentsShouldStickRef.current = true;
-  }, [clearDelayedRankingSnapshot, roomId]);
+  }, [clearCountdownAmbientPulse, clearDelayedRankingSnapshot, roomId]);
 
   useEffect(() => {
     return () => {
       if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
+      if (countdownAmbientPulseTimerRef.current) window.clearTimeout(countdownAmbientPulseTimerRef.current);
       if (likeBurstTimerRef.current) window.clearTimeout(likeBurstTimerRef.current);
     };
   }, []);
@@ -3879,8 +3980,24 @@ function LiveRoomPage({
   const liveSheetOpen = hasBlockingLiveSheet;
   const activeCountdownRemainMs = currentState ? countdownRemainMs(currentState.endTsMs, now, serverTimeOffsetMs) : 0;
   const displayCurrentState = currentState ? stateWithHammerPendingAfterCountdown(currentState, activeCountdownRemainMs) : undefined;
+  const countdownAmbientState = useMemo<CountdownAmbientState | undefined>(() => {
+    if (!activeLot || !displayCurrentState) return undefined;
+    if (!isRunningAuctionStatus(displayCurrentState.status)) return undefined;
+    if (activeCountdownRemainMs > countdownAmbientThresholdMs) return undefined;
+    return {
+      auctionId: activeLot.auctionId,
+      tone: countdownAmbientTone(displayCurrentState, userId),
+      progress: countdownAmbientProgress(activeCountdownRemainMs),
+      pulseId: countdownAmbientPulse?.auctionId === activeLot.auctionId ? countdownAmbientPulse.id : undefined
+    };
+  }, [activeCountdownRemainMs, activeLot, countdownAmbientPulse, displayCurrentState, userId]);
 
-  const useMillisecondCountdownRefresh = Boolean(activeLot?.auctionId && displayCurrentState && activeCountdownRemainMs > 0 && activeCountdownRemainMs <= countdownMillisecondsThresholdMs);
+  const useMillisecondCountdownRefresh = Boolean(
+    activeLot?.auctionId &&
+    displayCurrentState &&
+    activeCountdownRemainMs > 0 &&
+    (activeCountdownRemainMs <= countdownMillisecondsThresholdMs || activeCountdownRemainMs <= countdownAmbientThresholdMs)
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), useMillisecondCountdownRefresh ? 100 : 1000);
@@ -4591,6 +4708,9 @@ function LiveRoomPage({
         const previousState = context.activeLot?.auctionId === auctionId ? context.currentState : undefined;
         const previousLeaderId = previousState?.leaderBidderId ?? acceptedLot?.leaderBidderId;
         const acceptedPrice = Number(realtimeBidPriceValue(payload) ?? previousState?.currentPrice ?? acceptedLot?.currentPrice ?? 0);
+        if (auctionId && acceptedLot && context.activeLot?.auctionId === auctionId) {
+          triggerCountdownAmbientPulse(auctionId);
+        }
         if (auctionId && acceptedLot && bidderId === userId) {
           pushAuctionAtmosphereAlert('leading', { auctionId, lot: acceptedLot, price: acceptedPrice });
         } else if (auctionId && acceptedLot && previousLeaderId === userId && bidderId && bidderId !== userId) {
@@ -4651,6 +4771,7 @@ function LiveRoomPage({
           };
           if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
           setCountdownExtensionPulse(undefined);
+          clearCountdownAmbientPulse();
           setHiddenAuctionCardId(undefined);
           setRuntimeStartedAuctionId(auctionId);
           setLotStates((prev) => {
@@ -4696,6 +4817,7 @@ function LiveRoomPage({
         const isCurrentUserWinner = String(payload.status ?? 'CLOSED_WON') === 'CLOSED_WON' && winnerBidderId === userId;
         if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
         setCountdownExtensionPulse(undefined);
+        clearCountdownAmbientPulse();
         if (closingAuctionId && context.activeLot?.auctionId === closingAuctionId) {
           pushAuctionAtmosphereAlert(isCurrentUserWinner ? 'won' : 'closed', {
             auctionId: closingAuctionId,
@@ -4752,6 +4874,7 @@ function LiveRoomPage({
         if (auctionId && (message.type === 'live_session.lot_unmounted' || isCancelledLot)) {
           if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
           setCountdownExtensionPulse(undefined);
+          clearCountdownAmbientPulse();
           setRuntimeStartedAuctionId((current) => (current === auctionId ? undefined : current));
           setHiddenAuctionCardId((current) => (current === auctionId ? undefined : current));
           lastRankingBidRef.current = undefined;
@@ -4899,7 +5022,7 @@ function LiveRoomPage({
       controlClient?.disconnect();
       client?.disconnect();
     };
-  }, [accessToken, acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, applyRankingUpdate, clearDelayedRankingSnapshot, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, handleBidResult, playLiveVoiceBroadcast, pushAuctionAtmosphereAlert, pushNotice, queryClient, requestFloatingAuctionCard, roomId, syncServerTimeOffset, userAvatarUrl, userId, userNickname]);
+  }, [accessToken, acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, applyRankingUpdate, clearCountdownAmbientPulse, clearDelayedRankingSnapshot, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, handleBidResult, playLiveVoiceBroadcast, pushAuctionAtmosphereAlert, pushNotice, queryClient, requestFloatingAuctionCard, roomId, syncServerTimeOffset, triggerCountdownAmbientPulse, userAvatarUrl, userId, userNickname]);
 
   const enrollMutation = useMutation({
     mutationFn: (auctionId: string) => apiClient.enrollAuction(auctionId),
@@ -5285,10 +5408,70 @@ function LiveRoomPage({
           />
         );
       })}
+      <LiveCountdownAmbientLayer state={countdownAmbientState} />
       <LiveAuctionAlertLayer alerts={visibleAuctionAlerts} />
     </section>
   );
 }
+
+function LiveCountdownAmbientLayer({ state }: { state?: CountdownAmbientState }) {
+  if (!state) return null;
+  const progressPercent = `${(Math.round(state.progress * 1000) / 10).toFixed(1)}%`;
+  const style = { '--countdown-ambient-progress': progressPercent } as CSSProperties;
+  return (
+    <div className={`live-countdown-ambient is-${state.tone}`} style={style} aria-hidden="true">
+      <span className="live-countdown-ambient-band is-left" />
+      <span className="live-countdown-ambient-band is-right" />
+      <span className="live-countdown-ambient-bloom is-left" />
+      <span className="live-countdown-ambient-bloom is-right" />
+      {(['left', 'right'] as const).map((side) => (
+        <span key={side} className={`live-countdown-ambient-particles is-${side}`}>
+          {countdownAmbientParticles.map((particle, index) => (
+            <span
+              key={`${side}-${index}`}
+              className="live-countdown-ambient-particle"
+              style={
+                {
+                  '--ambient-particle-bottom': particle.bottom,
+                  '--ambient-particle-offset': particle.offset,
+                  '--ambient-particle-size': particle.size,
+                  '--ambient-particle-delay': particle.delay,
+                  '--ambient-particle-duration': particle.duration,
+                  '--ambient-particle-drift-x': side === 'left' ? particle.drift : `-${particle.drift}`
+                } as CSSProperties
+              }
+            />
+          ))}
+        </span>
+      ))}
+      {state.pulseId ? (
+        <>
+          <span key={`pulse-${state.pulseId}`} className="live-countdown-ambient-pulse" />
+          <span key={`sparks-${state.pulseId}`} className="live-countdown-ambient-pulse-sparks">
+            {countdownAmbientPulseSparks.map((spark, index) => (
+              <span
+                key={index}
+                className="live-countdown-ambient-pulse-spark"
+                style={
+                  {
+                    '--ambient-spark-bottom': spark.bottom,
+                    '--ambient-spark-size': spark.size,
+                    '--ambient-spark-delay': spark.delay,
+                    '--ambient-spark-duration': spark.duration,
+                    '--ambient-spark-travel-x': spark.travelX,
+                    '--ambient-spark-travel-y': spark.travelY,
+                    '--ambient-spark-scale': spark.scale
+                  } as CSSProperties
+                }
+              />
+            ))}
+          </span>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function LiveAuctionAlertLayer({ alerts }: { alerts: LiveAuctionAlert[] }) {
   if (!alerts.length) return null;
   return (
@@ -6619,6 +6802,7 @@ function LotListSheet({
           {sortedLots.map(({ lot, state, originalIndex }) => {
             const isActive = isActiveAuctionDisplayStatus(state.status);
             const scheduleText = scheduledStartTimeText(lot, state);
+            const listIntro = lot.subtitle?.trim();
             const action = deriveLotListAction({
               state,
               enrolled: enrolledAuctionIds.has(lot.auctionId),
@@ -6654,7 +6838,7 @@ function LotListSheet({
                     {scheduleText ? <span className="lot-schedule-line">{scheduleText}</span> : null}
                   </div>
                   <h3>{lot.title}</h3>
-                  {lot.description ? <p>{lot.description}</p> : null}
+                  {listIntro ? <p>{listIntro}</p> : null}
                   <div className="lot-price-line">
                     <span>{priceLabel(lot, state)}</span>
                     <strong>{formatMoney(priceValue(lot, state))}</strong>

@@ -24,6 +24,7 @@ import type {
 } from './types';
 
 const now = Date.now();
+const demoLiveRunningLotCountdownMs = 60_000;
 
 const diamondNecklaceGallery = [
   '/gallery/diamond-necklace-1.svg',
@@ -210,7 +211,7 @@ export const demoLots: LiveRoomLot[] = [
     currentPrice: 150_100,
     leaderBidderId: 'u2',
     startTsMs: now - 120_000,
-    endTsMs: now + 240_000,
+    endTsMs: now + demoLiveRunningLotCountdownMs,
     publishedAt: new Date(now - 2 * 60 * 60_000).toISOString(),
     ruleSnapshot: {
       startPrice: 0,
@@ -548,7 +549,7 @@ export const demoLots: LiveRoomLot[] = [
     currentPrice: 56_000,
     leaderBidderId: 'u6',
     startTsMs: now - 8 * 60_000,
-    endTsMs: now + 180_000,
+    endTsMs: now + demoLiveRunningLotCountdownMs,
     publishedAt: new Date(now - 90 * 60_000).toISOString(),
     ruleSnapshot: {
       startPrice: 50_000,

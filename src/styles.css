@@ -3731,6 +3731,45 @@ button {
   background: transparent;
 }
 
+.discover-lots-page {
+  height: calc(100dvh - env(safe-area-inset-top) - var(--bottom-tab-height));
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.discover-lots-page::-webkit-scrollbar {
+  display: none;
+}
+
+.discover-lots-toolbar {
+  position: sticky;
+  top: -14px;
+  z-index: 12;
+  margin: -14px -14px 10px;
+  padding: 14px 14px 0;
+  background: rgba(246, 247, 251, 0.96);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  transform: translateY(0);
+  transition: transform 180ms ease, opacity 180ms ease;
+  backdrop-filter: blur(16px);
+  will-change: transform;
+}
+
+.discover-lots-header {
+  margin-bottom: 4px;
+}
+
+.discover-lots-toolbar .filter-row {
+  padding-bottom: 9px;
+}
+
+.discover-lots-page.is-controls-hidden .discover-lots-toolbar {
+  opacity: 0.02;
+  pointer-events: none;
+  transform: translateY(calc(-100% - 12px));
+}
+
 .filter-row {
   display: flex;
   gap: 8px;
@@ -4632,6 +4671,8 @@ button {
 .activity-room-list {
   display: grid;
   gap: 10px;
+  max-height: calc(100vh - 140px);
+  overflow-y: scroll;
 }
 
 .activity-room-card {
@@ -5035,6 +5076,188 @@ button {
   border-radius: 8px;
 }
 
+.live-countdown-ambient {
+  --countdown-ambient-rgb: 255, 255, 255;
+  --countdown-ambient-core-rgb: 255, 255, 255;
+  --countdown-ambient-band-width: clamp(7.5px, 2.1vw, 12px);
+  --countdown-ambient-normal-width: clamp(21px, 6vw, 30px);
+  --countdown-ambient-pulse-width: clamp(42px, 12vw, 60px);
+  position: fixed;
+  top: 0;
+  left: 50%;
+  z-index: 4;
+  width: min(100vw, 460px);
+  height: 100dvh;
+  overflow: hidden;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.live-countdown-ambient.is-other {
+  --countdown-ambient-rgb: 255, 49, 88;
+  --countdown-ambient-core-rgb: 255, 116, 136;
+}
+
+.live-countdown-ambient.is-self {
+  --countdown-ambient-rgb: 255, 190, 64;
+  --countdown-ambient-core-rgb: 255, 232, 142;
+}
+
+.live-countdown-ambient-band {
+  position: absolute;
+  bottom: 0;
+  width: var(--countdown-ambient-band-width);
+  height: var(--countdown-ambient-progress, 0%);
+  background:
+    linear-gradient(90deg, rgba(var(--countdown-ambient-core-rgb), 0.68), rgba(var(--countdown-ambient-rgb), 0.2) 72%, rgba(var(--countdown-ambient-rgb), 0)),
+    linear-gradient(0deg, rgba(var(--countdown-ambient-rgb), 0.08), rgba(var(--countdown-ambient-rgb), 0.38) 55%, rgba(var(--countdown-ambient-core-rgb), 0.32));
+  filter: brightness(1);
+  opacity: 0.72;
+  mix-blend-mode: screen;
+  transition: height 160ms linear;
+  animation: countdown-ambient-breathe 1280ms ease-in-out infinite;
+}
+
+.live-countdown-ambient-band.is-left {
+  left: 0;
+  border-radius: 0 12px 0 0;
+  box-shadow: 0 0 16px rgba(var(--countdown-ambient-rgb), 0.28), 6px 0 18px rgba(var(--countdown-ambient-rgb), 0.16);
+}
+
+.live-countdown-ambient-band.is-right {
+  right: 0;
+  border-radius: 12px 0 0;
+  box-shadow: 0 0 16px rgba(var(--countdown-ambient-rgb), 0.28), -6px 0 18px rgba(var(--countdown-ambient-rgb), 0.16);
+  transform: scaleX(-1);
+}
+
+.live-countdown-ambient-band::before,
+.live-countdown-ambient-band::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  border-radius: inherit;
+}
+
+.live-countdown-ambient-band::before {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.08) 58%, rgba(255, 255, 255, 0));
+}
+
+.live-countdown-ambient-band::after {
+  top: auto;
+  height: clamp(28px, 10dvh, 92px);
+  background: linear-gradient(0deg, rgba(var(--countdown-ambient-core-rgb), 0), rgba(var(--countdown-ambient-core-rgb), 0.7), rgba(var(--countdown-ambient-rgb), 0));
+  filter: blur(5px);
+}
+
+.live-countdown-ambient-bloom {
+  position: absolute;
+  top: calc(100% - var(--countdown-ambient-progress, 0%));
+  width: var(--countdown-ambient-normal-width);
+  height: clamp(48px, 13dvh, 118px);
+  background: radial-gradient(closest-side, rgba(var(--countdown-ambient-core-rgb), 0.48), rgba(var(--countdown-ambient-rgb), 0.16) 52%, rgba(var(--countdown-ambient-rgb), 0));
+  opacity: 0.58;
+  filter: blur(1px);
+  mix-blend-mode: screen;
+  transform: translateY(-50%);
+  transition: top 160ms linear;
+  animation: countdown-ambient-breathe 1280ms ease-in-out infinite reverse;
+}
+
+.live-countdown-ambient-bloom.is-left {
+  left: clamp(-18px, -3.6vw, -12px);
+}
+
+.live-countdown-ambient-bloom.is-right {
+  right: clamp(-18px, -3.6vw, -12px);
+}
+
+.live-countdown-ambient-particles {
+  position: absolute;
+  bottom: 0;
+  width: var(--countdown-ambient-normal-width);
+  height: var(--countdown-ambient-progress, 0%);
+  overflow: hidden;
+  mix-blend-mode: screen;
+  transition: height 160ms linear;
+}
+
+.live-countdown-ambient-particles.is-left {
+  left: 0;
+}
+
+.live-countdown-ambient-particles.is-right {
+  right: 0;
+}
+
+.live-countdown-ambient-particle {
+  position: absolute;
+  bottom: var(--ambient-particle-bottom);
+  left: var(--ambient-particle-offset);
+  width: var(--ambient-particle-size);
+  height: var(--ambient-particle-size);
+  content: '';
+  background: rgba(var(--countdown-ambient-core-rgb), 0.92);
+  border-radius: 999px;
+  box-shadow: 0 0 8px rgba(var(--countdown-ambient-core-rgb), 0.74), 0 0 14px rgba(var(--countdown-ambient-rgb), 0.28);
+  opacity: 0;
+  animation: countdown-ambient-particle-float var(--ambient-particle-duration) linear var(--ambient-particle-delay) infinite;
+}
+
+.live-countdown-ambient-particles.is-right .live-countdown-ambient-particle {
+  right: var(--ambient-particle-offset);
+  left: auto;
+}
+
+.live-countdown-ambient-pulse {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  mix-blend-mode: screen;
+  animation: countdown-ambient-bid-pulse 780ms ease-out both;
+}
+
+.live-countdown-ambient-pulse::before,
+.live-countdown-ambient-pulse::after {
+  position: absolute;
+  bottom: 0;
+  width: var(--countdown-ambient-pulse-width);
+  height: max(20dvh, var(--countdown-ambient-progress, 0%));
+  content: '';
+  background:
+    radial-gradient(ellipse at bottom, rgba(var(--countdown-ambient-core-rgb), 0.8), rgba(var(--countdown-ambient-rgb), 0.32) 45%, rgba(var(--countdown-ambient-rgb), 0)),
+    linear-gradient(0deg, rgba(var(--countdown-ambient-rgb), 0), rgba(var(--countdown-ambient-core-rgb), 0.52), rgba(var(--countdown-ambient-rgb), 0));
+  filter: blur(8px) brightness(1.8);
+}
+
+.live-countdown-ambient-pulse::before {
+  left: 0;
+}
+
+.live-countdown-ambient-pulse::after {
+  right: 0;
+}
+
+.live-countdown-ambient-pulse-sparks {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  mix-blend-mode: screen;
+}
+
+.live-countdown-ambient-pulse-spark {
+  position: absolute;
+  bottom: var(--ambient-spark-bottom);
+  left: var(--countdown-ambient-band-width);
+  width: var(--ambient-spark-size);
+  height: var(--ambient-spark-size);
+  background: rgba(var(--countdown-ambient-core-rgb), 0.96);
+  border-radius: 999px;
+  box-shadow: 0 0 10px rgba(var(--countdown-ambient-core-rgb), 0.84), 0 0 18px rgba(var(--countdown-ambient-rgb), 0.38);
+  opacity: 0;
+  animation: countdown-ambient-pulse-spark var(--ambient-spark-duration) cubic-bezier(0.12, 0.78, 0.22, 1) var(--ambient-spark-delay) both;
+}
+
 .live-auction-alert-layer {
   position: fixed;
   top: 0;
@@ -5333,6 +5556,68 @@ button {
   45% {
     box-shadow: 0 0 18px rgba(255, 49, 88, 0.52);
     transform: scale(1.12);
+  }
+}
+
+@keyframes countdown-ambient-breathe {
+  0%,
+  100% {
+    filter: brightness(0.86) saturate(1);
+    opacity: 0.58;
+  }
+  48% {
+    filter: brightness(1.22) saturate(1.12);
+    opacity: 0.96;
+  }
+}
+
+@keyframes countdown-ambient-particle-float {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale(0.62);
+  }
+  28% {
+    opacity: 0.88;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--ambient-particle-drift-x), -46px, 0) scale(1.16);
+  }
+}
+
+@keyframes countdown-ambient-bid-pulse {
+  0% {
+    filter: brightness(2.2) saturate(1.3);
+    opacity: 1;
+    transform: scaleX(0.96);
+  }
+  52% {
+    opacity: 0.9;
+    transform: scaleX(1.08);
+  }
+  100% {
+    filter: brightness(1.1) saturate(1);
+    opacity: 0;
+    transform: scaleX(1.18);
+  }
+}
+
+@keyframes countdown-ambient-pulse-spark {
+  0% {
+    filter: brightness(2.4) saturate(1.28);
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.42);
+  }
+  8% {
+    opacity: 1;
+  }
+  72% {
+    opacity: 0.9;
+  }
+  100% {
+    filter: brightness(1.05) saturate(1);
+    opacity: 0;
+    transform: translate3d(var(--ambient-spark-travel-x), var(--ambient-spark-travel-y), 0) scale(var(--ambient-spark-scale));
   }
 }
 
@@ -5750,6 +6035,11 @@ button {
   .auction-float-countdown.is-critical,
   .quick-bid-countdown.is-warning .quick-bid-countdown-unit,
   .quick-bid-countdown.is-critical .quick-bid-countdown-unit,
+  .live-countdown-ambient-band,
+  .live-countdown-ambient-bloom,
+  .live-countdown-ambient-particle,
+  .live-countdown-ambient-pulse,
+  .live-countdown-ambient-pulse-spark,
   .live-auction-alert,
   .live-auction-alert.is-countdown .live-auction-alert-card,
   .live-auction-alert-cannon,
@@ -5757,6 +6047,12 @@ button {
   .live-auction-alert-confetti-piece,
   .comment-like-burst span {
     animation-duration: 1ms;
+  }
+
+  .live-countdown-ambient-band,
+  .live-countdown-ambient-bloom,
+  .live-countdown-ambient-particles {
+    transition-duration: 1ms;
   }
 
   .winning-celebration,

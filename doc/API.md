@@ -595,7 +595,7 @@
 | `auctionId` | string | 是 | 拍卖 ID |
 | `roomId` | string | 是 | 直播间 ID |
 | `title` | string | 是 | 商品标题 |
-| `subtitle` | string | 否 | 商品副标题 |
+| `subtitle` | string | 否 | 商品简介 / 副标题，直播间竞拍清单使用该字段 |
 | `description` | string | 否 | 商品描述 |
 | `imageUrl` | string | 否 | 商品封面或单图兜底 |
 | `imageUrls` | string[] | 否 | 商品详情图集，建议返回 1-5 张 |

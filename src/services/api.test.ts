@@ -66,6 +66,8 @@ describe('ApiClient', () => {
               category: 'jewelry',
               title: '18K 金钻石项链',
               status: 'RUNNING',
+              subtitle: 'Compact intro',
+              description: 'Long detail text',
               startPrice: 0,
               currentPrice: 150100,
               startTime: '2026-06-04T12:00:00+08:00',
@@ -93,7 +95,7 @@ describe('ApiClient', () => {
         speakingVideoUrl: '/media/AI_Presenter_Speaking.mp4'
       }
     });
-    expect(lots.items[0]).toMatchObject({ auctionId: '2001', currentPrice: 150100, startTsMs: Date.parse('2026-06-04T12:00:00+08:00') });
+    expect(lots.items[0]).toMatchObject({ auctionId: '2001', subtitle: 'Compact intro', description: 'Long detail text', currentPrice: 150100, startTsMs: Date.parse('2026-06-04T12:00:00+08:00') });
     expect(stats).toMatchObject({ roomId: '1001', onlineCount: 328, watcherCount: 1208, bidCount: 36 });
     expect(fetcher).toHaveBeenNthCalledWith(1, 'http://mock.local/api/v1/live-sessions?limit=20&offset=0', expect.any(Object));
     expect(fetcher).toHaveBeenNthCalledWith(3, 'http://mock.local/api/v1/live-sessions/1001/lots', expect.any(Object));
@@ -429,6 +431,9 @@ describe('ApiClient', () => {
     expect(fetcher).not.toHaveBeenCalled();
     expect(rooms.items[0].title).toContain('直播间');
     expect(lots.items.some((lot) => lot.status === 'RUNNING')).toBe(true);
+    const runningLot = lots.items.find((lot) => lot.status === 'RUNNING');
+    expect(runningLot?.endTsMs).toBeGreaterThan(Date.now());
+    expect((runningLot?.endTsMs ?? 0) - Date.now()).toBeLessThanOrEqual(60_000);
   });
 
   it('keeps local demo order state after payment and receipt confirmation', async () => {

@@ -75,6 +75,16 @@ describe('mobile layout CSS', () => {
     expect(rules('.discover-watcher-count')).not.toContain('border:');
   });
 
+  it('keeps discover lot controls sticky and direction-revealable inside the lot feed', () => {
+    expect(rule('.discover-lots-page')).toContain('height: calc(100dvh - env(safe-area-inset-top) - var(--bottom-tab-height))');
+    expect(rule('.discover-lots-page')).toContain('overflow-y: auto');
+    expect(rule('.discover-lots-toolbar')).toContain('position: sticky');
+    expect(rule('.discover-lots-toolbar')).toContain('top: -14px');
+    expect(rule('.discover-lots-toolbar')).toContain('transition: transform 180ms ease, opacity 180ms ease');
+    expect(rule('.discover-lots-page.is-controls-hidden .discover-lots-toolbar')).toContain('pointer-events: none');
+    expect(rule('.discover-lots-page.is-controls-hidden .discover-lots-toolbar')).toContain('transform: translateY(calc(-100% - 12px))');
+  });
+
   it('uses the reference-style live-room header layout', () => {
     expect(css).toContain('--live-auction-action-width: clamp(112px, 30vw, 132px)');
     expect(rule('.live-header')).toContain('display: flex');
@@ -421,6 +431,26 @@ describe('mobile layout CSS', () => {
 
   it('styles the countdown pressure feedback through the global alert layer', () => {
     expect(css).not.toContain('.live-countdown-pressure');
+    expect(rule('.live-countdown-ambient')).toContain('z-index: 4');
+    expect(rule('.live-countdown-ambient')).toContain('pointer-events: none');
+    expect(rule('.live-countdown-ambient')).toContain('--countdown-ambient-band-width: clamp(7.5px, 2.1vw, 12px)');
+    expect(rule('.live-countdown-ambient')).toContain('--countdown-ambient-normal-width: clamp(21px, 6vw, 30px)');
+    expect(rule('.live-countdown-ambient')).toContain('--countdown-ambient-pulse-width: clamp(42px, 12vw, 60px)');
+    expect(rule('.live-countdown-ambient-band')).toContain('width: var(--countdown-ambient-band-width)');
+    expect(rule('.live-countdown-ambient-band')).toContain('height: var(--countdown-ambient-progress, 0%)');
+    expect(rule('.live-countdown-ambient-band')).toContain('animation: countdown-ambient-breathe');
+    expect(rule('.live-countdown-ambient-bloom')).toContain('width: var(--countdown-ambient-normal-width)');
+    expect(rule('.live-countdown-ambient-bloom')).toContain('top: calc(100% - var(--countdown-ambient-progress, 0%))');
+    expect(rule('.live-countdown-ambient-particles')).toContain('width: var(--countdown-ambient-normal-width)');
+    expect(rule('.live-countdown-ambient-particles')).toContain('height: var(--countdown-ambient-progress, 0%)');
+    expect(rule('.live-countdown-ambient-particle')).toContain('animation: countdown-ambient-particle-float');
+    expect(rule('.live-countdown-ambient-pulse')).toContain('animation: countdown-ambient-bid-pulse');
+    expect(rule('.live-countdown-ambient-pulse::before,\n.live-countdown-ambient-pulse::after')).toContain('width: var(--countdown-ambient-pulse-width)');
+    expect(rule('.live-countdown-ambient-pulse-spark')).toContain('animation: countdown-ambient-pulse-spark');
+    expect(rule('.live-countdown-ambient.is-other')).toContain('--countdown-ambient-rgb: 255, 49, 88');
+    expect(rule('.live-countdown-ambient.is-self')).toContain('--countdown-ambient-rgb: 255, 190, 64');
+    expect(rule('.sheet-backdrop')).toContain('z-index: 110');
+    expect(rule('.sheet-layer')).toContain('z-index: 110');
     expect(rule('.live-auction-alert.is-countdown')).toContain('animation-duration: 1400ms');
     expect(rule('.live-auction-alert.is-countdown .live-auction-alert-card')).toContain('background: linear-gradient');
     expect(rule('.live-auction-alert.is-countdown .live-auction-alert-value')).toContain('font-size: clamp(58px, 18vw, 86px)');
@@ -432,6 +462,10 @@ describe('mobile layout CSS', () => {
     expect(rule('.auction-float-countdown.is-critical')).toContain('animation: float-countdown-critical');
     expect(rule('.quick-bid-countdown.is-warning .quick-bid-countdown-unit')).toContain('animation: quick-countdown-warning');
     expect(rule('.quick-bid-countdown.is-critical .quick-bid-countdown-unit')).toContain('animation: quick-countdown-critical');
+    expect(css).toContain('@keyframes countdown-ambient-breathe');
+    expect(css).toContain('@keyframes countdown-ambient-particle-float');
+    expect(css).toContain('@keyframes countdown-ambient-bid-pulse');
+    expect(css).toContain('@keyframes countdown-ambient-pulse-spark');
     expect(css).toContain('@keyframes countdown-alert-pulse');
     expect(css).toContain('@keyframes countdown-alert-critical');
     expect(css).toContain('@keyframes countdown-alert-extended');
