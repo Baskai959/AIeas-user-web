@@ -667,6 +667,7 @@ describe('App flow', () => {
     delete env.VITE_REALTIME_MODE;
     delete env.VITE_WS_URL;
     localStorage.clear();
+    sessionStorage.clear();
     useLiveActivityStore.getState().clearActivity();
     usePreferencesStore.getState().resetPreferences();
     useProfileStore.getState().clearProfileOverride();
@@ -794,6 +795,56 @@ describe('App flow', () => {
     expect(screen.getByRole('button', { name: getMessage('live.soundEnable') })).toBeInTheDocument();
   });
 
+  it('persists the shared live sound preference for all live rooms', async () => {
+    window.localStorage.setItem('aieas-user-live-sound-enabled', 'false');
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+    const liveVideo = await screen.findByTestId('live-room-video') as HTMLVideoElement;
+
+    await waitFor(() => expect(liveVideo.muted).toBe(true));
+    expect(liveVideo.volume).toBe(0);
+    expect(screen.getByRole('button', { name: getMessage('live.soundEnable') })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: getMessage('live.soundEnable') }));
+
+    await waitFor(() => expect(liveVideo.muted).toBe(false));
+    expect(liveVideo.volume).toBe(1);
+    expect(window.localStorage.getItem('aieas-user-live-sound-enabled')).toBe('true');
+  });
+
+  it('plays the home recorded preview audibly after live sound is enabled in a room', async () => {
+    window.localStorage.setItem('aieas-user-live-sound-enabled', 'false');
+    renderApp();
+    const user = userEvent.setup();
+
+    await loginAsBuyer(user);
+    const feed = await screen.findByTestId('discover-feed');
+    const previewVideo = feed.querySelector<HTMLVideoElement>('.discover-slide.is-active .discover-video');
+    expect(previewVideo).not.toBeNull();
+    await waitFor(() => expect(previewVideo!.muted).toBe(true));
+    expect(previewVideo!.volume).toBe(0);
+
+    await user.click(screen.getByTestId('discover-enter-live'));
+    const liveVideo = await screen.findByTestId('live-room-video') as HTMLVideoElement;
+    await waitFor(() => expect(liveVideo.muted).toBe(true));
+
+    await user.click(screen.getByRole('button', { name: getMessage('live.soundEnable') }));
+
+    await waitFor(() => expect(liveVideo.muted).toBe(false));
+    expect(liveVideo.volume).toBe(1);
+    expect(window.localStorage.getItem('aieas-user-live-sound-enabled')).toBe('true');
+
+    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
+
+    const returnedFeed = await screen.findByTestId('discover-feed');
+    const returnedPreviewVideo = returnedFeed.querySelector<HTMLVideoElement>('.discover-slide.is-active .discover-video');
+    expect(returnedPreviewVideo).not.toBeNull();
+    await waitFor(() => expect(returnedPreviewVideo!.muted).toBe(false));
+    expect(returnedPreviewVideo!.volume).toBe(1);
+  });
+
   it('updates the live header online count from realtime presence events', async () => {
     const sockets = installMockControlSocket();
     seedSession();
@@ -910,7 +961,8 @@ describe('App flow', () => {
     await user.click(screen.getByTestId('discover-enter-live'));
 
     const liveVideo = await screen.findByTestId('live-room-video') as HTMLVideoElement;
-    await waitFor(() => expect(liveVideo.currentTime).toBeCloseTo(18.25, 1));
+    await waitFor(() => expect(liveVideo.currentTime).toBeGreaterThanOrEqual(18.25));
+    expect(liveVideo.currentTime).toBeLessThan(19.5);
     expect(liveVideo).toHaveAttribute('src', '/media/live-room-demo.mp4');
     expect(window.location.pathname).toBe('/live/room_1001');
     expect(window.location.search).toBe('?from=home');
@@ -918,6 +970,33 @@ describe('App flow', () => {
     liveVideo.currentTime = 26;
     fireEvent.canPlay(liveVideo);
     expect(liveVideo.currentTime).toBeCloseTo(26, 1);
+  });
+
+  it('continues a recorded live room video position after returning to the home preview', async () => {
+    renderApp();
+    const user = userEvent.setup();
+
+    await loginAsBuyer(user);
+    const feed = await screen.findByTestId('discover-feed');
+    const previewVideo = feed.querySelector<HTMLVideoElement>('.discover-slide.is-active .discover-video');
+    expect(previewVideo).not.toBeNull();
+    previewVideo!.currentTime = 18.25;
+    fireEvent.timeUpdate(previewVideo!);
+
+    await user.click(screen.getByTestId('discover-enter-live'));
+
+    const liveVideo = await screen.findByTestId('live-room-video') as HTMLVideoElement;
+    await waitFor(() => expect(liveVideo.currentTime).toBeCloseTo(18.25, 1));
+    liveVideo.currentTime = 26;
+    fireEvent.timeUpdate(liveVideo);
+
+    await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
+
+    const returnedFeed = await screen.findByTestId('discover-feed');
+    const returnedPreviewVideo = returnedFeed.querySelector<HTMLVideoElement>('.discover-slide.is-active .discover-video');
+    expect(returnedPreviewVideo).not.toBeNull();
+    await waitFor(() => expect(returnedPreviewVideo!.currentTime).toBeGreaterThanOrEqual(26));
+    expect(returnedPreviewVideo!.currentTime).toBeLessThan(27.5);
   });
 
   it('does not apply preview video progress when entering the live room from a non-preview route', async () => {
@@ -2699,8 +2778,9 @@ describe('App flow', () => {
 
   it('renders the lot list as a half-screen scroll sheet with the running lot pinned first and original sequence visible', async () => {
     const scheduledStartMs = now + 600_000;
+    const scheduledStartTime = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(scheduledStartMs));
     const scheduledStartLabel = getMessage('auction.scheduledStartAt', 'zh-CN', {
-      time: new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(scheduledStartMs))
+      time: scheduledStartTime
     });
     vi.mocked(api.getLiveRoom).mockResolvedValueOnce({
       id: 'room_1001',
@@ -2783,7 +2863,12 @@ describe('App flow', () => {
     expect(secondSequence).toHaveTextContent('1');
     expect(secondSequence).toHaveAttribute('aria-label', '#1');
     expect(within(rows[1]).getByText('Upcoming first lot')).toBeInTheDocument();
-    expect(within(rows[1]).getByText(scheduledStartLabel)).toBeInTheDocument();
+    expect(within(rows[1]).getByText(scheduledStartTime)).toBeInTheDocument();
+    expect(within(rows[1]).queryByText(scheduledStartLabel)).not.toBeInTheDocument();
+    const secondMeta = rows[1].querySelector('.lot-row-meta') as HTMLElement;
+    expect(secondMeta).not.toBeNull();
+    expect(within(secondMeta).getByText(getMessage('auction.upcoming'))).toBeInTheDocument();
+    expect(within(secondMeta).getByText(scheduledStartTime)).toBeInTheDocument();
 
     await user.click(rows[1]);
     const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
@@ -2830,8 +2915,9 @@ describe('App flow', () => {
   it('refreshes the open live room lot list when lots are mounted or unmounted', async () => {
     const sockets = installMockControlSocket();
     const scheduledStartMs = now + 600_000;
+    const scheduledStartTime = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(scheduledStartMs));
     const scheduledStartLabel = getMessage('auction.scheduledStartAt', 'zh-CN', {
-      time: new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(scheduledStartMs))
+      time: scheduledStartTime
     });
     const runningLot = {
       id: 'lot_3001',
@@ -2943,7 +3029,8 @@ describe('App flow', () => {
     });
 
     await waitFor(() => expect(api.listLiveRoomLots).toHaveBeenCalledTimes(3));
-    expect(within(drawer).getByText(scheduledStartLabel)).toBeInTheDocument();
+    expect(within(drawer).getByText(scheduledStartTime)).toBeInTheDocument();
+    expect(within(drawer).queryByText(scheduledStartLabel)).not.toBeInTheDocument();
 
     await act(async () => {
       emitLatestMockControl(sockets, {
@@ -4282,6 +4369,20 @@ describe('App flow', () => {
     await waitFor(() => expect(document.querySelector('.auction-float-card')).toBeInTheDocument());
   });
 
+  it('renders the current lot card with an immersive media cover and overlay dismiss button', async () => {
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+
+    await waitFor(() => expect(document.querySelector('.auction-float-card')).toBeInTheDocument());
+    const card = document.querySelector('.auction-float-card') as HTMLElement;
+    const media = card.querySelector('.auction-float-media') as HTMLElement;
+    expect(media).toBeInTheDocument();
+    expect(media.querySelector('img, .visual-placeholder')).toBeInTheDocument();
+    expect(card.querySelector('.auction-float-media + h2')).toBeInTheDocument();
+    expect(card.querySelector('.auction-float-dismiss')).toBeInTheDocument();
+  });
+
   it('starts the current lot card from a backend nested auction state payload', async () => {
     vi.mocked(api.listLiveRoomLots).mockResolvedValueOnce({
       items: [
@@ -4825,6 +4926,8 @@ describe('App flow', () => {
 	      });
       const closedAlert = document.querySelector('.live-auction-alert.is-closed');
       expect(closedAlert).toBeInTheDocument();
+      expect(document.querySelectorAll('.live-auction-alert')).toHaveLength(1);
+      expect(document.querySelector('.live-auction-alert.is-extended')).not.toBeInTheDocument();
       expect(closedAlert).toHaveTextContent('竞拍结束');
     } finally {
       vi.useRealTimers();

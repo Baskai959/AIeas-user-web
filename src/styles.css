@@ -1672,7 +1672,7 @@ button {
   z-index: 5;
   width: var(--live-auction-action-width);
   color: #182230;
-  overflow: visible;
+  overflow: hidden;
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid rgba(255, 255, 255, 0.62);
   border-radius: 10px;
@@ -1696,19 +1696,25 @@ button {
 
 .auction-float-dismiss {
   position: absolute;
-  top: 3px;
-  right: 3px;
-  z-index: 2;
+  top: 0;
+  right: 0;
+  z-index: 3;
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   place-items: center;
   padding: 0;
-  color: rgba(24, 34, 48, 0.72);
+  color: #fff;
   background: transparent;
   border: 0;
   border-radius: 0;
   box-shadow: none;
+}
+
+.auction-float-dismiss svg {
+  width: 16px;
+  height: 16px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.36));
 }
 
 .float-card-main {
@@ -1727,12 +1733,36 @@ button {
   cursor: not-allowed;
 }
 
-.float-card-main img {
-  width: 100%;
+.auction-float-media {
+  position: relative;
+  width: calc(100% + 2px);
   aspect-ratio: 1 / 1;
-  object-fit: contain;
-  padding: 10px;
+  margin: -1px -1px 0;
+  overflow: hidden;
   background: #f8fafc;
+  border-radius: 10px 10px 10px 10px;
+}
+
+.auction-float-media::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 1;
+  height: max(28px, 15%);
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0) 100%);
+}
+
+.auction-float-media img,
+.auction-float-media .visual-placeholder {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  padding: 0;
+  background: #f8fafc;
+  border-radius: 10px;
 }
 
 .float-card-main h2 {
@@ -1955,13 +1985,15 @@ button {
 }
 
 .lot-row {
-  --lot-thumb-size: 92px;
+  --lot-thumb-size: 116px;
+  --lot-row-height: var(--lot-thumb-size);
   display: grid;
   grid-template-columns: var(--lot-thumb-size) minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
+  height: var(--lot-row-height);
   min-width: 0;
-  padding: 10px;
+  padding: 0 10px 0 0;
   background: #f8fafc;
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 12px;
@@ -1974,11 +2006,14 @@ button {
 
 .lot-thumb-frame {
   position: relative;
+  align-self: start;
   width: var(--lot-thumb-size);
   height: var(--lot-thumb-size);
+  aspect-ratio: 1 / 1;
+  margin: -1px 0 -1px -1px;
   overflow: hidden;
   background: #fff;
-  border-radius: 10px;
+  border-radius: 12px;
 }
 
 .lot-sequence {
@@ -2038,6 +2073,7 @@ button {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center;
   padding: 0;
   background: #fff;
   border-radius: 0;
@@ -2056,6 +2092,17 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
   letter-spacing: 0;
+}
+
+.lot-row-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.lot-row-meta .status-badge {
+  flex: 0 0 auto;
 }
 
 .lot-row p {
@@ -2109,12 +2156,21 @@ button {
   color: #b45309;
   font-size: 12px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
   line-height: 22px;
   text-overflow: ellipsis;
   white-space: nowrap;
   background: #fff7ed;
   border: 1px solid #fed7aa;
   border-radius: 6px;
+}
+
+.lot-row-meta .lot-schedule-line {
+  flex: 0 1 auto;
+  width: fit-content;
+  min-width: 0;
+  margin-top: 0;
 }
 
 .detail-schedule-line,
@@ -2610,8 +2666,10 @@ button {
 .bid-summary img {
   width: 64px;
   height: 64px;
-  object-fit: contain;
-  padding: 8px;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  object-position: center;
+  padding: 0;
   background: #f8fafc;
   border-radius: 8px;
 }
@@ -2792,6 +2850,9 @@ button {
 .quick-bid-summary img {
   width: 112px;
   height: 112px;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  object-position: center;
   border-radius: 10px;
 }
 
@@ -3718,12 +3779,14 @@ button {
 }
 
 .lot-result-card {
+  --lot-result-card-height: 128px;
+  --lot-result-thumb-size: var(--lot-result-card-height);
   position: relative;
-  grid-template-columns: 118px minmax(0, 1fr);
+  grid-template-columns: var(--lot-result-thumb-size) minmax(0, 1fr);
   align-items: start;
   grid-template-rows: auto auto;
-  height: 128px;
-  max-height: 128px;
+  height: var(--lot-result-card-height);
+  max-height: var(--lot-result-card-height);
   padding: 0 12px 0 0;
   overflow: hidden;
   column-gap: 10px;
@@ -3763,6 +3826,7 @@ button {
   display: block;
   width: 82px;
   height: 82px;
+  aspect-ratio: 1 / 1;
   padding: 0;
   overflow: hidden;
   color: #fff;
@@ -3775,8 +3839,9 @@ button {
   position: relative;
   grid-column: 1;
   grid-row: 1 / 3;
-  width: 118px;
-  height: 100%;
+  width: var(--lot-result-thumb-size);
+  height: var(--lot-result-thumb-size);
+  aspect-ratio: 1 / 1;
   min-width: 0;
   overflow: hidden;
   border-radius: 8px;
@@ -3823,6 +3888,7 @@ button {
 .lot-result-card .result-media {
   width: 100%;
   height: 100%;
+  aspect-ratio: 1 / 1;
   background: #fff;
   border: 0;
   border-radius: 8px;
@@ -4034,6 +4100,11 @@ button {
 .product-cover img {
   width: 100%;
   height: 100%;
+}
+
+.product-cover img {
+  object-fit: cover;
+  object-position: center;
 }
 
 .product-cover .status-badge {
@@ -4427,6 +4498,7 @@ button {
   place-items: center;
   width: 76px;
   height: 76px;
+  aspect-ratio: 1 / 1;
   background: #fff;
   border: 1px solid rgba(15, 23, 42, 0.08);
 }
@@ -4439,7 +4511,7 @@ button {
 }
 
 .orders-page .record-card .result-media > img {
-  object-fit: contain;
+  object-fit: cover;
   object-position: center;
 }
 
@@ -4959,6 +5031,7 @@ button {
 .bid-summary .visual-placeholder {
   width: 64px;
   height: 64px;
+  aspect-ratio: 1 / 1;
   border-radius: 8px;
 }
 
@@ -5761,10 +5834,11 @@ button {
   }
 
   .lot-row {
-    --lot-thumb-size: 82px;
+    --lot-thumb-size: 108px;
+    --lot-row-height: var(--lot-thumb-size);
     grid-template-columns: var(--lot-thumb-size) minmax(0, 1fr) auto;
     gap: 8px;
-    padding: 8px;
+    padding: 0 8px 0 0;
   }
 
   .lot-sequence {

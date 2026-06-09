@@ -135,9 +135,12 @@ type FeedDragState = {
   baseTrackIndex: number;
 };
 
+type FeedSlide = { key: string; room: LiveRoom; realIndex: number };
+
 const feedTapMaxDurationMs = 250;
 const feedTapMaxMovePx = 8;
 const previewMediaSnapshotMaxAgeMs = 30_000;
+const previewMediaPositionStoragePrefix = 'aieas-user-preview-media-position:';
 const likeBurstParticles = Array.from({ length: 15 }, (_, index) => index);
 const liveVoiceUnlockEvents = ['pointerdown', 'touchend', 'keydown', 'click'] as const;
 const liveSessionLotListChangedEvents = new Set(['live_session.lot_mounted', 'live_session.lot_unmounted', 'live_session.lot_changed']);
@@ -908,10 +911,12 @@ function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiCl
   const resetFrameRef = useRef<number>();
   const restoreFrameRef = useRef<number>();
   const dragFrameRef = useRef<number>();
+  const appliedPreviewMediaKeyRef = useRef<Record<string, string>>({});
   const pendingDragOffsetRef = useRef(0);
   const [activeIndex, setActiveIndex] = useState(0);
   const [trackIndex, setTrackIndex] = useState(0);
   const [trackTransitionEnabled, setTrackTransitionEnabled] = useState(true);
+  const previewSoundEnabled = useSharedLiveSoundPreference();
   const rooms = useQuery({
     queryKey: ['discover-live-rooms'],
     queryFn: () => apiClient.searchLiveRooms({ status: 'live', sort: 'viewerDesc' })
@@ -999,17 +1004,49 @@ function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiCl
     resetTrack(roomItems.length > 1 ? targetIndex + 1 : targetIndex);
   }, [focusRoomId, resetTrack, roomItems]);
 
-  useEffect(() => {
-    feedSlides.forEach((slide, index) => {
+  const applyRememberedPreviewMediaPosition = useCallback((slide: FeedSlide, video: HTMLVideoElement) => {
+    const remembered = readRememberedPreviewMediaSnapshot(slide.room);
+    const rememberedKey = remembered ? previewMediaPositionStorageKey(remembered.roomId, remembered.sourceUrl) : undefined;
+    if (!remembered || !rememberedKey || appliedPreviewMediaKeyRef.current[slide.key] === rememberedKey) return;
+    if (applyInitialMediaPosition(video, remembered)) {
+      appliedPreviewMediaKeyRef.current[slide.key] = rememberedKey;
+    }
+  }, []);
+
+  const rememberDiscoverPreviewPosition = useCallback((room: LiveRoom, video?: HTMLVideoElement | null) => {
+    const snapshot = buildPreviewMediaSnapshot(room, video);
+    if (snapshot) rememberPreviewMediaSnapshot(snapshot);
+    return snapshot;
+  }, []);
+
+  const syncDiscoverPreviewVideo = useCallback(
+    (slide: FeedSlide, index: number) => {
       const video = videoRefs.current[slide.key];
       if (!video) return;
-      if (index === trackIndex) {
-        video.play().catch(() => undefined);
+      const shouldPlay = index === trackIndex;
+      const shouldPlayAudibly = shouldPlay && shouldDiscoverPreviewPlayAudibly(slide.room, previewSoundEnabled);
+      if (shouldPlayAudibly) {
+        enableAudibleVideo(video);
       } else {
-        video.pause();
+        forceMutedVideo(video);
       }
-    });
-  }, [feedSlides, trackIndex]);
+      if (!shouldPlay) {
+        video.pause();
+        return;
+      }
+      applyRememberedPreviewMediaPosition(slide, video);
+      void playVideo(video).then((played) => {
+        if (played || !shouldPlayAudibly) return;
+        forceMutedVideo(video);
+        void playVideo(video);
+      });
+    },
+    [applyRememberedPreviewMediaPosition, previewSoundEnabled, rememberDiscoverPreviewPosition, trackIndex]
+  );
+
+  useEffect(() => {
+    feedSlides.forEach(syncDiscoverPreviewVideo);
+  }, [feedSlides, syncDiscoverPreviewVideo]);
 
   const getFeedViewportHeight = (element: HTMLElement) => element.clientHeight || element.getBoundingClientRect().height || window.innerHeight || 1;
 
@@ -1040,8 +1077,8 @@ function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiCl
       onOpenRoom(activeRoomId);
       return;
     }
-    onOpenRoom(activeRoomId, buildPreviewMediaSnapshot(activeSlide.room, videoRefs.current[activeSlide.key]));
-  }, [activeRoomId, feedSlides, onOpenRoom, trackIndex]);
+    onOpenRoom(activeRoomId, rememberDiscoverPreviewPosition(activeSlide.room, videoRefs.current[activeSlide.key]));
+  }, [activeRoomId, feedSlides, onOpenRoom, rememberDiscoverPreviewPosition, trackIndex]);
 
   const finishFeedDrag = (drag?: FeedDragState) => {
     if (!drag) return;
@@ -1189,13 +1226,16 @@ function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiCl
                 className="discover-video"
                 src={discoverPreviewVideoUrl(room)}
                 poster={room.coverUrl}
-                muted
+                muted={!isActive || !shouldDiscoverPreviewPlayAudibly(room, previewSoundEnabled)}
                 loop
                 playsInline
                 preload="metadata"
                 ref={(node) => {
                   videoRefs.current[slide.key] = node;
                 }}
+                onLoadedMetadata={() => syncDiscoverPreviewVideo(slide, slideIndex)}
+                onCanPlay={() => syncDiscoverPreviewVideo(slide, slideIndex)}
+                onTimeUpdate={(event) => rememberDiscoverPreviewPosition(room, event.currentTarget)}
               />
               <div className="discover-gradient" />
               <div className="discover-copy" data-testid={isActive ? 'discover-preview-meta' : undefined}>
@@ -1227,7 +1267,7 @@ function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiCl
                 data-testid={isActive ? 'discover-enter-live' : undefined}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onOpenRoom(room.id, isActive ? buildPreviewMediaSnapshot(room, videoRefs.current[slide.key]) : undefined);
+                  onOpenRoom(room.id, isActive ? rememberDiscoverPreviewPosition(room, videoRefs.current[slide.key]) : undefined);
                 }}
               >
                 {t('discover.enterLive')}
@@ -1391,6 +1431,10 @@ function discoverPreviewVideoUrl(room: LiveRoom): string {
   return liveRoomPreviewVideoUrl(room) ?? liveVideoFallback;
 }
 
+function shouldDiscoverPreviewPlayAudibly(room: LiveRoom, soundEnabled: boolean): boolean {
+  return soundEnabled && room.videoSource !== 'digitalHuman';
+}
+
 function buildPreviewMediaSnapshot(room: LiveRoom, video?: HTMLVideoElement | null): PreviewMediaSnapshot | undefined {
   const sourceUrl = discoverPreviewVideoUrl(room);
   if (!sourceUrl || !video) return undefined;
@@ -1402,6 +1446,39 @@ function buildPreviewMediaSnapshot(room: LiveRoom, video?: HTMLVideoElement | nu
     currentTime,
     capturedAtMs: Date.now()
   };
+}
+
+function previewMediaPositionStorageKey(roomId: string, sourceUrl: string): string {
+  return `${previewMediaPositionStoragePrefix}${encodeURIComponent(roomId)}:${encodeURIComponent(sourceUrl)}`;
+}
+
+function rememberPreviewMediaSnapshot(snapshot: PreviewMediaSnapshot): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(previewMediaPositionStorageKey(snapshot.roomId, snapshot.sourceUrl), JSON.stringify(snapshot));
+  } catch {
+    return;
+  }
+}
+
+function readRememberedPreviewMediaSnapshot(room: LiveRoom): PreviewMediaSnapshot | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const sourceUrl = discoverPreviewVideoUrl(room);
+  if (!sourceUrl) return undefined;
+  try {
+    const raw = window.sessionStorage.getItem(previewMediaPositionStorageKey(room.id, sourceUrl));
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Partial<PreviewMediaSnapshot>;
+    const snapshot: PreviewMediaSnapshot = {
+      roomId: typeof parsed.roomId === 'string' ? parsed.roomId : '',
+      sourceUrl: typeof parsed.sourceUrl === 'string' ? parsed.sourceUrl : '',
+      currentTime: Number(parsed.currentTime),
+      capturedAtMs: Number(parsed.capturedAtMs)
+    };
+    return isPreviewMediaSnapshotApplicable(snapshot, room, sourceUrl) ? snapshot : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function isPreviewMediaSnapshotApplicable(snapshot: PreviewMediaSnapshot | undefined, room: LiveRoom, sourceUrl?: string): snapshot is PreviewMediaSnapshot {
@@ -1418,10 +1495,11 @@ function previewMediaSnapshotKey(snapshot: PreviewMediaSnapshot | undefined): st
 
 function applyInitialMediaPosition(video: HTMLVideoElement | null | undefined, snapshot?: PreviewMediaSnapshot): boolean {
   if (!video || !snapshot) return false;
-  const currentTime = Number(snapshot.currentTime);
-  if (!Number.isFinite(currentTime) || currentTime < 0) return false;
+  const baseCurrentTime = Number(snapshot.currentTime);
+  if (!Number.isFinite(baseCurrentTime) || baseCurrentTime < 0) return false;
+  const elapsedSeconds = Math.max(0, (Date.now() - snapshot.capturedAtMs) / 1000);
   const duration = Number(video.duration);
-  if (Number.isFinite(duration) && duration > 0 && currentTime > duration) return false;
+  const currentTime = Number.isFinite(duration) && duration > 0 ? (baseCurrentTime + elapsedSeconds) % duration : baseCurrentTime + elapsedSeconds;
   try {
     video.currentTime = currentTime;
   } catch {
@@ -3266,7 +3344,7 @@ function loopIndex(current: number, length: number, step: number): number {
   return (current + step + length) % length;
 }
 
-function createLoopedFeedSlides(rooms: LiveRoom[]): Array<{ key: string; room: LiveRoom; realIndex: number }> {
+function createLoopedFeedSlides(rooms: LiveRoom[]): FeedSlide[] {
   if (rooms.length <= 1) {
     return rooms.map((room, index) => ({ key: `room-${room.id}`, room, realIndex: index }));
   }
@@ -3554,11 +3632,9 @@ function useLiveAuctionAlerts() {
         durationMs: input.durationMs ?? liveAuctionAlertDurationMs[input.kind]
       };
 
-      setAlerts((prev) => {
-        const withoutDuplicate = prev.filter((item) => !(item.kind === alert.kind && item.auctionId === alert.auctionId));
-        if (alert.kind === 'won') return [alert];
-        return [alert, ...withoutDuplicate.filter((item) => item.kind !== 'won')].slice(0, 3);
-      });
+      Object.values(timersRef.current).forEach((timer) => window.clearTimeout(timer));
+      timersRef.current = {};
+      setAlerts([alert]);
 
       timersRef.current[id] = window.setTimeout(() => dismissAlert(id), alert.durationMs);
     },
@@ -3613,7 +3689,7 @@ function LiveRoomPage({
   const [commentsOpen, setCommentsOpen] = useState(true);
   const [commentComposerOpen, setCommentComposerOpen] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(readSharedLiveSoundEnabled);
   const [chatMessages, setChatMessages] = useState<LiveChatMessage[]>(() => initialLiveChatMessages(roomId));
   const [ranking, setRanking] = useState<RankingItem[]>([]);
   const [rankingAnimationSource, setRankingAnimationSource] = useState<RankingAnimationSource>('initial');
@@ -3663,6 +3739,11 @@ function LiveRoomPage({
   liveSoundAutoplayBlockedRef.current = liveSoundAutoplayBlocked;
   liveVoicePermissionPromptVisibleRef.current = liveVoicePermissionPromptVisible;
   rankingRef.current = ranking;
+  const setSharedSoundEnabled = useCallback((enabled: boolean) => {
+    soundEnabledRef.current = enabled;
+    writeSharedLiveSoundEnabled(enabled);
+    setSoundEnabled(enabled);
+  }, []);
   const applyRankingUpdate = useCallback((updater: (current: RankingItem[]) => RankingItem[]) => {
     const current = rankingRef.current;
     const next = updater(current);
@@ -3851,7 +3932,7 @@ function LiveRoomPage({
       durationMs: liveAuctionAlertDurationMs.countdown
     };
   }, [activeCountdownPressurePhase, activeCountdownRemainMs, activeLot, displayCurrentState]);
-  const visibleAuctionAlerts = auctionAlerts.length ? auctionAlerts : countdownAlert ? [countdownAlert] : [];
+  const visibleAuctionAlerts = auctionAlerts[0] ? [auctionAlerts[0]] : countdownAlert ? [countdownAlert] : [];
   const stateForLot = useCallback(
     (lot: LiveRoomLot) => displayLotStates[lot.auctionId] ?? stateFromLot(lot),
     [displayLotStates]
@@ -4960,8 +5041,7 @@ function LiveRoomPage({
     if (!soundEnabledRef.current) return;
     if (liveSoundUnlockInFlightRef.current) return;
     liveSoundUnlockInFlightRef.current = true;
-    soundEnabledRef.current = true;
-    setSoundEnabled(true);
+    setSharedSoundEnabled(true);
     const surface = liveVideoSurfaceRef.current;
     const pendingVoicePayloads = pendingLiveVoicePayloadsRef.current;
     const unlockPlayback = surface?.setAudiblePlayback(true) ?? Promise.resolve(true);
@@ -4999,24 +5079,22 @@ function LiveRoomPage({
       setLiveSoundAutoplayBlocked(true);
       showSoundBlockedToast();
     });
-  }, [playLiveVoiceBroadcast, showSoundBlockedToast, unlockLiveVoiceAudio]);
+  }, [playLiveVoiceBroadcast, setSharedSoundEnabled, showSoundBlockedToast, unlockLiveVoiceAudio]);
   const toggleLiveSound = useCallback(() => {
     const surface = liveVideoSurfaceRef.current;
     if (soundEnabled && !liveSoundAutoplayBlocked) {
-      soundEnabledRef.current = false;
       liveSoundAutoplayBlockedRef.current = false;
       liveVoicePermissionPromptVisibleRef.current = false;
-      setSoundEnabled(false);
+      setSharedSoundEnabled(false);
       setLiveSoundAutoplayBlocked(false);
       setLiveVoicePermissionPromptVisible(false);
       void surface?.setAudiblePlayback(false);
       stopLiveVoiceBroadcastPlayback();
       return;
     }
-    soundEnabledRef.current = true;
-    setSoundEnabled(true);
+    setSharedSoundEnabled(true);
     retryLiveSoundUnlock();
-  }, [liveSoundAutoplayBlocked, retryLiveSoundUnlock, soundEnabled, stopLiveVoiceBroadcastPlayback]);
+  }, [liveSoundAutoplayBlocked, retryLiveSoundUnlock, setSharedSoundEnabled, soundEnabled, stopLiveVoiceBroadcastPlayback]);
 
   const handleLiveSoundUnlockGesture = useCallback((event: ReactSyntheticEvent<HTMLElement>) => {
     if (!soundEnabledRef.current || !liveSoundAutoplayBlockedRef.current) return;
@@ -5322,6 +5400,11 @@ const LiveRoomVideoSurface = forwardRef<LiveRoomVideoSurfaceHandle, LiveRoomVide
 
   useImperativeHandle(ref, () => ({ setAudiblePlayback }), [setAudiblePlayback]);
 
+  const rememberRecordedVideoPosition = useCallback(() => {
+    const snapshot = buildPreviewMediaSnapshot(room, videoRef.current);
+    if (snapshot) rememberPreviewMediaSnapshot(snapshot);
+  }, [room]);
+
   const syncRecordedVideoPosition = useCallback(() => {
     const video = videoRef.current;
     if (soundEnabled) {
@@ -5342,6 +5425,10 @@ const LiveRoomVideoSurface = forwardRef<LiveRoomVideoSurfaceHandle, LiveRoomVide
       onSoundBlocked();
     });
   }, [initialMediaPosition, initialMediaKey, onSoundBlocked, soundEnabled]);
+
+  useEffect(() => () => {
+    rememberRecordedVideoPosition();
+  }, [rememberRecordedVideoPosition]);
 
   useEffect(() => {
     appliedInitialMediaKeyRef.current = undefined;
@@ -5366,6 +5453,8 @@ const LiveRoomVideoSurface = forwardRef<LiveRoomVideoSurfaceHandle, LiveRoomVide
         playsInline
         onLoadedMetadata={syncRecordedVideoPosition}
         onCanPlay={syncRecordedVideoPosition}
+        onTimeUpdate={rememberRecordedVideoPosition}
+        onPause={rememberRecordedVideoPosition}
       />
     );
   }
@@ -5373,6 +5462,7 @@ const LiveRoomVideoSurface = forwardRef<LiveRoomVideoSurfaceHandle, LiveRoomVide
   if (room.videoSource === 'digitalHuman' && room.digitalHuman) {
     return (
       <DigitalHumanLiveStage
+        room={room}
         idleVideoUrl={room.digitalHuman.idleVideoUrl}
         talkVideoUrl={room.digitalHuman.speakingVideoUrl}
         initialMediaPosition={initialMediaPosition}
@@ -6401,7 +6491,9 @@ function AuctionFloatingCard({
         <X size={13} aria-hidden="true" />
       </button>
       <button type="button" className="float-card-main" onClick={ended ? undefined : onOpenLot} aria-label={lot.title} disabled={ended}>
-        <VisualPlaceholder title={lot.title} imageUrl={lot.imageUrl} tone="red" />
+        <div className="auction-float-media">
+          <VisualPlaceholder title={lot.title} imageUrl={lot.imageUrl} tone="red" />
+        </div>
         <h2>{lot.title}</h2>
         <strong>{formatMoney(priceValue(lot, state))}</strong>
         <p>{leader ?? t('bid.startPriceBidder')}</p>
@@ -6526,6 +6618,7 @@ function LotListSheet({
         <div className="lot-list">
           {sortedLots.map(({ lot, state, originalIndex }) => {
             const isActive = isActiveAuctionDisplayStatus(state.status);
+            const scheduleText = scheduledStartTimeText(lot, state);
             const action = deriveLotListAction({
               state,
               enrolled: enrolledAuctionIds.has(lot.auctionId),
@@ -6556,14 +6649,16 @@ function LotListSheet({
                   </span>
                 </div>
                 <div>
-                  <span className="status-badge">{lotStatusLabel(state.status)}</span>
+                  <div className="lot-row-meta">
+                    <span className="status-badge">{lotStatusLabel(state.status)}</span>
+                    {scheduleText ? <span className="lot-schedule-line">{scheduleText}</span> : null}
+                  </div>
                   <h3>{lot.title}</h3>
                   {lot.description ? <p>{lot.description}</p> : null}
                   <div className="lot-price-line">
                     <span>{priceLabel(lot, state)}</span>
                     <strong>{formatMoney(priceValue(lot, state))}</strong>
                   </div>
-                  {scheduledStartText(lot, state) ? <div className="lot-schedule-line">{scheduledStartText(lot, state)}</div> : null}
                 </div>
                 <Button
                   size="small"
@@ -7032,12 +7127,17 @@ function BidSheet({
   );
 }
 
-function DigitalHumanLiveStage({ idleVideoUrl, talkVideoUrl, initialMediaPosition, speaking = false }: { idleVideoUrl: string; talkVideoUrl: string; initialMediaPosition?: PreviewMediaSnapshot; speaking?: boolean }) {
+function DigitalHumanLiveStage({ room, idleVideoUrl, talkVideoUrl, initialMediaPosition, speaking = false }: { room: LiveRoom; idleVideoUrl: string; talkVideoUrl: string; initialMediaPosition?: PreviewMediaSnapshot; speaking?: boolean }) {
   const idleVideoRef = useRef<HTMLVideoElement>(null);
   const talkVideoRef = useRef<HTMLVideoElement>(null);
   const appliedInitialMediaKeyRef = useRef<string>();
   const initialMediaKey = useMemo(() => previewMediaSnapshotKey(initialMediaPosition), [initialMediaPosition]);
   const [mediaError, setMediaError] = useState(false);
+
+  const rememberIdleVideoPosition = useCallback(() => {
+    const snapshot = buildPreviewMediaSnapshot(room, idleVideoRef.current);
+    if (snapshot) rememberPreviewMediaSnapshot(snapshot);
+  }, [room]);
 
   const syncIdleVideoPosition = useCallback(() => {
     const idleVideo = idleVideoRef.current;
@@ -7051,6 +7151,10 @@ function DigitalHumanLiveStage({ idleVideoUrl, talkVideoUrl, initialMediaPositio
     }
     void playVideo(idleVideo);
   }, [initialMediaPosition, initialMediaKey]);
+
+  useEffect(() => () => {
+    rememberIdleVideoPosition();
+  }, [rememberIdleVideoPosition]);
 
   useEffect(() => {
     appliedInitialMediaKeyRef.current = undefined;
@@ -7089,6 +7193,8 @@ function DigitalHumanLiveStage({ idleVideoUrl, talkVideoUrl, initialMediaPositio
         preload="auto"
         onLoadedMetadata={syncIdleVideoPosition}
         onCanPlay={syncIdleVideoPosition}
+        onTimeUpdate={rememberIdleVideoPosition}
+        onPause={rememberIdleVideoPosition}
         onError={() => setMediaError(true)}
       />
       <video
@@ -7778,6 +7884,12 @@ function scheduledStartText(lot: LiveRoomLot, state: AuctionState = stateFromLot
   return t('auction.scheduledStartAt', { time: formatDateMs(lot.startTsMs) });
 }
 
+function scheduledStartTimeText(lot: LiveRoomLot, state: AuctionState = stateFromLot(lot)): string | undefined {
+  if (!isUpcomingAuctionStatus(state.status)) return undefined;
+  if (!isValidScheduledStartMs(lot.startTsMs)) return undefined;
+  return formatDateMs(lot.startTsMs);
+}
+
 function statusLabel(status: LiveRoom['status']): string {
   if (status === 'LIVE') return t('home.liveNow');
   if (status === 'DRAFT' || status === 'SCHEDULED') return t('auction.upcoming');
@@ -7826,6 +7938,42 @@ function enableAudibleVideo(video?: HTMLVideoElement | null): void {
   video.muted = false;
   video.defaultMuted = false;
   video.volume = 1;
+}
+
+const liveSoundPreferenceStorageKey = 'aieas-user-live-sound-enabled';
+
+function readSharedLiveSoundEnabled(): boolean {
+  if (typeof window === 'undefined') return true;
+  try {
+    return window.localStorage.getItem(liveSoundPreferenceStorageKey) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+function writeSharedLiveSoundEnabled(enabled: boolean): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(liveSoundPreferenceStorageKey, enabled ? 'true' : 'false');
+  } catch {
+    return;
+  }
+}
+
+function useSharedLiveSoundPreference(): boolean {
+  const [enabled, setEnabled] = useState(readSharedLiveSoundEnabled);
+  useEffect(() => {
+    const syncPreference = () => setEnabled(readSharedLiveSoundEnabled());
+    window.addEventListener('storage', syncPreference);
+    window.addEventListener('focus', syncPreference);
+    window.addEventListener('pageshow', syncPreference);
+    return () => {
+      window.removeEventListener('storage', syncPreference);
+      window.removeEventListener('focus', syncPreference);
+      window.removeEventListener('pageshow', syncPreference);
+    };
+  }, []);
+  return enabled;
 }
 
 async function playVideo(video?: HTMLVideoElement | null): Promise<boolean> {
