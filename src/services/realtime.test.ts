@@ -297,6 +297,43 @@ describe('realtime', () => {
     vi.useRealTimers();
   });
 
+  it('responds to mock time.sync without occupying room sequence', async () => {
+    vi.useFakeTimers();
+    const client = new MockRealtimeClient({
+      roomId: 'room_1001',
+      auctionId: 'auc_2001',
+      liveSessionId: 9001,
+      currentPrice: 150100,
+      minIncrement: 100,
+      endTsMs: Date.now() + 6_000,
+      userId: 'u1'
+    });
+    const messages: Array<{ type: string; requestId?: string; seq?: number; payload: Record<string, unknown> }> = [];
+    client.onMessage((message) => {
+      if (message.type === 'time.sync.result') messages.push(message as typeof messages[number]);
+    });
+
+    expect(client.send({ type: 'time.sync', requestId: 'time-1', payload: { requestId: 'time-1', clientSendTimeMs: 1000, clientTimeMs: 1000 } })).toBe(true);
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].seq).toBeUndefined();
+    expect(messages[0]).toEqual(
+      expect.objectContaining({
+        type: 'time.sync.result',
+        requestId: 'time-1',
+        payload: expect.objectContaining({
+          requestId: 'time-1',
+          clientSendTimeMs: 1000,
+          clientTimeMs: 1000,
+          serverTime: expect.any(String),
+          serverTimeMs: expect.any(Number)
+        })
+      })
+    );
+    vi.useRealTimers();
+  });
+
   it('emits a paired competitor bid and ranking update after a mock user bid', async () => {
     vi.useFakeTimers();
     const client = new MockRealtimeClient({

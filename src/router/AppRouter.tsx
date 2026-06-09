@@ -59,7 +59,8 @@ import {
   nextRealtimeSeqByDomain,
   type RealtimeClient,
   type RealtimeMessage,
-  type RealtimeSeqCursor
+  type RealtimeSeqCursor,
+  type TimeSyncResultPayload
 } from '../services/realtime';
 import type {
   AuctionState,
@@ -89,7 +90,7 @@ import { useLiveActivityStore } from '../store/liveActivity';
 import { usePreferencesStore } from '../store/preferences';
 import { mergeProfile, useProfileStore } from '../store/profile';
 import { useSessionStore } from '../store/session';
-import { countdownMillisecondsThresholdMs, formatCountdown, formatMoney, getServerOffsetMs, makeRequestId, shouldShowCountdownMilliseconds } from '../utils/format';
+import { countdownMillisecondsThresholdMs, formatCountdown, formatMoney, getServerOffsetMs, getServerOffsetMsWithRtt, makeRequestId, shouldShowCountdownMilliseconds } from '../utils/format';
 import { MainTabShell, type MainTab } from '../layout/MainTabShell';
 
 let activeLocale: Locale = defaultLocale;
@@ -3475,6 +3476,7 @@ const BID_ARBITRATION_TIMEOUT_MS = 15000;
 const RANKING_BID_ANIMATION_DURATION_MS = 500;
 const RANKING_SELF_BID_ANIMATION_DURATION_MS = 1000;
 const SCHEDULED_AUCTION_REFRESH_RETRY_DELAYS_MS = [0, 1000, 3000, 8000, 15000] as const;
+const AUCTION_COUNTDOWN_EXPIRED_REFRESH_RETRY_DELAYS_MS = [0, 1000, 3000, 8000, 15000] as const;
 
 type LiveSheetVariant = keyof typeof LIVE_SHEET_ANIMATION_MS;
 type LiveSheetType = 'lotList' | 'detail' | 'quickBid';
@@ -3558,17 +3560,6 @@ type RankingAnimationLayout = {
   exitToY: number;
 };
 
-const winningConfettiPieces = [
-  { x: 46, y: -244, rotate: -36, delay: 40, color: '#ff3d5a', shape: 'ribbon' },
-  { x: 82, y: -218, rotate: 74, delay: 90, color: '#ffd15c', shape: 'dot' },
-  { x: 118, y: -274, rotate: -112, delay: 120, color: '#41d6b5', shape: 'ribbon' },
-  { x: 154, y: -226, rotate: 138, delay: 150, color: '#5b8cff', shape: 'square' },
-  { x: 188, y: -292, rotate: -168, delay: 185, color: '#ff8a35', shape: 'ribbon' },
-  { x: 224, y: -238, rotate: 204, delay: 230, color: '#ff72b6', shape: 'dot' },
-  { x: 258, y: -306, rotate: -236, delay: 260, color: '#ffe36e', shape: 'square' },
-  { x: 298, y: -254, rotate: 280, delay: 300, color: '#56d07f', shape: 'ribbon' }
-] as const;
-
 const countdownAmbientParticles = [
   { offset: '1px', bottom: '6%', size: '2px', delay: '0ms', duration: '1320ms', drift: '5px' },
   { offset: '7px', bottom: '13%', size: '2px', delay: '120ms', duration: '1580ms', drift: '4px' },
@@ -3621,6 +3612,8 @@ type LiveAuctionAlert = {
   kicker?: string;
   tone?: CountdownPressurePhase;
   price?: number;
+  winnerName?: string;
+  bidCount?: number;
   priority: number;
   durationMs: number;
 };
@@ -3714,7 +3707,9 @@ function useLiveAuctionAlerts() {
       timersRef.current = {};
       setAlerts([alert]);
 
-      timersRef.current[id] = window.setTimeout(() => dismissAlert(id), alert.durationMs);
+      if (alert.durationMs > 0) {
+        timersRef.current[id] = window.setTimeout(() => dismissAlert(id), alert.durationMs);
+      }
     },
     [dismissAlert]
   );
@@ -3727,7 +3722,7 @@ function useLiveAuctionAlerts() {
     []
   );
 
-  return { alerts, pushAlert };
+  return { alerts, pushAlert, dismissAlert };
 }
 
 function LiveRoomPage({
@@ -3783,7 +3778,7 @@ function LiveRoomPage({
   const [liveVoicePermissionPromptVisible, setLiveVoicePermissionPromptVisible] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [serverTimeOffsetMs, setServerTimeOffsetMs] = useState(0);
-  const { alerts: auctionAlerts, pushAlert: pushAuctionAlert } = useLiveAuctionAlerts();
+  const { alerts: auctionAlerts, pushAlert: pushAuctionAlert, dismissAlert: dismissAuctionAlert } = useLiveAuctionAlerts();
   const realtimeRef = useRef<RealtimeClient>();
   const liveVoicePlayerRef = useRef<LiveVoiceBroadcastAudioPlayer>();
   const pendingLiveVoicePayloadsRef = useRef<LiveVoiceBroadcastAudioPayload[]>([]);
@@ -3795,6 +3790,8 @@ function LiveRoomPage({
   const serverTimeOffsetRef = useRef(0);
   const lastSeqRef = useRef(0);
   const realtimeSeqCursorRef = useRef<RealtimeSeqCursor>({});
+  const timeSyncInFlightRef = useRef<{ requestId: string; clientSendTimeMs: number; seq: number }>();
+  const timeSyncSeqRef = useRef(0);
   const lastSeqScopeRef = useRef('');
   const lastRankingBidRef = useRef<RankingBidHint>();
   const rankingRef = useRef<RankingItem[]>([]);
@@ -3806,6 +3803,7 @@ function LiveRoomPage({
   const countdownExtensionTimerRef = useRef<number>();
   const countdownAmbientPulseTimerRef = useRef<number>();
   const scheduledAuctionRefreshAttemptsRef = useRef<Set<string>>(new Set());
+  const expiredAuctionRefreshAttemptsRef = useRef<Set<string>>(new Set());
   const bidConfirmTimerRef = useRef<number>();
   const settledBidResultIdsRef = useRef<Set<string>>(new Set());
   const rankingSnapshotDelayUntilRef = useRef(0);
@@ -3909,9 +3907,8 @@ function LiveRoomPage({
     recordFootprint(room);
   }, [recordFootprint, room]);
 
-  const syncServerTimeOffset = useCallback((payload: unknown) => {
-    const offsetMs = serverTimeOffsetFromPayload(payload);
-    if (offsetMs === undefined) return;
+  const applyServerTimeOffset = useCallback((offsetMs: number) => {
+    if (!Number.isFinite(offsetMs)) return;
     setServerTimeOffsetMs((current) => {
       if (Math.abs(current - offsetMs) < 5) return current;
       serverTimeOffsetRef.current = offsetMs;
@@ -3919,16 +3916,32 @@ function LiveRoomPage({
     });
   }, []);
 
+  const syncServerTimeOffset = useCallback((message: RealtimeMessage) => {
+    if (message.type === 'time.sync.result') {
+      const payload = realtimePayloadRecord(message.payload) as Partial<TimeSyncResultPayload>;
+      const requestId = String(message.requestId ?? payload.requestId ?? '');
+      const inFlight = timeSyncInFlightRef.current;
+      if (!inFlight || requestId !== inFlight.requestId) return;
+      const clientReceiveTimeMs = Date.now();
+      const serverTimeMs = parseRealtimeTimestampMs(payload.serverTimeMs ?? payload.serverTime, Number.NaN);
+      timeSyncInFlightRef.current = undefined;
+      if (!Number.isFinite(serverTimeMs)) return;
+      applyServerTimeOffset(getServerOffsetMsWithRtt({
+        serverTimeMs,
+        clientSendTimeMs: inFlight.clientSendTimeMs,
+        clientReceiveTimeMs
+      }));
+      return;
+    }
+    const offsetMs = serverTimeOffsetFromPayload(message.payload);
+    if (offsetMs !== undefined) applyServerTimeOffset(offsetMs);
+  }, [applyServerTimeOffset]);
+
   useEffect(() => {
     const serverTsMs = stateQuery.data?.serverTsMs;
     if (!serverTsMs || !Number.isFinite(serverTsMs)) return;
-    setServerTimeOffsetMs((current) => {
-      const next = getServerOffsetMs(serverTsMs, Date.now());
-      if (Math.abs(current - next) < 5) return current;
-      serverTimeOffsetRef.current = next;
-      return next;
-    });
-  }, [stateQuery.data?.serverTsMs]);
+    applyServerTimeOffset(getServerOffsetMs(serverTsMs, Date.now()));
+  }, [applyServerTimeOffset, stateQuery.data?.serverTsMs]);
 
   const clearCountdownAmbientPulse = useCallback(() => {
     if (countdownAmbientPulseTimerRef.current) {
@@ -3979,6 +3992,7 @@ function LiveRoomPage({
   const hasBlockingLiveSheet = liveSheets.some((sheet) => sheet.phase !== 'closing');
   const liveSheetOpen = hasBlockingLiveSheet;
   const activeCountdownRemainMs = currentState ? countdownRemainMs(currentState.endTsMs, now, serverTimeOffsetMs) : 0;
+  const isActiveCountdownExpired = activeCountdownRemainMs <= 0;
   const displayCurrentState = currentState ? stateWithHammerPendingAfterCountdown(currentState, activeCountdownRemainMs) : undefined;
   const countdownAmbientState = useMemo<CountdownAmbientState | undefined>(() => {
     if (!activeLot || !displayCurrentState) return undefined;
@@ -4276,6 +4290,31 @@ function LiveRoomPage({
   const refetchAuctionStateRef = useRef(stateQuery.refetch);
   refetchAuctionStateRef.current = stateQuery.refetch;
 
+  useEffect(() => {
+    if (!activeLot?.auctionId || activeLot.auctionId !== activeAuctionIdForState || !currentState) return;
+    if (!isRunningAuctionStatus(currentState.status) || !isActiveCountdownExpired) return;
+
+    const timers: number[] = [];
+    const attempts = expiredAuctionRefreshAttemptsRef.current;
+    const refreshKeyPrefix = `${roomId}:${activeLot.auctionId}:${currentState.endTsMs}`;
+
+    AUCTION_COUNTDOWN_EXPIRED_REFRESH_RETRY_DELAYS_MS.forEach((delayMs, attemptIndex) => {
+      const attemptKey = `${refreshKeyPrefix}:${attemptIndex}`;
+      if (attempts.has(attemptKey)) return;
+      const timer = window.setTimeout(() => {
+        attempts.add(attemptKey);
+        void refetchAuctionStateRef.current();
+        void queryClient.invalidateQueries({ queryKey: ['auction-ranking', activeLot.auctionId] });
+        void queryClient.invalidateQueries({ queryKey: ['live-room-lots', roomId] });
+      }, delayMs);
+      timers.push(timer);
+    });
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [activeAuctionIdForState, activeLot?.auctionId, currentState, isActiveCountdownExpired, queryClient, roomId]);
+
   const clearBidConfirmTimer = useCallback(() => {
     if (bidConfirmTimerRef.current === undefined) return;
     window.clearTimeout(bidConfirmTimerRef.current);
@@ -4440,7 +4479,7 @@ function LiveRoomPage({
   );
 
   const pushAuctionAtmosphereAlert = useCallback(
-    (kind: AuctionEventAlertKind, options: { auctionId: string; lot?: LiveRoomLot; price?: number; subtitle?: string }) => {
+    (kind: AuctionEventAlertKind, options: { auctionId: string; lot?: LiveRoomLot; price?: number; subtitle?: string; winnerName?: string; bidCount?: number }) => {
       const titleKey: Record<AuctionEventAlertKind, MessageKey> = {
         leading: 'auctionAlert.leading.title',
         outbid: 'auctionAlert.outbid.title',
@@ -4461,7 +4500,10 @@ function LiveRoomPage({
         lotId: options.lot?.id,
         title: t(titleKey[kind]),
         subtitle: options.subtitle ?? t(subtitleKey[kind]),
-        price: options.price
+        price: options.price,
+        winnerName: options.winnerName,
+        bidCount: options.bidCount,
+        durationMs: kind === 'won' ? 0 : undefined
       });
     },
     [pushAuctionAlert]
@@ -4815,6 +4857,10 @@ function LiveRoomPage({
         const closingAuctionId = String(payload.auctionId ?? context.activeLot?.auctionId ?? '');
         const winnerBidderId = String(payload.winnerBidderId ?? payload.winnerId ?? '');
         const isCurrentUserWinner = String(payload.status ?? 'CLOSED_WON') === 'CLOSED_WON' && winnerBidderId === userId;
+        const winnerRankingItem = context.ranking.find((item) => item.bidderId === winnerBidderId);
+        const winnerName = String(payload.winnerNickname ?? payload.winnerNickName ?? payload.winnerName ?? winnerRankingItem?.nicknameMask ?? t('auctionAlert.closed.defaultWinner'));
+        const finalPrice = Number(payload.finalPrice ?? payload.price ?? context.currentState?.currentPrice ?? 0);
+        const bidCount = Number(payload.bidCount ?? context.currentState?.bidCount ?? context.activeLot?.bidCount ?? 0);
         if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
         setCountdownExtensionPulse(undefined);
         clearCountdownAmbientPulse();
@@ -4822,7 +4868,9 @@ function LiveRoomPage({
           pushAuctionAtmosphereAlert(isCurrentUserWinner ? 'won' : 'closed', {
             auctionId: closingAuctionId,
             lot: context.activeLot,
-            price: Number(payload.finalPrice ?? context.currentState?.currentPrice ?? 0)
+            price: finalPrice,
+            winnerName: isCurrentUserWinner ? undefined : winnerName,
+            bidCount: isCurrentUserWinner ? undefined : bidCount
           });
         }
         const visibleCard = floatingAuctionCardRef.current;
@@ -4988,6 +5036,10 @@ function LiveRoomPage({
       delayedRankingSnapshotTimerRef.current = window.setTimeout(consumeDelayedRankingSnapshot, delayMs);
     };
     const handleMessage = (message: RealtimeMessage) => {
+      if (message.type === 'time.sync.result') {
+        syncServerTimeOffset(message);
+        return;
+      }
       if (
         message.type === 'ranking.updated' &&
         !shouldConsumeRankingUpdatedMessage(message, latestContext.current.activeLot?.auctionId, rankingRef.current, userId, userNickname, userAvatarUrl)
@@ -4997,7 +5049,7 @@ function LiveRoomPage({
       if (!isFreshRealtimeMessageByDomain(message, realtimeSeqCursorRef.current)) return;
       realtimeSeqCursorRef.current = nextRealtimeSeqByDomain(message, realtimeSeqCursorRef.current);
       lastSeqRef.current = realtimeSeqCursorRef.current.bid ?? lastSeqRef.current;
-      syncServerTimeOffset(message.payload);
+      syncServerTimeOffset(message);
       const rankingDelayMs = message.type === 'ranking.updated' ? rankingSnapshotDelayUntilRef.current - Date.now() : 0;
       if (rankingDelayMs > 0) {
         scheduleDelayedRankingSnapshot(message, rankingDelayMs);
@@ -5015,10 +5067,34 @@ function LiveRoomPage({
     client?.connect();
     controlClient?.connect();
     client?.send({ type: 'room.subscribe', requestId: makeRequestId('room'), payload: { auctionId: context.activeLot?.auctionId } });
+    timeSyncInFlightRef.current = undefined;
+    const sendTimeSyncRequest = () => {
+      if (!client) return;
+      const currentInFlight = timeSyncInFlightRef.current;
+      if (currentInFlight && Date.now() - currentInFlight.clientSendTimeMs < 1_500) return;
+      const seq = timeSyncSeqRef.current + 1;
+      timeSyncSeqRef.current = seq;
+      const clientSendTimeMs = Date.now();
+      const requestId = makeRequestId(`time_${seq}`);
+      const sent = client.send({
+        type: 'time.sync',
+        requestId,
+        payload: {
+          requestId,
+          clientSendTimeMs,
+          clientTimeMs: clientSendTimeMs
+        }
+      });
+      if (sent) timeSyncInFlightRef.current = { requestId, clientSendTimeMs, seq };
+    };
+    sendTimeSyncRequest();
+    const timeSyncTimer = client ? window.setInterval(sendTimeSyncRequest, 500) : undefined;
     return () => {
       unsubscribe?.();
       unsubscribeControl?.();
       clearDelayedRankingSnapshot();
+      if (timeSyncTimer !== undefined) window.clearInterval(timeSyncTimer);
+      timeSyncInFlightRef.current = undefined;
       controlClient?.disconnect();
       client?.disconnect();
     };
@@ -5409,7 +5485,13 @@ function LiveRoomPage({
         );
       })}
       <LiveCountdownAmbientLayer state={countdownAmbientState} />
-      <LiveAuctionAlertLayer alerts={visibleAuctionAlerts} />
+      <LiveAuctionAlertLayer
+        alerts={visibleAuctionAlerts}
+        lots={lots}
+        ordersByAuctionId={orderByAuctionId}
+        onDismiss={dismissAuctionAlert}
+        onPay={(order, auctionId) => onPay(order.id, auctionId)}
+      />
     </section>
   );
 }
@@ -5472,20 +5554,61 @@ function LiveCountdownAmbientLayer({ state }: { state?: CountdownAmbientState })
   );
 }
 
-function LiveAuctionAlertLayer({ alerts }: { alerts: LiveAuctionAlert[] }) {
+function LiveAuctionAlertLayer({
+  alerts,
+  lots = [],
+  ordersByAuctionId,
+  onDismiss,
+  onPay
+}: {
+  alerts: LiveAuctionAlert[];
+  lots?: LiveRoomLot[];
+  ordersByAuctionId?: Map<string, Order>;
+  onDismiss?: (id: string) => void;
+  onPay?: (order: Order, auctionId: string) => void;
+}) {
   if (!alerts.length) return null;
   return (
     <div className="live-auction-alert-layer" aria-live="polite">
-      {alerts.map((alert, index) => (
-        <LiveAuctionAlertCard key={alert.id} alert={alert} index={index} />
-      ))}
+      {alerts.map((alert, index) => {
+        const lot = alert.lotId ? lots.find((item) => item.id === alert.lotId) : lots.find((item) => item.auctionId === alert.auctionId);
+        const order = ordersByAuctionId?.get(alert.auctionId);
+        return (
+          <LiveAuctionAlertCard
+            key={alert.id}
+            alert={alert}
+            index={index}
+            lot={lot}
+            order={order}
+            onDismiss={onDismiss}
+            onPay={onPay}
+          />
+        );
+      })}
     </div>
   );
 }
 
-function LiveAuctionAlertCard({ alert, index }: { alert: LiveAuctionAlert; index: number }) {
+function LiveAuctionAlertCard({
+  alert,
+  index,
+  lot,
+  order,
+  onDismiss,
+  onPay
+}: {
+  alert: LiveAuctionAlert;
+  index: number;
+  lot?: LiveRoomLot;
+  order?: Order;
+  onDismiss?: (id: string) => void;
+  onPay?: (order: Order, auctionId: string) => void;
+}) {
   const isWon = alert.kind === 'won';
+  const isClosed = alert.kind === 'closed';
   const toneClass = alert.tone && alert.tone !== 'idle' ? ` is-${alert.tone}` : '';
+  const pendingOrder = !order || !isPendingPayOrder(order);
+  const closedBidCount = Math.max(0, Math.floor(alert.bidCount ?? 0));
   return (
     <article
       className={`live-auction-alert is-${alert.kind}${toneClass}`}
@@ -5493,51 +5616,71 @@ function LiveAuctionAlertCard({ alert, index }: { alert: LiveAuctionAlert; index
       aria-label={alert.subtitle ? `${alert.title}，${alert.subtitle}` : alert.title}
       style={{ '--auction-alert-index': index } as CSSProperties}
     >
-      <div className="live-auction-alert-card">
-        <span className="live-auction-alert-kicker">{alert.kicker ?? t(`auctionAlert.${alert.kind}.kicker` as MessageKey)}</span>
-        <strong className={alert.value ? 'live-auction-alert-value' : undefined}>{alert.value ?? alert.title}</strong>
-        {alert.value ? <span className="live-auction-alert-title">{alert.title}</span> : null}
-        {alert.subtitle ? <span>{alert.subtitle}</span> : null}
-        {alert.price !== undefined ? <em>{formatMoney(alert.price)}</em> : null}
-      </div>
-      {isWon ? <LiveAuctionAlertCelebration /> : null}
+      {isWon ? (
+        <>
+          <div className="live-auction-success-heading">{t('auctionAlert.won.heading')}</div>
+          <div className="live-auction-alert-card live-auction-success-card">
+            <span className="live-auction-success-badge">
+              <span className="live-auction-success-avatar" aria-hidden="true" />
+              {t('auctionAlert.won.badge')}
+            </span>
+            <span className="live-auction-alert-kicker">{t('auctionAlert.won.shared')}</span>
+            <div className="live-auction-success-lot">
+              <div className="live-auction-success-cover">
+                <VisualPlaceholder title={lot?.title ?? alert.title} imageUrl={lot?.imageUrl} tone="gold" />
+              </div>
+              <div className="live-auction-success-copy">
+                <b>{lot?.title ?? alert.title}</b>
+                <p>{lot?.description ?? alert.subtitle ?? ''}</p>
+                <em>{formatMoney(order?.amount ?? alert.price ?? lot?.finalPrice ?? lot?.currentPrice ?? 0)}</em>
+              </div>
+            </div>
+            <div className="live-auction-success-deposit">
+              <span>{t('auctionAlert.won.deposit')}</span>
+              <strong>{t('auctionAlert.won.depositRefund')}</strong>
+            </div>
+            <button
+              className="live-auction-success-pay"
+              type="button"
+              disabled={pendingOrder}
+              onClick={() => {
+                if (!order) return;
+                onPay?.(order, alert.auctionId);
+              }}
+            >
+              {pendingOrder ? t('auction.orderPending') : t('auctionAlert.won.payWithAddress')}
+            </button>
+          </div>
+          <button className="live-auction-success-close" type="button" aria-label={t('common.close')} onClick={() => onDismiss?.(alert.id)}>
+            <X size={22} />
+          </button>
+        </>
+      ) : isClosed ? (
+        <>
+          <div className="live-auction-closed-heading">
+            <span>{t('auctionAlert.closed.headingPrimary')}</span>
+            <strong>{t('auctionAlert.closed.headingSecondary')}</strong>
+          </div>
+          <div className="live-auction-alert-card live-auction-closed-card">
+            <span className="live-auction-closed-winner">
+              <span className="live-auction-success-avatar" aria-hidden="true" />
+              {alert.winnerName ?? t('auctionAlert.closed.defaultWinner')}
+            </span>
+            <p>{t('auctionAlert.closed.roundSummary', { count: closedBidCount || 1 })}</p>
+            <em>{formatMoney(alert.price ?? 0)}</em>
+            <span className="live-auction-closed-price-label">{t('auctionAlert.closed.finalPrice')}</span>
+          </div>
+        </>
+      ) : (
+        <div className="live-auction-alert-card">
+          <span className="live-auction-alert-kicker">{alert.kicker ?? t(`auctionAlert.${alert.kind}.kicker` as MessageKey)}</span>
+          <strong className={alert.value ? 'live-auction-alert-value' : undefined}>{alert.value ?? alert.title}</strong>
+          {alert.value ? <span className="live-auction-alert-title">{alert.title}</span> : null}
+          {alert.subtitle ? <span>{alert.subtitle}</span> : null}
+          {alert.price !== undefined ? <em>{formatMoney(alert.price)}</em> : null}
+        </div>
+      )}
     </article>
-  );
-}
-
-function LiveAuctionAlertCelebration() {
-  return (
-    <>
-      <div className="live-auction-alert-cannon is-left" aria-hidden="true">
-        <span className="live-auction-alert-cannon-rim" />
-        <span className="live-auction-alert-cannon-body" />
-        <span className="live-auction-alert-cannon-spark" />
-      </div>
-      <div className="live-auction-alert-cannon is-right" aria-hidden="true">
-        <span className="live-auction-alert-cannon-rim" />
-        <span className="live-auction-alert-cannon-body" />
-        <span className="live-auction-alert-cannon-spark" />
-      </div>
-      <div className="live-auction-alert-confetti" aria-hidden="true">
-        {(['left', 'right'] as const).flatMap((side) =>
-          winningConfettiPieces.map((piece, index) => (
-            <span
-              key={`${side}-${index}`}
-              className={`live-auction-alert-confetti-piece is-${side} is-${piece.shape}`}
-              style={
-                {
-                  '--confetti-x': `${piece.x}px`,
-                  '--confetti-y': `${piece.y}px`,
-                  '--confetti-rotate': `${piece.rotate}deg`,
-                  '--confetti-delay': `${piece.delay + (side === 'right' ? 70 : 0)}ms`,
-                  '--confetti-color': piece.color
-                } as CSSProperties
-              }
-            />
-          ))
-        )}
-      </div>
-    </>
   );
 }
 
@@ -7151,7 +7294,9 @@ function BidSheet({
   onSubmit: (price: number) => void;
 }) {
   const rule = useMemo(() => bidRuleFromLot(lot, state), [lot, state]);
-  const isClosed = state.status !== 'RUNNING' && state.status !== 'EXTENDED';
+  const isHammerPending = state.status === 'HAMMER_PENDING';
+  const isBiddingOpen = state.status === 'RUNNING' || state.status === 'EXTENDED';
+  const isClosed = !isBiddingOpen && !isHammerPending;
   const [stepCount, setStepCount] = useState(1);
   const [selectedPrice, setSelectedPrice] = useState(() => getQuickBidPrice(rule, 1));
   const [closedAtMs, setClosedAtMs] = useState<number | undefined>(() => (isClosed ? nowMs : undefined));
@@ -7163,9 +7308,10 @@ function BidSheet({
   const validation = validateBidPrice(selectedPrice, rule);
   const hasLeader = Boolean(state.leaderBidderId);
   const isUserLeader = state.leaderBidderId === userId;
+  const currentUserBid = ranking.find((item) => item.bidderId === userId);
   const leader = hasLeader ? (isUserLeader ? t('live.commentMe') : (ranking[0]?.nicknameMask ?? defaultRanking(state)[0]?.nicknameMask ?? t('bid.startPriceBidder'))) : t('bid.startPriceBidder');
   const currentBidPrice = priceValue(lot, state);
-  const myBid = isUserLeader ? formatMoney(state.currentPrice) : t('bid.noMyBid');
+  const myBid = isUserLeader ? formatMoney(state.currentPrice) : currentUserBid ? formatMoney(currentUserBid.price) : t('bid.noMyBid');
   const quickBidNotice = isUserLeader
     ? t('bid.highestPriceNotice')
     : t('bid.aboveCurrentPriceNotice', { amount: formatQuickBidDeltaAmount(selectedPrice - currentBidPrice) });
@@ -7207,10 +7353,11 @@ function BidSheet({
 
   // submitting（已发送待确认）与 arbitrating（异步裁决中）都属于“出价处理中”，按钮禁用且不可加减价。
   const isBidPending = feedback.status === 'submitting' || feedback.status === 'arbitrating';
-  const canDecrease = stepCount > 1 && !isClosed && !isBidPending;
-  const canIncrease = stepCount < maxBidSteps && selectedPrice < (rule.capPrice ?? Number.MAX_SAFE_INTEGER) && !isClosed && !isBidPending;
-  const disabledReason =
-    isClosed
+  const canDecrease = stepCount > 1 && isBiddingOpen && !isBidPending;
+  const canIncrease = stepCount < maxBidSteps && selectedPrice < (rule.capPrice ?? Number.MAX_SAFE_INTEGER) && isBiddingOpen && !isBidPending;
+  const disabledReason = isHammerPending
+    ? t('auction.bidRejectedHammerPending')
+    : isClosed
       ? t('bid.currentAuctionEnded')
       : outdated
         ? t('bid.priceOutdated')
@@ -7220,20 +7367,24 @@ function BidSheet({
             ? t('bid.intervalWaiting', { seconds: Math.ceil(intervalRemainingMs / 1000) })
             : '';
   const canSubmit = !disabledReason && !isBidPending;
-  const submitText = isClosed
-    ? t('bid.endedAutoReturn', { seconds: closedCountdown })
-    : feedback.status === 'arbitrating'
-      ? feedback.message
-      : feedback.status === 'submitting'
-        ? t('auction.bidSubmitted')
-        : t('bid.submitNow');
+  const submitText = isHammerPending
+    ? t('auction.hammerInProgress')
+    : isClosed
+      ? t('bid.endedAutoReturn', { seconds: closedCountdown })
+      : feedback.status === 'arbitrating'
+        ? feedback.message
+        : feedback.status === 'submitting'
+          ? t('auction.bidSubmitted')
+          : t('bid.submitNow');
 
   return (
     <AnimatedSheetFrame variant={variant} phase={phase} zIndex={zIndex} accessibilityHidden={accessibilityHidden} className="bid-sheet quick-bid-sheet" label={t('bid.confirmTitle')} showBackdrop={false} onClose={onClose}>
       {() => (
         <>
         <div className="quick-bid-timer">
-          {isClosed ? (
+          {isHammerPending ? (
+            <h2>{t('auction.hammerInProgress')}</h2>
+          ) : isClosed ? (
             <h2>{t('bid.currentAuctionEnded')}</h2>
           ) : (
             <h2 className={countdownClassName}>
@@ -7776,7 +7927,7 @@ function realtimePayloadWithState(payload: unknown): Record<string, unknown> {
 
 function serverTimeOffsetFromPayload(payload: unknown, clientNowMs = Date.now()): number | undefined {
   const raw = realtimePayloadRecord(payload);
-  const serverTimeMs = parseRealtimeTimestampMs(raw.serverTime, Number.NaN);
+  const serverTimeMs = parseRealtimeTimestampMs(raw.serverTimeMs ?? raw.serverTime, Number.NaN);
   return Number.isFinite(serverTimeMs) ? getServerOffsetMs(serverTimeMs, clientNowMs) : undefined;
 }
 
@@ -7785,11 +7936,9 @@ function countdownRemainMs(endTsMs: number, clientNowMs: number, serverTimeOffse
 }
 
 function stateWithHammerPendingAfterCountdown(state: AuctionState, remainMs: number): AuctionState {
-  // 倒计时归零仅停在 0s，不本地强制切「截拍中」：必须收到后端 auction.state{status:HAMMER_PENDING}
-  // 或 auction.closed 帧后才切相应状态。这样即使 anti-sniping 即将延长 endTime（异步链路有少
-  // 许排队延迟），用户也不会被本地预切的"截拍中"误导。
-  // 保留 helper 名称避免破坏调用点；remainMs<=0 时返回原 state，让 UI 显示 0s。
-  void remainMs;
+  if (remainMs <= 0 && isRunningAuctionStatus(state.status)) {
+    return { ...state, status: 'HAMMER_PENDING' };
+  }
   return state;
 }
 

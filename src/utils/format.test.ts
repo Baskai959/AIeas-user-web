@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatCountdown, formatMoney, getServerOffsetMs, msUntil, shouldShowCountdownMilliseconds } from './format';
+import { formatCountdown, formatMoney, getServerOffsetMs, getServerOffsetMsWithRtt, msUntil, shouldShowCountdownMilliseconds } from './format';
 
 describe('format utilities', () => {
   it('formats cents as Chinese yuan', () => {
@@ -23,6 +23,7 @@ describe('format utilities', () => {
 
   it('calculates server clock offset and remaining time', () => {
     expect(getServerOffsetMs(1_500, 1_000)).toBe(500);
+    expect(getServerOffsetMsWithRtt({ serverTimeMs: 1_500, clientSendTimeMs: 900, clientReceiveTimeMs: 1_100 })).toBe(500);
     expect(msUntil(2_500, 1_000, 500)).toBe(1_000);
   });
 });

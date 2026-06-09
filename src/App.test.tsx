@@ -4931,14 +4931,23 @@ describe('App flow', () => {
             auctionId: 'auc_2001',
             status: 'CLOSED_WON',
             winnerBidderId: 'u2',
-            finalPrice: 150100,
+            winnerNickname: '黄***',
+            bidCount: 3,
+            finalPrice: 700000,
             closedTsMs: Date.now()
           }
         });
       });
 
       expect(document.querySelector('.live-auction-alert.is-countdown')).not.toBeInTheDocument();
-      expect(document.querySelector('.live-auction-alert.is-closed')).toBeInTheDocument();
+      const closedAlert = document.querySelector('.live-auction-alert.is-closed');
+      expect(closedAlert).toBeInTheDocument();
+      expect(closedAlert).toHaveTextContent('落拍定音');
+      expect(closedAlert).toHaveTextContent('恭喜成交!!');
+      expect(closedAlert).toHaveTextContent('黄***');
+      expect(closedAlert).toHaveTextContent('经过3轮的激烈竞拍成功拍下');
+      expect(closedAlert).toHaveTextContent('¥7000.00');
+      expect(closedAlert).toHaveTextContent('最终成交价');
     } finally {
       vi.useRealTimers();
     }
@@ -5034,6 +5043,67 @@ describe('App flow', () => {
     }
   });
 
+  it('keeps my bid visible in the quick-bid sheet after another bidder takes the lead', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
+      await flushApp();
+      const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
+      fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+      await flushApp();
+      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('product.bidNow') }));
+      await flushApp();
+      const bidDialog = screen.getByRole('dialog', { name: getMessage('bid.confirmTitle') });
+      const myBidCell = () => within(bidDialog).getByText(getMessage('bid.myBid')).closest('.quick-bid-price-cell') as HTMLElement;
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.accepted',
+          payload: {
+            auctionId: 'auc_2001',
+            bidderId: 'u1',
+            bidderNickname: '竞拍用户001',
+            currentPrice: 150200,
+            price: 150200,
+            leaderBidderId: 'u1',
+            bidTsMs: now + 1000
+          }
+        });
+      });
+      await flushApp();
+      expect(myBidCell()).toHaveTextContent('¥1502.00');
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.accepted',
+          payload: {
+            auctionId: 'auc_2001',
+            bidderId: 'u4',
+            bidderNickname: '追价用户',
+            currentPrice: 150300,
+            price: 150300,
+            leaderBidderId: 'u4',
+            bidTsMs: now + 2000
+          }
+        });
+      });
+      await flushApp();
+
+      expect(myBidCell()).toHaveTextContent('¥1502.00');
+      expect(myBidCell()).not.toHaveTextContent(getMessage('bid.noMyBid'));
+      expect(within(bidDialog).getByText(getMessage('bid.leadingBadge', 'zh-CN', { name: '追价用户' }))).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('shows extension and closed alerts from realtime auction events', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
@@ -5069,18 +5139,66 @@ describe('App flow', () => {
 	            serverTime: new Date(now).toISOString()
 	          }
 	        });
-	      });
+      });
       const closedAlert = document.querySelector('.live-auction-alert.is-closed');
       expect(closedAlert).toBeInTheDocument();
       expect(document.querySelectorAll('.live-auction-alert')).toHaveLength(1);
       expect(document.querySelector('.live-auction-alert.is-extended')).not.toBeInTheDocument();
-      expect(closedAlert).toHaveTextContent('竞拍结束');
+      expect(closedAlert).toHaveTextContent('落拍定音');
+      expect(closedAlert).toHaveTextContent('恭喜成交!!');
     } finally {
       vi.useRealTimers();
 	    }
 	  });
 
-	  it('keeps RUNNING/EXTENDED status (no local hammering) when the countdown reaches 0s before a backend HAMMER_PENDING/closed frame arrives', async () => {
+	  it('shows a local hammer-pending waiting state and performs bounded refresh when countdown reaches 0s before a backend HAMMER_PENDING/closed frame arrives', async () => {
+	    vi.useFakeTimers();
+	    vi.setSystemTime(now);
+	    const sockets = installNativeRealtimeSocket();
+	    try {
+	      seedSession();
+	      window.history.pushState(null, '', '/live/room_1001');
+	      renderApp();
+
+	      await flushApp();
+	      const initialStateFetches = vi.mocked(api.getAuctionState).mock.calls.length;
+	      const initialLotsFetches = vi.mocked(api.listLiveRoomLots).mock.calls.length;
+	      await act(async () => {
+	        vi.advanceTimersByTime(121_000);
+	      });
+	      await flushApp();
+	      await flushApp();
+
+	      expect(vi.mocked(api.getAuctionState).mock.calls.length).toBeGreaterThan(initialStateFetches);
+	      expect(vi.mocked(api.listLiveRoomLots).mock.calls.length).toBeGreaterThan(initialLotsFetches);
+
+	      fireEvent.click(screen.getByRole('button', { name: getMessage('live.goodsEntry') }));
+	      await flushApp();
+	      const drawer = screen.getByRole('dialog', { name: getMessage('live.goodsList') });
+	      const currentLotRow = within(drawer).getAllByTestId('lot-row')[0];
+	      expect(within(currentLotRow).getAllByText(getMessage('auction.hammerInProgress')).length).toBeGreaterThan(0);
+	      expect(within(currentLotRow).getByRole('button', { name: getMessage('auction.hammerInProgress') })).toBeDisabled();
+	      expect(within(currentLotRow).queryAllByText(getMessage('auction.running'))).toHaveLength(0);
+
+	      await act(async () => {
+	        emitLatestMockControl(sockets, {
+	          type: 'timer.extended',
+	          payload: {
+	            auctionId: 'auc_2001',
+	            endTime: new Date(now + 180_000).toISOString(),
+	            serverTime: new Date(now).toISOString()
+	          }
+	        });
+	      });
+	      await flushApp();
+	      expect(within(currentLotRow).queryAllByText(getMessage('auction.hammerInProgress'))).toHaveLength(0);
+	      expect(within(currentLotRow).getAllByText(getMessage('auction.running')).length).toBeGreaterThan(0);
+	    } finally {
+	      vi.useRealTimers();
+	    }
+	  });
+
+	  it('keeps the quick-bid sheet in hammer-pending after local countdown reaches 0s without a backend closed frame', async () => {
 	    vi.useFakeTimers();
 	    vi.setSystemTime(now);
 	    installNativeRealtimeSocket();
@@ -5090,18 +5208,31 @@ describe('App flow', () => {
 	      renderApp();
 
 	      await flushApp();
+	      fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
+	      await flushApp();
+	      const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
+	      fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+	      await flushApp();
+	      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('product.bidNow') }));
+	      await flushApp();
+
 	      await act(async () => {
 	        vi.advanceTimersByTime(121_000);
 	      });
-
-	      fireEvent.click(screen.getByRole('button', { name: getMessage('live.goodsEntry') }));
 	      await flushApp();
-	      const drawer = screen.getByRole('dialog', { name: getMessage('live.goodsList') });
-	      const currentLotRow = within(drawer).getAllByTestId('lot-row')[0];
-	      // 用户明确要求：倒计时归零时不本地切「截拍中」，必须等后端帧。
-	      expect(within(currentLotRow).queryAllByText(getMessage('auction.hammerInProgress'))).toHaveLength(0);
-	      // 仍保持 RUNNING/EXTENDED 状态：状态徽章显示"竞拍中"（auction.running）。
-	      expect(within(currentLotRow).getAllByText(getMessage('auction.running')).length).toBeGreaterThan(0);
+	      await flushApp();
+
+	      const bidDialog = screen.getByRole('dialog', { name: getMessage('bid.confirmTitle') });
+	      expect(within(bidDialog).getByRole('button', { name: getMessage('auction.hammerInProgress') })).toBeDisabled();
+	      expect(within(bidDialog).getAllByText(getMessage('auction.hammerInProgress')).length).toBeGreaterThan(0);
+	      expect(within(bidDialog).queryByRole('button', { name: getMessage('bid.endedAutoReturn', 'zh-CN', { seconds: 5 }) })).not.toBeInTheDocument();
+
+	      await act(async () => {
+	        vi.advanceTimersByTime(6_000);
+	      });
+	      await flushApp();
+	      expect(screen.getByRole('dialog', { name: getMessage('bid.confirmTitle') })).toBeInTheDocument();
+	      expect(document.querySelector('.sheet-layer.is-closing .quick-bid-sheet')).not.toBeInTheDocument();
 	    } finally {
 	      vi.useRealTimers();
 	    }
@@ -5316,15 +5447,24 @@ describe('App flow', () => {
       });
 
       expect(screen.getByRole('status')).toHaveTextContent('竞拍成功');
+      expect(screen.getByRole('status')).toHaveTextContent('恭喜竞拍成功');
+      expect(screen.getByRole('status')).toHaveTextContent('共享竞拍成功');
+      expect(screen.getByRole('status')).toHaveTextContent('保证金');
+      expect(screen.getByRole('status')).toHaveTextContent('拍品付款后退回');
+      expect(screen.getByRole('status')).not.toHaveTextContent('距购买失效还剩');
       expect(document.querySelector('.live-auction-alert.is-won')).toBeInTheDocument();
-      expect(document.querySelector('.live-auction-alert-cannon.is-left')).toBeInTheDocument();
-      expect(document.querySelector('.live-auction-alert-cannon.is-right')).toBeInTheDocument();
-      expect(document.querySelectorAll('.live-auction-alert-confetti-piece')).toHaveLength(16);
+      expect(document.querySelector('.live-auction-success-lot')).toBeInTheDocument();
+      expect(document.querySelector('.live-auction-alert-cannon.is-left')).not.toBeInTheDocument();
+      expect(document.querySelector('.live-auction-alert-cannon.is-right')).not.toBeInTheDocument();
+      expect(document.querySelectorAll('.live-auction-alert-confetti-piece')).toHaveLength(0);
+      expect(within(screen.getByRole('status')).getByRole('button', { name: getMessage('auctionAlert.won.payWithAddress') })).toBeInTheDocument();
       expect(document.querySelector('.winning-celebration')).not.toBeInTheDocument();
 
       await act(async () => {
         vi.advanceTimersByTime(4200);
       });
+      expect(screen.queryByRole('status')).toBeInTheDocument();
+      fireEvent.click(within(screen.getByRole('status')).getByRole('button', { name: getMessage('common.close') }));
       expect(screen.queryByRole('status')).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();

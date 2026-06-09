@@ -55,6 +55,17 @@ export interface BidResultAckPayload {
   bidId: string;
 }
 
+export interface TimeSyncPayload {
+  requestId: string;
+  clientSendTimeMs: number;
+  clientTimeMs: number;
+}
+
+export interface TimeSyncResultPayload extends TimeSyncPayload {
+  serverTime: string;
+  serverTimeMs: number;
+}
+
 export interface ChatSendInput {
   roomId: string;
   content: string;
@@ -272,6 +283,28 @@ export class MockRealtimeClient implements RealtimeClient {
       return true;
     }
 
+    if (message.type === 'time.sync') {
+      const request = message.payload as unknown as Partial<TimeSyncPayload>;
+      const requestId = String(message.requestId ?? request.requestId ?? '');
+      const clientSendTimeMs = Number(request.clientSendTimeMs ?? request.clientTimeMs ?? 0);
+      const clientTimeMs = Number(request.clientTimeMs ?? clientSendTimeMs);
+      this.schedule(0, () =>
+        this.emitUnsequenced({
+          type: 'time.sync.result',
+          requestId,
+          ack: true,
+          payload: {
+            requestId,
+            clientSendTimeMs,
+            clientTimeMs,
+            serverTime: new Date().toISOString(),
+            serverTimeMs: Date.now()
+          }
+        })
+      );
+      return true;
+    }
+
     if (message.type === 'ping') {
       this.schedule(0, () =>
         this.emit({
@@ -415,6 +448,10 @@ export class MockRealtimeClient implements RealtimeClient {
       liveSessionId: this.options.liveSessionId
     };
     this.handlers.forEach((handler) => handler(withSeq));
+  }
+
+  private emitUnsequenced(message: Omit<RealtimeMessage, 'liveSessionId'>): void {
+    this.handlers.forEach((handler) => handler({ ...message, liveSessionId: this.options.liveSessionId }));
   }
 
   private schedule(ms: number, callback: () => void): void {
