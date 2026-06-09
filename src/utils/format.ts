@@ -23,6 +23,19 @@ export function getServerOffsetMs(serverTsMs: number, clientNowMs: number): numb
   return serverTsMs - clientNowMs;
 }
 
+export function getServerOffsetMsWithRtt({
+  serverTimeMs,
+  clientSendTimeMs,
+  clientReceiveTimeMs
+}: {
+  serverTimeMs: number;
+  clientSendTimeMs: number;
+  clientReceiveTimeMs: number;
+}): number {
+  const rttMs = Math.max(0, clientReceiveTimeMs - clientSendTimeMs);
+  return serverTimeMs + rttMs / 2 - clientReceiveTimeMs;
+}
+
 export function msUntil(endTsMs: number, clientNowMs: number, serverOffsetMs = 0): number {
   return Math.max(0, endTsMs - (clientNowMs + serverOffsetMs));
 }
