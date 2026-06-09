@@ -3581,30 +3581,34 @@ const countdownAmbientParticles = [
   { offset: '3px', bottom: '69%', size: '2px', delay: '1040ms', duration: '1560ms', drift: '5px' },
   { offset: '10px', bottom: '77%', size: '2px', delay: '1180ms', duration: '1920ms', drift: '4px' },
   { offset: '6px', bottom: '85%', size: '3px', delay: '1320ms', duration: '1680ms', drift: '6px' },
-  { offset: '15px', bottom: '93%', size: '2px', delay: '1460ms', duration: '1980ms', drift: '4px' }
+  { offset: '15px', bottom: '93%', size: '2px', delay: '1460ms', duration: '1980ms', drift: '4px' },
+  { offset: '8px', bottom: '10%', size: '2px', delay: '80ms', duration: '1420ms', drift: '7px' },
+  { offset: '17px', bottom: '24%', size: '2px', delay: '320ms', duration: '1660ms', drift: '5px' },
+  { offset: '11px', bottom: '38%', size: '3px', delay: '560ms', duration: '1540ms', drift: '7px' },
+  { offset: '16px', bottom: '56%', size: '2px', delay: '820ms', duration: '1860ms', drift: '5px' },
+  { offset: '13px', bottom: '72%', size: '2px', delay: '1080ms', duration: '1600ms', drift: '6px' },
+  { offset: '18px', bottom: '88%', size: '3px', delay: '1360ms', duration: '1900ms', drift: '5px' }
 ] as const;
 
 const countdownAmbientPulseSparks = [
-  { bottom: '8%', size: '3px', delay: '0ms', duration: '520ms', travelX: 'clamp(118px, 32vw, 178px)', travelY: '-8px', scale: '1.3' },
-  { bottom: '12%', size: '2px', delay: '14ms', duration: '560ms', travelX: 'clamp(146px, 40vw, 218px)', travelY: '10px', scale: '1.1' },
-  { bottom: '17%', size: '2px', delay: '28ms', duration: '500ms', travelX: 'clamp(96px, 26vw, 152px)', travelY: '-18px', scale: '1.2' },
-  { bottom: '22%', size: '3px', delay: '42ms', duration: '620ms', travelX: 'clamp(180px, 48vw, 264px)', travelY: '18px', scale: '1.35' },
-  { bottom: '27%', size: '2px', delay: '56ms', duration: '540ms', travelX: 'clamp(132px, 36vw, 206px)', travelY: '-24px', scale: '1.05' },
-  { bottom: '32%', size: '2px', delay: '70ms', duration: '590ms', travelX: 'clamp(206px, 56vw, 300px)', travelY: '6px', scale: '1.25' },
-  { bottom: '38%', size: '3px', delay: '84ms', duration: '560ms', travelX: 'clamp(156px, 42vw, 236px)', travelY: '-14px', scale: '1.4' },
-  { bottom: '43%', size: '2px', delay: '98ms', duration: '640ms', travelX: 'clamp(226px, 62vw, 330px)', travelY: '22px', scale: '1.1' },
-  { bottom: '49%', size: '2px', delay: '112ms', duration: '540ms', travelX: 'clamp(116px, 30vw, 186px)', travelY: '-30px', scale: '1.2' },
-  { bottom: '54%', size: '3px', delay: '126ms', duration: '620ms', travelX: 'clamp(196px, 54vw, 288px)', travelY: '2px', scale: '1.35' },
-  { bottom: '59%', size: '2px', delay: '140ms', duration: '500ms', travelX: 'clamp(144px, 38vw, 220px)', travelY: '-12px', scale: '1.15' },
-  { bottom: '64%', size: '2px', delay: '154ms', duration: '680ms', travelX: 'clamp(238px, 66vw, 344px)', travelY: '28px', scale: '1.05' },
-  { bottom: '69%', size: '3px', delay: '168ms', duration: '580ms', travelX: 'clamp(168px, 46vw, 254px)', travelY: '-26px', scale: '1.45' },
-  { bottom: '74%', size: '2px', delay: '182ms', duration: '620ms', travelX: 'clamp(214px, 58vw, 314px)', travelY: '12px', scale: '1.18' },
-  { bottom: '79%', size: '2px', delay: '196ms', duration: '520ms', travelX: 'clamp(122px, 34vw, 196px)', travelY: '-20px', scale: '1.2' },
-  { bottom: '84%', size: '3px', delay: '210ms', duration: '660ms', travelX: 'clamp(248px, 68vw, 356px)', travelY: '18px', scale: '1.3' },
-  { bottom: '88%', size: '2px', delay: '224ms', duration: '560ms', travelX: 'clamp(188px, 50vw, 276px)', travelY: '-32px', scale: '1.12' },
-  { bottom: '91%', size: '2px', delay: '238ms', duration: '600ms', travelX: 'clamp(154px, 44vw, 238px)', travelY: '6px', scale: '1.24' },
-  { bottom: '94%', size: '3px', delay: '252ms', duration: '640ms', travelX: 'clamp(226px, 60vw, 332px)', travelY: '-18px', scale: '1.42' },
-  { bottom: '96%', size: '2px', delay: '266ms', duration: '520ms', travelX: 'clamp(104px, 28vw, 166px)', travelY: '16px', scale: '1.08' }
+  { bottom: '8%', size: '3px', delay: '0ms', duration: '460ms', travelX: '18px', travelY: '-6px', scale: '1.26' },
+  { bottom: '13%', size: '2px', delay: '12ms', duration: '500ms', travelX: '24px', travelY: '8px', scale: '1.1' },
+  { bottom: '18%', size: '2px', delay: '24ms', duration: '440ms', travelX: '14px', travelY: '-14px', scale: '1.18' },
+  { bottom: '23%', size: '3px', delay: '36ms', duration: '540ms', travelX: '28px', travelY: '12px', scale: '1.32' },
+  { bottom: '29%', size: '2px', delay: '48ms', duration: '480ms', travelX: '20px', travelY: '-18px', scale: '1.06' },
+  { bottom: '34%', size: '2px', delay: '60ms', duration: '520ms', travelX: '26px', travelY: '4px', scale: '1.22' },
+  { bottom: '40%', size: '3px', delay: '72ms', duration: '500ms', travelX: '22px', travelY: '-10px', scale: '1.36' },
+  { bottom: '46%', size: '2px', delay: '84ms', duration: '560ms', travelX: '29px', travelY: '14px', scale: '1.08' },
+  { bottom: '52%', size: '2px', delay: '96ms', duration: '470ms', travelX: '16px', travelY: '-20px', scale: '1.18' },
+  { bottom: '57%', size: '3px', delay: '108ms', duration: '540ms', travelX: '27px', travelY: '2px', scale: '1.32' },
+  { bottom: '62%', size: '2px', delay: '120ms', duration: '450ms', travelX: '21px', travelY: '-8px', scale: '1.12' },
+  { bottom: '68%', size: '2px', delay: '132ms', duration: '580ms', travelX: '30px', travelY: '16px', scale: '1.04' },
+  { bottom: '73%', size: '3px', delay: '144ms', duration: '510ms', travelX: '23px', travelY: '-18px', scale: '1.4' },
+  { bottom: '79%', size: '2px', delay: '156ms', duration: '540ms', travelX: '28px', travelY: '7px', scale: '1.16' },
+  { bottom: '84%', size: '2px', delay: '168ms', duration: '470ms', travelX: '19px', travelY: '-14px', scale: '1.18' },
+  { bottom: '89%', size: '3px', delay: '180ms', duration: '560ms', travelX: '31px', travelY: '10px', scale: '1.28' },
+  { bottom: '93%', size: '2px', delay: '192ms', duration: '500ms', travelX: '25px', travelY: '-22px', scale: '1.1' },
+  { bottom: '96%', size: '2px', delay: '204ms', duration: '460ms', travelX: '15px', travelY: '12px', scale: '1.06' }
 ] as const;
 
 type LiveAuctionAlertKind = 'countdown' | 'leading' | 'outbid' | 'extended' | 'closed' | 'won';
@@ -3637,6 +3641,14 @@ type CountdownAmbientState = {
   tone: CountdownAmbientTone;
   progress: number;
   pulseId?: number;
+  endPulseId?: number;
+  endPhase?: 'hold' | 'leaving';
+};
+type CountdownAmbientEndEffect = {
+  auctionId: string;
+  endTsMs: number;
+  phase: 'hold' | 'leaving';
+  pulseId: number;
 };
 
 const liveAuctionAlertPriority: Record<LiveAuctionAlertKind, number> = {
@@ -3662,6 +3674,8 @@ const countdownPressureCriticalMs = 3000;
 const countdownPressureExtendedMs = 1200;
 const countdownAmbientThresholdMs = 30_000;
 const countdownAmbientBidPulseMs = 780;
+const countdownAmbientEndHoldMs = 1000;
+const countdownAmbientEndExitMs = 760;
 
 function countdownPressureDisplaySeconds(remainMs: number): number {
   return Math.max(0, Math.floor(remainMs / 1000));
@@ -3776,6 +3790,7 @@ function LiveRoomPage({
   const [liveStats, setLiveStats] = useState<LiveRoomStats>(demoLiveRoomStats);
   const [countdownExtensionPulse, setCountdownExtensionPulse] = useState<{ auctionId: string; id: number } | undefined>();
   const [countdownAmbientPulse, setCountdownAmbientPulse] = useState<{ auctionId: string; id: number } | undefined>();
+  const [countdownAmbientEndEffect, setCountdownAmbientEndEffect] = useState<CountdownAmbientEndEffect | undefined>();
   const [likeBurstId, setLikeBurstId] = useState(0);
   const [likeBurstVisible, setLikeBurstVisible] = useState(false);
   const [digitalHumanSpeaking, setDigitalHumanSpeaking] = useState(false);
@@ -3805,6 +3820,9 @@ function LiveRoomPage({
   const pendingFloatingAuctionCardRef = useRef<FloatingAuctionCardState>();
   const countdownExtensionTimerRef = useRef<number>();
   const countdownAmbientPulseTimerRef = useRef<number>();
+  const countdownAmbientEndHoldTimerRef = useRef<number>();
+  const countdownAmbientEndExitTimerRef = useRef<number>();
+  const completedCountdownAmbientEndKeyRef = useRef<string>();
   const scheduledAuctionRefreshAttemptsRef = useRef<Set<string>>(new Set());
   const bidConfirmTimerRef = useRef<number>();
   const settledBidResultIdsRef = useRef<Set<string>>(new Set());
@@ -3938,6 +3956,19 @@ function LiveRoomPage({
     setCountdownAmbientPulse(undefined);
   }, []);
 
+  const clearCountdownAmbientEndEffect = useCallback((options?: { keepCompleted?: boolean }) => {
+    if (countdownAmbientEndHoldTimerRef.current) {
+      window.clearTimeout(countdownAmbientEndHoldTimerRef.current);
+      countdownAmbientEndHoldTimerRef.current = undefined;
+    }
+    if (countdownAmbientEndExitTimerRef.current) {
+      window.clearTimeout(countdownAmbientEndExitTimerRef.current);
+      countdownAmbientEndExitTimerRef.current = undefined;
+    }
+    if (!options?.keepCompleted) completedCountdownAmbientEndKeyRef.current = undefined;
+    setCountdownAmbientEndEffect(undefined);
+  }, []);
+
   const triggerCountdownAmbientPulse = useCallback((auctionId: string) => {
     if (!auctionId) return;
     if (countdownAmbientPulseTimerRef.current) window.clearTimeout(countdownAmbientPulseTimerRef.current);
@@ -3962,15 +3993,18 @@ function LiveRoomPage({
     liveVoicePermissionPromptVisibleRef.current = false;
     pendingLiveVoicePayloadsRef.current = [];
     clearCountdownAmbientPulse();
+    clearCountdownAmbientEndEffect();
     clearDelayedRankingSnapshot();
     liveVoicePlayerRef.current?.stop();
     commentsShouldStickRef.current = true;
-  }, [clearCountdownAmbientPulse, clearDelayedRankingSnapshot, roomId]);
+  }, [clearCountdownAmbientEndEffect, clearCountdownAmbientPulse, clearDelayedRankingSnapshot, roomId]);
 
   useEffect(() => {
     return () => {
       if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
       if (countdownAmbientPulseTimerRef.current) window.clearTimeout(countdownAmbientPulseTimerRef.current);
+      if (countdownAmbientEndHoldTimerRef.current) window.clearTimeout(countdownAmbientEndHoldTimerRef.current);
+      if (countdownAmbientEndExitTimerRef.current) window.clearTimeout(countdownAmbientEndExitTimerRef.current);
       if (likeBurstTimerRef.current) window.clearTimeout(likeBurstTimerRef.current);
     };
   }, []);
@@ -3980,17 +4014,57 @@ function LiveRoomPage({
   const liveSheetOpen = hasBlockingLiveSheet;
   const activeCountdownRemainMs = currentState ? countdownRemainMs(currentState.endTsMs, now, serverTimeOffsetMs) : 0;
   const displayCurrentState = currentState ? stateWithHammerPendingAfterCountdown(currentState, activeCountdownRemainMs) : undefined;
+  useEffect(() => {
+    const activeEndTsMs = displayCurrentState?.endTsMs;
+    if (!activeLot || !displayCurrentState || activeEndTsMs === undefined || !isRunningAuctionStatus(displayCurrentState.status)) {
+      clearCountdownAmbientEndEffect();
+      return;
+    }
+    const endKey = `${activeLot.auctionId}:${activeEndTsMs}`;
+    if (activeCountdownRemainMs > 0) {
+      clearCountdownAmbientEndEffect();
+      return;
+    }
+    if (completedCountdownAmbientEndKeyRef.current === endKey) return;
+    if (countdownAmbientEndEffect?.auctionId === activeLot.auctionId && countdownAmbientEndEffect.endTsMs === activeEndTsMs) return;
+    if (countdownAmbientEndHoldTimerRef.current) window.clearTimeout(countdownAmbientEndHoldTimerRef.current);
+    if (countdownAmbientEndExitTimerRef.current) window.clearTimeout(countdownAmbientEndExitTimerRef.current);
+    const pulseId = Date.now();
+    setCountdownAmbientEndEffect({ auctionId: activeLot.auctionId, endTsMs: activeEndTsMs, phase: 'hold', pulseId });
+    countdownAmbientEndHoldTimerRef.current = window.setTimeout(() => {
+      setCountdownAmbientEndEffect((current) =>
+        current?.auctionId === activeLot.auctionId && current.endTsMs === activeEndTsMs
+          ? { ...current, phase: 'leaving' }
+          : current
+      );
+      countdownAmbientEndHoldTimerRef.current = undefined;
+    }, countdownAmbientEndHoldMs);
+    countdownAmbientEndExitTimerRef.current = window.setTimeout(() => {
+      completedCountdownAmbientEndKeyRef.current = endKey;
+      setCountdownAmbientEndEffect((current) => (current?.auctionId === activeLot.auctionId && current.endTsMs === activeEndTsMs ? undefined : current));
+      countdownAmbientEndExitTimerRef.current = undefined;
+    }, countdownAmbientEndHoldMs + countdownAmbientEndExitMs);
+  }, [activeCountdownRemainMs, activeLot, clearCountdownAmbientEndEffect, countdownAmbientEndEffect, displayCurrentState]);
+
   const countdownAmbientState = useMemo<CountdownAmbientState | undefined>(() => {
     if (!activeLot || !displayCurrentState) return undefined;
     if (!isRunningAuctionStatus(displayCurrentState.status)) return undefined;
     if (activeCountdownRemainMs > countdownAmbientThresholdMs) return undefined;
+    const endKey = `${activeLot.auctionId}:${displayCurrentState.endTsMs}`;
+    if (activeCountdownRemainMs <= 0 && completedCountdownAmbientEndKeyRef.current === endKey) return undefined;
+    const activeEndEffect =
+      countdownAmbientEndEffect?.auctionId === activeLot.auctionId && countdownAmbientEndEffect.endTsMs === displayCurrentState.endTsMs
+        ? countdownAmbientEndEffect
+        : undefined;
     return {
       auctionId: activeLot.auctionId,
       tone: countdownAmbientTone(displayCurrentState, userId),
       progress: countdownAmbientProgress(activeCountdownRemainMs),
-      pulseId: countdownAmbientPulse?.auctionId === activeLot.auctionId ? countdownAmbientPulse.id : undefined
+      pulseId: countdownAmbientPulse?.auctionId === activeLot.auctionId ? countdownAmbientPulse.id : undefined,
+      endPulseId: activeEndEffect?.pulseId,
+      endPhase: activeEndEffect?.phase
     };
-  }, [activeCountdownRemainMs, activeLot, countdownAmbientPulse, displayCurrentState, userId]);
+  }, [activeCountdownRemainMs, activeLot, countdownAmbientEndEffect, countdownAmbientPulse, displayCurrentState, userId]);
 
   const useMillisecondCountdownRefresh = Boolean(
     activeLot?.auctionId &&
@@ -4772,6 +4846,7 @@ function LiveRoomPage({
           if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
           setCountdownExtensionPulse(undefined);
           clearCountdownAmbientPulse();
+          clearCountdownAmbientEndEffect();
           setHiddenAuctionCardId(undefined);
           setRuntimeStartedAuctionId(auctionId);
           setLotStates((prev) => {
@@ -4818,6 +4893,7 @@ function LiveRoomPage({
         if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
         setCountdownExtensionPulse(undefined);
         clearCountdownAmbientPulse();
+        clearCountdownAmbientEndEffect();
         if (closingAuctionId && context.activeLot?.auctionId === closingAuctionId) {
           pushAuctionAtmosphereAlert(isCurrentUserWinner ? 'won' : 'closed', {
             auctionId: closingAuctionId,
@@ -4875,6 +4951,7 @@ function LiveRoomPage({
           if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
           setCountdownExtensionPulse(undefined);
           clearCountdownAmbientPulse();
+          clearCountdownAmbientEndEffect();
           setRuntimeStartedAuctionId((current) => (current === auctionId ? undefined : current));
           setHiddenAuctionCardId((current) => (current === auctionId ? undefined : current));
           lastRankingBidRef.current = undefined;
@@ -5022,7 +5099,7 @@ function LiveRoomPage({
       controlClient?.disconnect();
       client?.disconnect();
     };
-  }, [accessToken, acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, applyRankingUpdate, clearCountdownAmbientPulse, clearDelayedRankingSnapshot, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, handleBidResult, playLiveVoiceBroadcast, pushAuctionAtmosphereAlert, pushNotice, queryClient, requestFloatingAuctionCard, roomId, syncServerTimeOffset, triggerCountdownAmbientPulse, userAvatarUrl, userId, userNickname]);
+  }, [accessToken, acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, applyRankingUpdate, clearCountdownAmbientEndEffect, clearCountdownAmbientPulse, clearDelayedRankingSnapshot, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, handleBidResult, playLiveVoiceBroadcast, pushAuctionAtmosphereAlert, pushNotice, queryClient, requestFloatingAuctionCard, roomId, syncServerTimeOffset, triggerCountdownAmbientPulse, userAvatarUrl, userId, userNickname]);
 
   const enrollMutation = useMutation({
     mutationFn: (auctionId: string) => apiClient.enrollAuction(auctionId),
@@ -5418,8 +5495,9 @@ function LiveCountdownAmbientLayer({ state }: { state?: CountdownAmbientState })
   if (!state) return null;
   const progressPercent = `${(Math.round(state.progress * 1000) / 10).toFixed(1)}%`;
   const style = { '--countdown-ambient-progress': progressPercent } as CSSProperties;
+  const endPhaseClass = state.endPhase ? ` is-end-${state.endPhase}` : '';
   return (
-    <div className={`live-countdown-ambient is-${state.tone}`} style={style} aria-hidden="true">
+    <div className={`live-countdown-ambient is-${state.tone}${endPhaseClass}`} style={style} aria-hidden="true">
       <span className="live-countdown-ambient-band is-left" />
       <span className="live-countdown-ambient-band is-right" />
       <span className="live-countdown-ambient-bloom is-left" />
@@ -5447,27 +5525,30 @@ function LiveCountdownAmbientLayer({ state }: { state?: CountdownAmbientState })
       {state.pulseId ? (
         <>
           <span key={`pulse-${state.pulseId}`} className="live-countdown-ambient-pulse" />
-          <span key={`sparks-${state.pulseId}`} className="live-countdown-ambient-pulse-sparks">
-            {countdownAmbientPulseSparks.map((spark, index) => (
-              <span
-                key={index}
-                className="live-countdown-ambient-pulse-spark"
-                style={
-                  {
-                    '--ambient-spark-bottom': spark.bottom,
-                    '--ambient-spark-size': spark.size,
-                    '--ambient-spark-delay': spark.delay,
-                    '--ambient-spark-duration': spark.duration,
-                    '--ambient-spark-travel-x': spark.travelX,
-                    '--ambient-spark-travel-y': spark.travelY,
-                    '--ambient-spark-scale': spark.scale
-                  } as CSSProperties
-                }
-              />
-            ))}
-          </span>
+          {(['left', 'right'] as const).map((side) => (
+            <span key={`sparks-${side}-${state.pulseId}`} className={`live-countdown-ambient-pulse-sparks is-${side}`}>
+              {countdownAmbientPulseSparks.map((spark, index) => (
+                <span
+                  key={`${side}-${index}`}
+                  className="live-countdown-ambient-pulse-spark"
+                  style={
+                    {
+                      '--ambient-spark-bottom': spark.bottom,
+                      '--ambient-spark-size': spark.size,
+                      '--ambient-spark-delay': spark.delay,
+                      '--ambient-spark-duration': spark.duration,
+                      '--ambient-spark-travel-x': side === 'left' ? spark.travelX : `-${spark.travelX}`,
+                      '--ambient-spark-travel-y': spark.travelY,
+                      '--ambient-spark-scale': spark.scale
+                    } as CSSProperties
+                  }
+                />
+              ))}
+            </span>
+          ))}
         </>
       ) : null}
+      {state.endPulseId ? <span key={`end-pulse-${state.endPulseId}`} className="live-countdown-ambient-pulse is-end-pulse" /> : null}
     </div>
   );
 }

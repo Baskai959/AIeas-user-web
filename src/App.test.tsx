@@ -4672,7 +4672,7 @@ describe('App flow', () => {
       expect(ambient?.style.getPropertyValue('--countdown-ambient-progress')).toBe('0.0%');
       expect(document.querySelector('.live-countdown-ambient-band.is-left')).toBeInTheDocument();
       expect(document.querySelector('.live-countdown-ambient-band.is-right')).toBeInTheDocument();
-      expect(document.querySelectorAll('.live-countdown-ambient-particle')).toHaveLength(24);
+      expect(document.querySelectorAll('.live-countdown-ambient-particle')).toHaveLength(36);
 
       await act(async () => {
         vi.advanceTimersByTime(15_000);
@@ -4725,7 +4725,7 @@ describe('App flow', () => {
       await flushApp();
       expect(document.querySelector('.live-countdown-ambient.is-other')).toBeInTheDocument();
       expect(document.querySelector('.live-countdown-ambient-pulse')).toBeInTheDocument();
-      expect(document.querySelectorAll('.live-countdown-ambient-pulse-spark')).toHaveLength(20);
+      expect(document.querySelectorAll('.live-countdown-ambient-pulse-spark')).toHaveLength(36);
 
       await act(async () => {
         emitLatestMockControl(sockets, {
@@ -4751,6 +4751,53 @@ describe('App flow', () => {
             action: 'cancelled'
           }
         });
+      });
+      await flushApp();
+      expect(document.querySelector('.live-countdown-ambient')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('pulses the countdown ambient at countdown end, holds, then exits the side bands', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    vi.mocked(api.getAuctionState).mockReset();
+    vi.mocked(api.getAuctionState).mockResolvedValue({
+      auctionId: 'auc_2001',
+      status: 'RUNNING',
+      currentPrice: 150100,
+      leaderBidderId: 'u2',
+      endTsMs: now + 250,
+      serverTsMs: 0,
+      bidCount: 36,
+      participantCount: 128
+    });
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+
+      await flushApp();
+      expect(document.querySelector('.live-countdown-ambient')).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(320);
+      });
+      await flushApp();
+      const holdAmbient = document.querySelector('.live-countdown-ambient.is-end-hold') as HTMLElement | null;
+      expect(holdAmbient).toBeInTheDocument();
+      expect(holdAmbient?.style.getPropertyValue('--countdown-ambient-progress')).toBe('100.0%');
+      expect(document.querySelector('.live-countdown-ambient-pulse.is-end-pulse')).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+      await flushApp();
+      expect(document.querySelector('.live-countdown-ambient.is-end-leaving')).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(760);
       });
       await flushApp();
       expect(document.querySelector('.live-countdown-ambient')).not.toBeInTheDocument();

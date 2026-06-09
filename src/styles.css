@@ -5114,7 +5114,7 @@ button {
   filter: brightness(1);
   opacity: 0.72;
   mix-blend-mode: screen;
-  transition: height 160ms linear;
+  transition: height 160ms linear, opacity 760ms ease, transform 760ms ease;
   animation: countdown-ambient-breathe 1280ms ease-in-out infinite;
 }
 
@@ -5160,7 +5160,7 @@ button {
   filter: blur(1px);
   mix-blend-mode: screen;
   transform: translateY(-50%);
-  transition: top 160ms linear;
+  transition: top 160ms linear, opacity 760ms ease, transform 760ms ease;
   animation: countdown-ambient-breathe 1280ms ease-in-out infinite reverse;
 }
 
@@ -5179,7 +5179,7 @@ button {
   height: var(--countdown-ambient-progress, 0%);
   overflow: hidden;
   mix-blend-mode: screen;
-  transition: height 160ms linear;
+  transition: height 160ms linear, opacity 760ms ease, transform 760ms ease;
 }
 
 .live-countdown-ambient-particles.is-left {
@@ -5240,9 +5240,19 @@ button {
 
 .live-countdown-ambient-pulse-sparks {
   position: absolute;
-  inset: 0;
+  bottom: 0;
+  width: var(--countdown-ambient-pulse-width);
+  height: max(20dvh, var(--countdown-ambient-progress, 0%));
   overflow: hidden;
   mix-blend-mode: screen;
+}
+
+.live-countdown-ambient-pulse-sparks.is-left {
+  left: 0;
+}
+
+.live-countdown-ambient-pulse-sparks.is-right {
+  right: 0;
 }
 
 .live-countdown-ambient-pulse-spark {
@@ -5256,6 +5266,37 @@ button {
   box-shadow: 0 0 10px rgba(var(--countdown-ambient-core-rgb), 0.84), 0 0 18px rgba(var(--countdown-ambient-rgb), 0.38);
   opacity: 0;
   animation: countdown-ambient-pulse-spark var(--ambient-spark-duration) cubic-bezier(0.12, 0.78, 0.22, 1) var(--ambient-spark-delay) both;
+}
+
+.live-countdown-ambient-pulse-sparks.is-right .live-countdown-ambient-pulse-spark {
+  right: var(--countdown-ambient-band-width);
+  left: auto;
+}
+
+.live-countdown-ambient.is-end-leaving .live-countdown-ambient-band.is-left,
+.live-countdown-ambient.is-end-leaving .live-countdown-ambient-particles.is-left {
+  opacity: 0;
+  transform: translateX(-140%);
+}
+
+.live-countdown-ambient.is-end-leaving .live-countdown-ambient-band.is-right {
+  opacity: 0;
+  transform: translateX(140%) scaleX(-1);
+}
+
+.live-countdown-ambient.is-end-leaving .live-countdown-ambient-particles.is-right {
+  opacity: 0;
+  transform: translateX(140%);
+}
+
+.live-countdown-ambient.is-end-leaving .live-countdown-ambient-bloom.is-left {
+  opacity: 0;
+  transform: translate(-140%, -50%);
+}
+
+.live-countdown-ambient.is-end-leaving .live-countdown-ambient-bloom.is-right {
+  opacity: 0;
+  transform: translate(140%, -50%);
 }
 
 .live-auction-alert-layer {

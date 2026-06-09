@@ -446,7 +446,13 @@ describe('mobile layout CSS', () => {
     expect(rule('.live-countdown-ambient-particle')).toContain('animation: countdown-ambient-particle-float');
     expect(rule('.live-countdown-ambient-pulse')).toContain('animation: countdown-ambient-bid-pulse');
     expect(rule('.live-countdown-ambient-pulse::before,\n.live-countdown-ambient-pulse::after')).toContain('width: var(--countdown-ambient-pulse-width)');
+    expect(rule('.live-countdown-ambient-pulse-sparks')).toContain('width: var(--countdown-ambient-pulse-width)');
+    expect(rule('.live-countdown-ambient-pulse-sparks')).toContain('overflow: hidden');
     expect(rule('.live-countdown-ambient-pulse-spark')).toContain('animation: countdown-ambient-pulse-spark');
+    expect(rule('.live-countdown-ambient-pulse-sparks.is-right .live-countdown-ambient-pulse-spark')).toContain('right: var(--countdown-ambient-band-width)');
+    expect(rule('.live-countdown-ambient.is-end-leaving .live-countdown-ambient-band.is-left,\n.live-countdown-ambient.is-end-leaving .live-countdown-ambient-particles.is-left')).toContain('transform: translateX(-140%)');
+    expect(rule('.live-countdown-ambient.is-end-leaving .live-countdown-ambient-band.is-right')).toContain('transform: translateX(140%) scaleX(-1)');
+    expect(rule('.live-countdown-ambient.is-end-leaving .live-countdown-ambient-bloom.is-left')).toContain('transform: translate(-140%, -50%)');
     expect(rule('.live-countdown-ambient.is-other')).toContain('--countdown-ambient-rgb: 255, 49, 88');
     expect(rule('.live-countdown-ambient.is-self')).toContain('--countdown-ambient-rgb: 255, 190, 64');
     expect(rule('.sheet-backdrop')).toContain('z-index: 110');
