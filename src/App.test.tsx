@@ -2103,11 +2103,16 @@ describe('App flow', () => {
     });
     seedSession();
     renderWithRouter('/orders?tab=pendingReceipt');
+    const user = userEvent.setup();
 
     const row = (await screen.findByText('复古机械表')).closest('.record-card') as HTMLElement;
     expect(row).not.toBeNull();
     expect(within(row).getByText(getMessage('profile.pendingReceipt'))).toBeInTheDocument();
     expect(row).toHaveAttribute('data-order-id', '57024847413760');
+
+    await user.click(within(row).getByRole('button', { name: '复古机械表' }));
+    await waitFor(() => expect(window.location.pathname).toBe('/product/56973840220672'));
+    expect(api.getLot).toHaveBeenCalledWith('56973840220672');
   });
 
   it('keeps captured zero-deposit orders visible when participation records already exist', async () => {
@@ -3032,6 +3037,7 @@ describe('App flow', () => {
 
     const drawer = await screen.findByRole('dialog', { name: getMessage('live.goodsList') });
     expect(within(drawer).queryAllByTestId('lot-row')).toHaveLength(0);
+    expect(within(drawer).getByText(getMessage('live.goodsEmpty'))).toBeInTheDocument();
     expect(within(drawer).queryByText('18K 金钻石项链')).not.toBeInTheDocument();
   });
 

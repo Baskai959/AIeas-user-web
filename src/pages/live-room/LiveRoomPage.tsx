@@ -3790,7 +3790,7 @@ function LotListSheet({
         <>
         <SheetHeader title={t('live.goodsList')} onClose={requestClose} />
         <div className="lot-list">
-          {sortedLots.map(({ lot, state, originalIndex }) => {
+          {sortedLots.length ? sortedLots.map(({ lot, state, originalIndex }) => {
             const isActive = isActiveAuctionDisplayStatus(state.status);
             const scheduleText = scheduledStartTimeText(lot, state);
             const listIntro = lot.subtitle?.trim();
@@ -3863,11 +3863,20 @@ function LotListSheet({
                 </Button>
               </article>
             );
-          })}
+          }) : <EmptyState text={t('live.goodsEmpty')} />}
         </div>
         </>
       )}
     </AnimatedSheetFrame>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="empty-state">
+      <Package size={30} />
+      <span>{text}</span>
+    </div>
   );
 }
 

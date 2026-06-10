@@ -9,7 +9,7 @@ function lotFromOrder(order: Order): LiveRoomLot {
   const depositAmount = snapshot?.depositAmount ?? 0;
   const status: LiveRoomLot['status'] = order.fulfillmentStatus === 'RECEIVED' ? 'SETTLED' : 'CLOSED_WON';
   return {
-    id: `order-lot-${order.auctionId}`,
+    id: order.auctionId,
     auctionId: order.auctionId,
     roomId: order.liveSessionId ?? snapshot?.liveSessionId ?? '',
     merchantId: order.merchantId ?? snapshot?.sellerId,
