@@ -233,6 +233,28 @@ describe('mobile layout CSS', () => {
     expect(rule('.orders-page > .result-list')).toContain('grid-auto-rows: max-content');
   });
 
+  it('uses a merchant-only live card layout without eyebrow labels or oversized blank space', () => {
+    expect(rule('.merchant-body')).toContain('display: grid');
+    expect(rule('.merchant-body')).toContain('padding: 18px 14px 24px');
+    expect(rule('.merchant-section-heading h2')).toContain('font-size: 23px');
+    expect(rule('.merchant-section-heading h2')).not.toContain('margin: 0 0');
+    expect(rule('.merchant-live-card')).toContain('grid-template-columns: 118px minmax(0, 1fr)');
+    expect(rule('.merchant-live-card')).toContain('border-radius: 12px');
+    expect(rule('.merchant-live-media')).toContain('min-height: 156px');
+    expect(rule('.merchant-live-media')).toContain('background: #05070d');
+    expect(rule('.merchant-live-body')).toContain('justify-content: space-between');
+    expect(rule('.merchant-live-body')).toContain('padding: 14px 14px 14px 12px');
+    expect(rule('.merchant-live-copy h3')).toContain('font-size: 22px');
+    expect(rule('.merchant-live-copy h3')).toContain('-webkit-line-clamp: 2');
+    expect(rule('.merchant-live-meta')).toContain('flex-wrap: wrap');
+    expect(rule('.merchant-live-stat')).toContain('border-radius: 999px');
+    expect(rule('.merchant-live-stat')).toContain('background: #f8fafc');
+    expect(rule('.merchant-live-action.adm-button')).toContain('align-self: flex-start');
+    expect(rule('.merchant-live-action.adm-button')).toContain('min-width: 112px');
+    expect(css).toContain('@media (max-width: 360px)');
+    expect(rules('.merchant-live-card')).toContain('grid-template-columns: 108px minmax(0, 1fr)');
+  });
+
   it('docks the live ranking rail under the follow button with a low-alpha background', () => {
     expect(rule('.live-ranking-rail')).toContain('position: absolute');
     expect(rule('.live-ranking-rail')).toContain('right: 0');

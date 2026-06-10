@@ -4015,6 +4015,12 @@ button {
   background: #f6f7fb;
 }
 
+.merchant-body {
+  display: grid;
+  gap: 14px;
+  padding: 18px 14px 24px;
+}
+
 .merchant-hero {
   padding: 12px 14px 18px;
   color: #fff;
@@ -4077,6 +4083,120 @@ button {
 
 .merchant-stats .metric {
   color: #182230;
+}
+
+.merchant-section-heading h2 {
+  margin: 0;
+  color: #182230;
+  font-size: 23px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.merchant-live-card {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  overflow: hidden;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
+}
+
+.merchant-live-media {
+  position: relative;
+  width: 100%;
+  min-height: 156px;
+  padding: 0;
+  overflow: hidden;
+  text-align: left;
+  background: #05070d;
+  border: 0;
+}
+
+.merchant-live-media video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.merchant-live-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 14px 14px 14px 12px;
+}
+
+.merchant-live-copy {
+  min-width: 0;
+}
+
+.merchant-live-copy h3 {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: #182230;
+  font-size: 22px;
+  line-height: 1.18;
+  letter-spacing: 0;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.merchant-live-copy p {
+  margin: 6px 0 0;
+  overflow: hidden;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merchant-live-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.merchant-live-stat {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  padding: 5px 10px;
+  color: #475467;
+  font-size: 12px;
+  line-height: 1;
+  background: #f8fafc;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 999px;
+}
+
+.merchant-live-action.adm-button {
+  align-self: flex-start;
+  min-width: 112px;
+  padding: 0 14px;
+  font-weight: 700;
+}
+
+@media (max-width: 360px) {
+  .merchant-live-card {
+    grid-template-columns: 108px minmax(0, 1fr);
+  }
+
+  .merchant-live-media {
+    min-height: 144px;
+  }
+
+  .merchant-live-copy h3 {
+    font-size: 19px;
+  }
 }
 
 .product-page,

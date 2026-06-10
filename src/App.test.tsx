@@ -1791,6 +1791,25 @@ describe('App flow', () => {
     expect(await screen.findByText(getMessage('discoverLots.title'))).toBeInTheDocument();
   });
 
+  it('renders the merchant live section without eyebrow labels and uses the optimized merchant live card', async () => {
+    seedSession();
+    renderWithRouter('/merchant/merchant_01');
+
+    expect(await screen.findByRole('heading', { name: '云上珠宝' })).toBeInTheDocument();
+    expect(screen.queryByText(getMessage('merchant.liveWindow'))).not.toBeInTheDocument();
+    expect(screen.queryByText(getMessage('merchant.title'))).not.toBeInTheDocument();
+
+    const liveCard = document.querySelector('.merchant-live-card') as HTMLElement;
+    expect(liveCard).toBeInTheDocument();
+    expect(liveCard.querySelector('.merchant-live-media')).toBeInTheDocument();
+    expect(liveCard.querySelector('.merchant-live-body')).toBeInTheDocument();
+    expect(liveCard.querySelector('.merchant-live-meta')).toBeInTheDocument();
+    expect(within(liveCard).getByText('珠宝严选直播间')).toBeInTheDocument();
+    expect(within(liveCard).getByRole('button', { name: getMessage('home.enterRoom') })).toBeInTheDocument();
+
+    expect(screen.getByRole('heading', { name: getMessage('merchant.allLots') })).toBeInTheDocument();
+  });
+
   it('shows following, footprints, and order shortcuts on the me page, then saves a local nickname from settings', async () => {
     renderApp();
     const user = userEvent.setup();

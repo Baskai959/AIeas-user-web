@@ -6,7 +6,6 @@ import { ArrowLeft, Gavel, MapPin, Package, Plus, Radio, SlidersHorizontal, Star
 import logoUrl from '../../logo.png';
 import { LoadingBlock } from '../components/LoadingBlock';
 import { Metric } from '../components/Metric';
-import { SectionTitle } from '../components/SectionTitle';
 import { VisualPlaceholder } from '../components/VisualPlaceholder';
 import { minIncrementForLot } from '../features/auction/bidRules';
 import { formatCompactNumber, formatDate, lotStatusLabel, priceLabel, priceValue, scheduledStartText, stateFromLot, statusLabel } from '../features/auction/presentation';
@@ -1161,15 +1160,19 @@ function MerchantPage({ apiClient, merchantId, onBack, onOpenRoom, onOpenLot }: 
         )}
       </header>
 
-      <div className="merchant-body">
-        <SectionTitle eyebrow={t('merchant.liveWindow')} title={liveSession?.title ?? t('merchant.noLive')} />
-        {liveSession ? <LiveRoomCard room={liveSession} onOpen={() => onOpenRoom(liveSession.id)} compact /> : null}
+        <div className="merchant-body">
+          <div className="merchant-section-heading">
+            <h2>{liveSession ? t('home.liveNow') : t('merchant.noLive')}</h2>
+          </div>
+          {liveSession ? <LiveRoomCard room={liveSession} onOpen={() => onOpenRoom(liveSession.id)} /> : null}
 
-        <SectionTitle eyebrow={t('merchant.title')} title={t('merchant.allLots')} />
-        <FilterRow>
-          <FilterSelect label={t('filter.sort')} value={lotSort} onChange={(value) => setLotSort(value as LotSortKey)} options={lotSortOptions()} />
-          <FilterSelect label={t('filter.status')} value={lotStatus} onChange={(value) => setLotStatus(value as LotStatusFilter)} options={lotStatusOptions()} />
-          <FilterSelect
+          <div className="merchant-section-heading">
+            <h2>{t('merchant.allLots')}</h2>
+          </div>
+          <FilterRow>
+            <FilterSelect label={t('filter.sort')} value={lotSort} onChange={(value) => setLotSort(value as LotSortKey)} options={lotSortOptions()} />
+            <FilterSelect label={t('filter.status')} value={lotStatus} onChange={(value) => setLotStatus(value as LotStatusFilter)} options={lotStatusOptions()} />
+            <FilterSelect
             label={t('filter.category')}
             value={categoryId}
             onChange={setCategoryId}
@@ -1240,25 +1243,27 @@ function ProductPage({ apiClient, lotId, onBack, onOpenRoom }: { apiClient: ApiC
   );
 }
 
-function LiveRoomCard({ room, onOpen, compact = false }: { room: LiveRoom; onOpen: () => void; compact?: boolean }) {
+function LiveRoomCard({ room, onOpen }: { room: LiveRoom; onOpen: () => void }) {
   return (
-    <article className={compact ? 'room-card compact' : 'room-card'}>
-      <button className="room-thumb" type="button" onClick={onOpen}>
+    <article className="merchant-live-card">
+      <button className="merchant-live-media" type="button" onClick={onOpen} aria-label={`${t('home.enterRoom')} ${room.title}`}>
         <video muted loop {...mobileInlineVideoAttributes} preload="metadata" src={discoverPreviewVideoUrl(room)} poster={room.coverUrl} />
         <span className="live-pill">{statusLabel(room.status)}</span>
       </button>
-      <div className="room-card-body">
-        <h2>{room.title}</h2>
-        <p>{room.merchantName}</p>
-        <div className="room-card-stats">
-          <span>
-            <Wifi size={14} /> {t('home.online')} {room.onlineCount}
+      <div className="merchant-live-body">
+        <div className="merchant-live-copy">
+          <h3>{room.title}</h3>
+          <p>{room.merchantName}</p>
+        </div>
+        <div className="merchant-live-meta" aria-label={t('merchant.liveWindow')}>
+          <span className="merchant-live-stat">
+            <Wifi size={14} /> {t('home.online')} {formatCompactNumber(room.onlineCount)}
           </span>
-          <span>
-            <Users size={14} /> {t('home.watchers')} {room.watcherCount}
+          <span className="merchant-live-stat">
+            <Users size={14} /> {t('home.watchers')} {formatCompactNumber(room.watcherCount)}
           </span>
         </div>
-        <Button color="primary" size="small" onClick={onOpen}>
+        <Button className="merchant-live-action" color="primary" size="small" onClick={onOpen}>
           {t('home.enterRoom')}
         </Button>
       </div>
