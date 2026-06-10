@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type Dispatch, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type SetStateAction, type SyntheticEvent as ReactSyntheticEvent, type TouchEvent as ReactTouchEvent, type TransitionEvent as ReactTransitionEvent, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type Dispatch, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type SetStateAction, type SyntheticEvent as ReactSyntheticEvent, type TouchEvent as ReactTouchEvent, type TransitionEvent as ReactTransitionEvent, type UIEvent as ReactUIEvent, type VideoHTMLAttributes, type WheelEvent as ReactWheelEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams, type Location, type NavigateFunction } from 'react-router-dom';
@@ -145,6 +145,24 @@ const previewMediaPositionStoragePrefix = 'aieas-user-preview-media-position:';
 const likeBurstParticles = Array.from({ length: 15 }, (_, index) => index);
 const liveVoiceUnlockEvents = ['pointerdown', 'touchend', 'keydown', 'click'] as const;
 const liveSessionLotListChangedEvents = new Set(['live_session.lot_mounted', 'live_session.lot_unmounted', 'live_session.lot_changed']);
+type MobileInlineVideoAttributes = VideoHTMLAttributes<HTMLVideoElement> & {
+  'webkit-playsinline': string;
+  'x5-playsinline': string;
+  'x5-video-player-type': string;
+  'x5-video-orientation': string;
+  'x-webkit-airplay': string;
+};
+const mobileInlineVideoAttributes = {
+  playsInline: true,
+  'webkit-playsinline': 'true',
+  'x5-playsinline': 'true',
+  'x5-video-player-type': 'h5',
+  'x5-video-orientation': 'portrait',
+  'x-webkit-airplay': 'deny',
+  controlsList: 'nodownload noplaybackrate nofullscreen noremoteplayback',
+  disablePictureInPicture: true,
+  disableRemotePlayback: true
+} satisfies MobileInlineVideoAttributes;
 function isLiveSoundUnlockControlTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(target.closest('[data-live-sound-unlock-control="true"]'));
 }
@@ -1249,7 +1267,7 @@ function DiscoverPage({ apiClient, focusRoomId, onOpenRoom }: { apiClient: ApiCl
                 poster={room.coverUrl}
                 muted={!isActive || !shouldDiscoverPreviewPlayAudibly(room, previewSoundEnabled)}
                 loop
-                playsInline
+                {...mobileInlineVideoAttributes}
                 preload="metadata"
                 ref={(node) => {
                   videoRefs.current[slide.key] = node;
@@ -1818,10 +1836,10 @@ function MePage({
   return (
     <section className="me-page">
       <header className="me-hero">
-        <button className="icon-button" type="button" onClick={onSettings} aria-label={t('settings.title')}>
-          <Settings size={21} />
-        </button>
         <div className="me-profile-card">
+          <button className="icon-button" type="button" onClick={onSettings} aria-label={t('settings.title')}>
+            <Settings size={21} />
+          </button>
           <button className="me-avatar-button" type="button" onClick={() => setShowAvatarDialog(true)} aria-label={t('profile.viewAvatar')}>
             <AvatarView profile={profile} />
           </button>
@@ -2361,7 +2379,7 @@ function LiveRoomCard({ room, onOpen, compact = false }: { room: LiveRoom; onOpe
   return (
     <article className={compact ? 'room-card compact' : 'room-card'}>
       <button className="room-thumb" type="button" onClick={onOpen}>
-        <video muted loop playsInline preload="metadata" src={discoverPreviewVideoUrl(room)} poster={room.coverUrl} />
+        <video muted loop {...mobileInlineVideoAttributes} preload="metadata" src={discoverPreviewVideoUrl(room)} poster={room.coverUrl} />
         <span className="live-pill">{statusLabel(room.status)}</span>
       </button>
       <div className="room-card-body">
@@ -4030,7 +4048,7 @@ function LiveRoomPage({
   const displayCurrentState = currentState ? stateWithHammerPendingAfterCountdown(currentState, activeCountdownRemainMs) : undefined;
   useEffect(() => {
     const activeEndTsMs = displayCurrentState?.endTsMs;
-    if (!activeLot || !displayCurrentState || activeEndTsMs === undefined || !isRunningAuctionStatus(displayCurrentState.status)) {
+    if (!activeLot || !displayCurrentState || activeEndTsMs === undefined || !isActiveAuctionDisplayStatus(displayCurrentState.status)) {
       clearCountdownAmbientEndEffect();
       return;
     }
@@ -4062,7 +4080,7 @@ function LiveRoomPage({
 
   const countdownAmbientState = useMemo<CountdownAmbientState | undefined>(() => {
     if (!activeLot || !displayCurrentState) return undefined;
-    if (!isRunningAuctionStatus(displayCurrentState.status)) return undefined;
+    if (!isActiveAuctionDisplayStatus(displayCurrentState.status)) return undefined;
     if (activeCountdownRemainMs > countdownAmbientThresholdMs) return undefined;
     const endKey = `${activeLot.auctionId}:${displayCurrentState.endTsMs}`;
     if (activeCountdownRemainMs <= 0 && completedCountdownAmbientEndKeyRef.current === endKey) return undefined;
@@ -5857,7 +5875,7 @@ const LiveRoomVideoSurface = forwardRef<LiveRoomVideoSurfaceHandle, LiveRoomVide
         muted={!soundEnabled}
         autoPlay
         loop
-        playsInline
+        {...mobileInlineVideoAttributes}
         onLoadedMetadata={syncRecordedVideoPosition}
         onCanPlay={syncRecordedVideoPosition}
         onTimeUpdate={rememberRecordedVideoPosition}
@@ -7605,7 +7623,7 @@ function DigitalHumanLiveStage({ room, idleVideoUrl, talkVideoUrl, initialMediaP
         muted
         autoPlay
         loop
-        playsInline
+        {...mobileInlineVideoAttributes}
         preload="auto"
         onLoadedMetadata={syncIdleVideoPosition}
         onCanPlay={syncIdleVideoPosition}
@@ -7619,7 +7637,7 @@ function DigitalHumanLiveStage({ room, idleVideoUrl, talkVideoUrl, initialMediaP
         src={talkVideoUrl}
         muted
         loop
-        playsInline
+        {...mobileInlineVideoAttributes}
         preload="auto"
         onError={() => setMediaError(true)}
       />

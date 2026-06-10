@@ -322,8 +322,8 @@ function html() {
   <div class="app">
     <main class="stage-shell">
       <section id="stage" class="stage" aria-label="视频画面">
-        <video id="idleVideo" class="media idle" src="/media/idle.mp4" muted autoplay loop playsinline preload="auto"></video>
-        <video id="talkVideo" class="media talk" src="/media/talk.mp4" muted loop playsinline preload="auto"></video>
+        <video id="idleVideo" class="media idle" src="/media/idle.mp4" muted autoplay loop playsinline webkit-playsinline="true" x5-playsinline="true" x5-video-player-type="h5" x5-video-orientation="portrait" x-webkit-airplay="deny" preload="auto"></video>
+        <video id="talkVideo" class="media talk" src="/media/talk.mp4" muted loop playsinline webkit-playsinline="true" x5-playsinline="true" x5-video-player-type="h5" x5-video-orientation="portrait" x-webkit-airplay="deny" preload="auto"></video>
         <div class="badge" aria-live="polite">
           <span class="dot" aria-hidden="true"></span>
           <span id="modeLabel">待机</span>

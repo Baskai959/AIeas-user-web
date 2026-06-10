@@ -458,8 +458,13 @@ button {
 }
 
 .live-page {
+  --live-auction-action-width: clamp(112px, 30vw, 132px);
+  --live-comment-list-max-width: 280px;
   position: relative;
   min-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  min-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   overflow: hidden;
   background: #05070d;
   animation: live-room-enter 180ms ease-out;
@@ -879,12 +884,13 @@ button {
 .live-ranking-panel {
   position: relative;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 4px;
-  grid-auto-rows: max-content;
   align-content: start;
   min-height: 0;
   max-height: calc(100dvh - 162px);
   padding: 10px 7px 6px 9px;
+  overflow: hidden;
 }
 
 .live-ranking-title {
@@ -907,6 +913,7 @@ button {
   position: relative;
   display: grid;
   gap: 4px;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -1271,8 +1278,8 @@ button {
   flex-direction: column;
   gap: 6px;
   justify-content: flex-end;
-  width: min(72vw, 280px);
-  max-width: calc(100% - 12px);
+  width: min(var(--live-comment-list-max-width), calc(100% - var(--live-auction-action-width) - 22px));
+  max-width: calc(100% - var(--live-auction-action-width) - 22px);
   max-height: min(30vh, 176px);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -4307,13 +4314,6 @@ button {
   padding: 18px 14px 14px;
 }
 
-.me-hero > .icon-button {
-  position: absolute;
-  top: 12px;
-  right: 14px;
-  color: #111827;
-}
-
 .me-profile-card,
 .order-shortcut-card,
 .record-tabs-card,
@@ -4326,12 +4326,20 @@ button {
 }
 
 .me-profile-card {
+  position: relative;
   display: grid;
   grid-template-columns: 82px 1fr;
   gap: 14px;
   align-items: center;
-  padding: 18px;
-  margin-top: 42px;
+  padding: 18px 56px 18px 18px;
+}
+
+.me-profile-card > .icon-button {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  color: #111827;
+  background: rgba(15, 23, 42, 0.06);
 }
 
 .me-avatar-button {
@@ -6519,5 +6527,124 @@ button {
 
   .price-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-height: 720px), (max-width: 360px) {
+  .live-page {
+    --live-auction-action-width: clamp(96px, 28vw, 108px);
+    --live-comment-list-max-width: 220px;
+  }
+
+  .live-ranking-rail {
+    --live-ranking-toggle-width: 18px;
+    --live-ranking-first-row-top: 44px;
+    --live-ranking-price-width: 56px;
+    top: 52px;
+    width: clamp(146px, 42vw, 170px);
+  }
+
+  .live-ranking-toggle {
+    gap: 3px;
+    height: 56px;
+    padding-block: 6px;
+    font-size: 10px;
+  }
+
+  .live-ranking-panel {
+    gap: 3px;
+    max-height: min(calc(100dvh - 244px), 236px);
+    padding: 8px 6px 6px 8px;
+  }
+
+  .live-ranking-title {
+    font-size: 11px;
+  }
+
+  .live-ranking-board-viewport {
+    gap: 3px;
+    overflow-y: auto;
+    padding-right: 2px;
+    scrollbar-width: none;
+  }
+
+  .live-ranking-board-viewport::-webkit-scrollbar {
+    display: none;
+  }
+
+  .live-ranking-top-list {
+    gap: 3px;
+  }
+
+  .live-ranking-row,
+  .live-ranking-ghost {
+    grid-template-columns: 17px 20px minmax(0, 1fr) var(--live-ranking-price-width);
+    gap: 3px;
+    min-height: 24px;
+    font-size: 9px;
+  }
+
+  .live-ranking-rank {
+    width: 17px;
+    height: 17px;
+    font-size: 9px;
+  }
+
+  .live-ranking-avatar {
+    width: 20px;
+    height: 20px;
+    font-size: 9px;
+  }
+
+  .live-ranking-price {
+    font-size: 9px;
+  }
+
+  .live-ranking-price.is-leading-price {
+    font-size: 11px;
+  }
+
+  .live-ranking-current-row {
+    min-height: 24px;
+  }
+
+  .auction-float-card {
+    bottom: calc(56px + env(safe-area-inset-bottom));
+  }
+
+  .auction-float-dismiss {
+    width: 24px;
+    height: 24px;
+  }
+
+  .auction-float-dismiss svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .float-card-main {
+    padding-bottom: 6px;
+  }
+
+  .float-card-main h2 {
+    margin: 6px 6px 3px;
+    font-size: 12px;
+  }
+
+  .float-card-main p,
+  .float-card-main small {
+    font-size: 10px;
+  }
+
+  .float-card-main strong {
+    margin: 2px 6px;
+    font-size: 14px;
+  }
+
+  .float-card-action {
+    width: calc(100% - 10px);
+    min-height: 30px;
+    margin: 0 5px 6px;
+    font-size: 11px;
   }
 }

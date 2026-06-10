@@ -119,9 +119,11 @@ describe('mobile layout CSS', () => {
 
   it('keeps live-room bottom controls compact', () => {
     expect(css).toContain('--live-auction-action-width: clamp(112px, 30vw, 132px)');
+    expect(rule('.live-page')).toContain('--live-comment-list-max-width: 280px');
     expect(rule('.live-comment-input-row')).toContain('grid-template-columns: 36px minmax(0, 1fr) 36px var(--live-auction-action-width)');
     expect(rule('.live-comment-input-row.is-collapsed')).toContain('display: flex');
-    expect(rule('.live-comment-list')).toContain('width: min(72vw, 280px)');
+    expect(rule('.live-comment-list')).toContain('width: min(var(--live-comment-list-max-width), calc(100% - var(--live-auction-action-width) - 22px))');
+    expect(rule('.live-comment-list')).toContain('max-width: calc(100% - var(--live-auction-action-width) - 22px)');
     expect(rule('.live-comment-list')).toContain('max-height: min(30vh, 176px)');
     expect(rule('.live-comment-item')).toContain('display: flex');
     expect(rule('.live-comment-item')).toContain('align-items: flex-start');
@@ -163,8 +165,10 @@ describe('mobile layout CSS', () => {
     expect(rule('.comment-composer-send-button')).toContain('background: #f9a7bd');
     expect(rules('.comment-list-button')).toContain('width: var(--live-auction-action-width)');
     expect(rules('.comment-list-button')).toContain('background: linear-gradient(135deg, #ff7a18 0%, #ff2d55 100%)');
+    expect(css).toContain('@media (max-height: 720px), (max-width: 360px)');
     expect(rule('.auction-float-card')).toContain('width: var(--live-auction-action-width)');
     expect(rule('.auction-float-card')).toContain('bottom: calc(66px + env(safe-area-inset-bottom))');
+    expect(rules('.auction-float-card')).toContain('bottom: calc(56px + env(safe-area-inset-bottom))');
     expect(rule('.auction-float-card')).toContain('overflow: hidden');
     expect(rule('.auction-float-media')).toContain('position: relative');
     expect(rule('.auction-float-media')).toContain('width: calc(100% + 2px)');
@@ -228,10 +232,15 @@ describe('mobile layout CSS', () => {
     expect(rule('.live-ranking-toggle b')).toContain('writing-mode: vertical-rl');
     expect(rule('.live-ranking-rail.is-collapsed')).toContain('transform: translateX(100%)');
     expect(rule('.live-ranking-panel')).toContain('min-height: 0');
-    expect(rule('.live-ranking-panel')).toContain('grid-auto-rows: max-content');
+    expect(rule('.live-ranking-panel')).toContain('grid-template-rows: auto minmax(0, 1fr) auto');
     expect(rule('.live-ranking-panel')).toContain('align-content: start');
+    expect(rule('.live-ranking-panel')).toContain('overflow: hidden');
     expect(rule('.live-ranking-board-viewport')).toContain('position: relative');
+    expect(rule('.live-ranking-board-viewport')).toContain('min-height: 0');
     expect(rule('.live-ranking-board-viewport')).toContain('overflow: hidden');
+    expect(rules('.live-ranking-rail')).toContain('width: clamp(146px, 42vw, 170px)');
+    expect(rules('.live-ranking-panel')).toContain('max-height: min(calc(100dvh - 244px), 236px)');
+    expect(rules('.live-ranking-board-viewport')).toContain('overflow-y: auto');
     expect(rule('.live-ranking-row')).toContain('grid-template-columns: 19px 22px minmax(0, 1fr) var(--live-ranking-price-width)');
     expect(rule('.live-ranking-title')).toContain('justify-content: center');
     expect(rule('.live-ranking-price')).toContain('color: #ff4d5f');

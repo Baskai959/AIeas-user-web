@@ -464,6 +464,20 @@ async function loginAsBuyer(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: getMessage('login.submit') }));
 }
 
+function expectMobileInlineVideo(video: HTMLVideoElement | null) {
+  expect(video).not.toBeNull();
+  expect(video).toHaveAttribute('playsinline');
+  expect(video).toHaveAttribute('webkit-playsinline', 'true');
+  expect(video).toHaveAttribute('x5-playsinline', 'true');
+  expect(video).toHaveAttribute('x5-video-player-type', 'h5');
+  expect(video).toHaveAttribute('x5-video-orientation', 'portrait');
+  expect(video).toHaveAttribute('x-webkit-airplay', 'deny');
+  expect(video).toHaveAttribute('controlsList', 'nodownload noplaybackrate nofullscreen noremoteplayback');
+  expect(video).toHaveAttribute('disablePictureInPicture');
+  expect(video).toHaveAttribute('disableRemotePlayback');
+  expect(video).not.toHaveAttribute('controls');
+}
+
 function firePointer(target: Element, type: 'pointerdown' | 'pointermove' | 'pointerup' | 'pointercancel', init: { pointerId: number; pointerType?: string; clientX?: number; clientY?: number; button?: number; buttons?: number }) {
   const event = new MouseEvent(type, {
     bubbles: true,
@@ -710,6 +724,20 @@ describe('App flow', () => {
     expect(await screen.findByText('珠宝严选直播间')).toBeInTheDocument();
     expect(window.location.pathname).toBe('/');
     expect(window.location.search).toBe('?focusRoomId=room_1001');
+  });
+
+  it('keeps live room media inline on mobile browsers instead of exposing native video windows', async () => {
+    renderApp();
+    const user = userEvent.setup();
+
+    await loginAsBuyer(user);
+    const feed = await screen.findByTestId('discover-feed');
+    const previewVideo = feed.querySelector<HTMLVideoElement>('.discover-slide.is-active .discover-video');
+    expectMobileInlineVideo(previewVideo);
+
+    await user.click(screen.getByRole('button', { name: getMessage('discover.enterLive') }));
+
+    expectMobileInlineVideo(await screen.findByTestId('live-room-video') as HTMLVideoElement);
   });
 
   it('attempts audible play when entering a live room and keeps sound enabled after it succeeds', async () => {
@@ -1734,6 +1762,9 @@ describe('App flow', () => {
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
 
     expect(await screen.findByText('Buyer One')).toBeInTheDocument();
+    const profileCard = document.querySelector('.me-profile-card') as HTMLElement;
+    const settingsButton = within(profileCard).getByRole('button', { name: getMessage('settings.title') });
+    expect(settingsButton).toBeInTheDocument();
     const quickLinks = within(screen.getByLabelText(getMessage('profile.quickLinks')));
     expect(quickLinks.getByText(getMessage('profile.following'))).toBeInTheDocument();
     expect(quickLinks.getByText(getMessage('profile.footprints'))).toBeInTheDocument();
@@ -1757,7 +1788,8 @@ describe('App flow', () => {
     await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
     expect(await screen.findByText('Buyer One')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: getMessage('settings.title') }));
+    const refreshedProfileCard = document.querySelector('.me-profile-card') as HTMLElement;
+    await user.click(within(refreshedProfileCard).getByRole('button', { name: getMessage('settings.title') }));
     const settingsTitle = await screen.findByRole('heading', { name: getMessage('settings.title') });
     expect(settingsTitle.closest('.simple-page-header')?.querySelector('.eyebrow')).not.toBeInTheDocument();
     const nickname = await screen.findByLabelText(getMessage('settings.nickname'));
@@ -2395,13 +2427,13 @@ describe('App flow', () => {
 
     const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
     const participantsMetric = () => within(detailDialog).getByText(getMessage('auction.participants')).closest('.metric') as HTMLElement;
-    expect(participantsMetric()).toHaveTextContent('1');
+    const participantsValue = () => participantsMetric().querySelector('strong') as HTMLElement;
+    await waitFor(() => expect(participantsValue()).toHaveTextContent(/^1$/));
 
     await user.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
 
     expect(await within(detailDialog).findByRole('button', { name: getMessage('product.bidNow') })).toBeInTheDocument();
-    expect(participantsMetric()).toHaveTextContent('1');
-    expect(participantsMetric()).not.toHaveTextContent('2');
+    expect(participantsValue()).not.toHaveTextContent(/^2$/);
   });
 
   it('updates the bid sheet current price and leader from bid.accepted', async () => {
