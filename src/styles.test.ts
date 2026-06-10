@@ -32,6 +32,21 @@ describe('mobile layout CSS', () => {
     expect(rule('.discover-video')).toContain('object-fit: cover');
   });
 
+  it('keeps looping video surfaces from receiving mobile tap events', () => {
+    expect(rule('.live-video')).toContain('pointer-events: none');
+    expect(rule('.digital-human-video')).toContain('pointer-events: none');
+    expect(rule('.discover-video')).toContain('pointer-events: none');
+    expect(rule('.room-thumb video')).toContain('pointer-events: none');
+  });
+
+  it('uses a stable mobile viewport height instead of dynamic compression for page shells', () => {
+    expect(css).toContain('--app-stable-viewport-height: 100vh');
+    expect(css).toContain('--app-stable-viewport-height: 100lvh');
+    expect(rule('.tab-shell')).toContain('min-height: calc(var(--app-stable-viewport-height) - env(safe-area-inset-top))');
+    expect(rule('.discover-page')).toContain('height: calc(var(--app-stable-viewport-height) - env(safe-area-inset-top) - var(--bottom-tab-height))');
+    expect(rule('.orders-page')).toContain('height: calc(var(--app-stable-viewport-height) - env(safe-area-inset-top))');
+  });
+
   it('uses one continuous bottom-tab background and highlights only active text/icons', () => {
     expect(css).toContain('--bottom-tab-height');
     expect(css).toContain('--app-shell-border-width');
@@ -76,7 +91,7 @@ describe('mobile layout CSS', () => {
   });
 
   it('keeps discover lot controls sticky and direction-revealable inside the lot feed', () => {
-    expect(rule('.discover-lots-page')).toContain('height: calc(100dvh - env(safe-area-inset-top) - var(--bottom-tab-height))');
+    expect(rule('.discover-lots-page')).toContain('height: calc(var(--app-stable-viewport-height) - env(safe-area-inset-top) - var(--bottom-tab-height))');
     expect(rule('.discover-lots-page')).toContain('overflow-y: auto');
     expect(rule('.discover-lots-toolbar')).toContain('position: sticky');
     expect(rule('.discover-lots-toolbar')).toContain('top: -14px');
