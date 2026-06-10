@@ -458,6 +458,24 @@ function seedSession() {
   });
 }
 
+function mockDigitalHumanLiveRoomOnce() {
+  vi.mocked(api.getLiveRoom).mockResolvedValueOnce({
+    id: 'room_1001',
+    title: '数字人专场',
+    merchantName: '云上珠宝',
+    status: 'LIVE',
+    videoSource: 'digitalHuman',
+    onlineCount: 328,
+    watcherCount: 1208,
+    activeAuctionId: 'auc_2001',
+    digitalHuman: {
+      idleVideoUrl: '/media/AI_Presenter_Silent.mp4',
+      speakingVideoUrl: '/media/AI_Presenter_Speaking.mp4',
+      ttsWsUrl: 'ws://127.0.0.1:8876/tts'
+    }
+  });
+}
+
 async function loginAsBuyer(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText(getMessage('login.account')), 'buyer001');
   await user.type(screen.getByLabelText(getMessage('login.password')), 'Passw0rd!');
@@ -1540,6 +1558,7 @@ describe('App flow', () => {
   });
 
   it('sends, drafts, likes, and toggles live-room comments', async () => {
+    const sockets = installMockControlSocket();
     seedSession();
     window.history.pushState(null, '', '/live/room_1001');
     renderApp();
@@ -1567,6 +1586,24 @@ describe('App flow', () => {
 
     await user.type(input, '出价很激烈{enter}');
     expect(await screen.findByText('出价很激烈')).toBeInTheDocument();
+
+    await act(async () => {
+      emitLatestMockControl(sockets, {
+        type: 'chat.message',
+        payload: {
+          id: 'msg_backend_1',
+          roomId: 'room_1001',
+          userId: '1001',
+          userNickname: '张三',
+          nickname: '1001',
+          content: '后端评论',
+          createdAt: new Date(now).toISOString()
+        }
+      });
+    });
+    expect(await screen.findByText('后端评论')).toBeInTheDocument();
+    expect(screen.getByText('张三')).toBeInTheDocument();
+    expect(screen.queryByText('1001')).not.toBeInTheDocument();
 
     await user.type(input, 'Draft kept locally');
     expect(useLiveActivityStore.getState().commentDrafts.room_1001).toBe('Draft kept locally');
@@ -5796,7 +5833,7 @@ describe('App flow', () => {
     expect(screen.queryByTestId('live-room-video')).not.toBeInTheDocument();
   });
 
-  it('plays live voice broadcast audio and shows the speaking digital human video', async () => {
+  it('ignores live voice broadcast audio when the current room is not digital-human live', async () => {
     const sockets = installMockControlSocket();
     const audio = installMockAudioContext();
     seedSession();
@@ -5822,7 +5859,39 @@ describe('App flow', () => {
       await Promise.resolve();
     });
 
-    const stage = await screen.findByTestId('digital-human-stage');
+    expect(screen.getByTestId('live-room-video')).toBeInTheDocument();
+    expect(screen.queryByTestId('digital-human-stage')).not.toBeInTheDocument();
+    expect(audio.sources).toHaveLength(0);
+  });
+
+  it('plays live voice broadcast audio and shows the speaking digital human video', async () => {
+    const sockets = installMockControlSocket();
+    const audio = installMockAudioContext();
+    mockDigitalHumanLiveRoomOnce();
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+
+    renderApp();
+
+    expect(await screen.findByTestId('digital-human-stage')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: getMessage('live.soundDisable') })).toBeInTheDocument());
+
+    await act(async () => {
+      emitLatestMockControl(sockets, {
+        type: 'live.voice_broadcast',
+        liveSessionId: 9001,
+        payload: {
+          liveSessionId: 9001,
+          audioBase64: btoa(String.fromCharCode(0, 0, 255, 127, 0, 128)),
+          audioFormat: 'pcm_s16le',
+          sampleRate: 24_000,
+          channels: 1
+        }
+      });
+      await Promise.resolve();
+    });
+
+    const stage = screen.getByTestId('digital-human-stage');
     expect(stage).toHaveClass('is-speaking');
     expect(stage.querySelector('.digital-human-video.talk')).toHaveAttribute('src', '/media/AI_Presenter_Speaking.mp4');
     await waitFor(() => expect(audio.sources[0]?.start).toHaveBeenCalled());
@@ -5834,12 +5903,13 @@ describe('App flow', () => {
     const sockets = installMockControlSocket();
     const audio = installMockAudioContext();
     const user = userEvent.setup();
+    mockDigitalHumanLiveRoomOnce();
     seedSession();
     window.history.pushState(null, '', '/live/room_1001');
 
     renderApp();
 
-    expect(await screen.findByTestId('live-room-video')).toBeInTheDocument();
+    expect(await screen.findByTestId('digital-human-stage')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: getMessage('live.soundDisable') }));
     await waitFor(() => expect(screen.getByRole('button', { name: getMessage('live.soundEnable') })).toBeInTheDocument());
 
@@ -5868,12 +5938,13 @@ describe('App flow', () => {
     const sockets = installMockControlSocket();
     const audio = installMockAudioContext();
     const user = userEvent.setup();
+    mockDigitalHumanLiveRoomOnce();
     seedSession();
     window.history.pushState(null, '', '/live/room_1001');
 
     renderApp();
 
-    expect(await screen.findByTestId('live-room-video')).toBeInTheDocument();
+    expect(await screen.findByTestId('digital-human-stage')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button', { name: getMessage('live.soundDisable') })).toBeInTheDocument());
 
     await act(async () => {
@@ -5904,12 +5975,13 @@ describe('App flow', () => {
   it('waits for a user gesture before replaying blocked live voice broadcast audio', async () => {
     const sockets = installMockControlSocket();
     const audio = installMockAudioContext({ initialState: 'suspended', resumeAllowed: false });
+    mockDigitalHumanLiveRoomOnce();
     seedSession();
     window.history.pushState(null, '', '/live/room_1001');
 
     renderApp();
 
-    expect(await screen.findByTestId('live-room-video')).toBeInTheDocument();
+    expect(await screen.findByTestId('digital-human-stage')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button', { name: getMessage('live.soundDisable') })).toBeInTheDocument());
 
     await act(async () => {

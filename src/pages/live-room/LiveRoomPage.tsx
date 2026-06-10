@@ -1184,6 +1184,8 @@ export default function LiveRoomPage({
     stopDigitalHumanSpeaking();
   }, [stopDigitalHumanSpeaking]);
 
+  const isCurrentDigitalHumanLive = useCallback(() => latestContext.current.room.videoSource === 'digitalHuman', []);
+
   const unlockLiveVoiceAudio = useCallback(async () => {
     const player = liveVoicePlayerRef.current ?? getLiveVoiceBroadcastAudioPlayer();
     liveVoicePlayerRef.current = player;
@@ -1197,6 +1199,15 @@ export default function LiveRoomPage({
 
   const playLiveVoiceBroadcast = useCallback(
     (payload: LiveVoiceBroadcastAudioPayload, options: { ignoreSoundGate?: boolean } = {}) => {
+      if (!isCurrentDigitalHumanLive()) {
+        pendingLiveVoicePayloadsRef.current = [];
+        liveVoicePermissionPromptVisibleRef.current = false;
+        setLiveVoicePermissionPromptVisible(false);
+        liveVoicePlayerRef.current?.stop();
+        stopDigitalHumanSpeaking();
+        console.info('[live.voice_broadcast] playback skipped: current room is not digital-human live', liveVoiceAudioDebugSummary(payload));
+        return;
+      }
       if (!options.ignoreSoundGate && !soundEnabledRef.current) {
         pendingLiveVoicePayloadsRef.current = [];
         setLiveVoicePermissionPromptVisible(false);
@@ -1236,17 +1247,21 @@ export default function LiveRoomPage({
         } else {
           console.warn('[live.voice_broadcast] playback skipped', { ...audioSummary, ...result });
         }
-      }).catch((error) => {
-        console.error('[live.voice_broadcast] playback failed', audioSummary, error);
-        stopDigitalHumanSpeaking();
-      });
-    },
-    [stopDigitalHumanSpeaking]
-  );
+        }).catch((error) => {
+          console.error('[live.voice_broadcast] playback failed', audioSummary, error);
+          stopDigitalHumanSpeaking();
+        });
+      },
+      [isCurrentDigitalHumanLive, stopDigitalHumanSpeaking]
+    );
 
   const unlockAndPlayPendingLiveVoice = useCallback(() => {
     if (!soundEnabledRef.current) return;
     if (liveSoundAutoplayBlockedRef.current) return;
+    if (!isCurrentDigitalHumanLive()) {
+      stopLiveVoiceBroadcastPlayback();
+      return;
+    }
     void unlockLiveVoiceAudio().then((unlocked) => {
       const pendingPayloads = pendingLiveVoicePayloadsRef.current;
       if (!pendingPayloads.length) return;
@@ -1261,7 +1276,7 @@ export default function LiveRoomPage({
       pendingLiveVoicePayloadsRef.current = [];
       pendingPayloads.forEach((pendingPayload) => playLiveVoiceBroadcast(pendingPayload, { ignoreSoundGate: true }));
     });
-  }, [playLiveVoiceBroadcast, unlockLiveVoiceAudio]);
+  }, [isCurrentDigitalHumanLive, playLiveVoiceBroadcast, stopLiveVoiceBroadcastPlayback, unlockLiveVoiceAudio]);
 
   useEffect(() => {
     liveVoiceUnlockEvents.forEach((eventName) => window.addEventListener(eventName, unlockAndPlayPendingLiveVoice, true));
@@ -1276,7 +1291,7 @@ export default function LiveRoomPage({
   }, [unlockAndPlayPendingLiveVoice]);
 
   const appendChatMessage = useCallback((message: LiveChatMessage) => {
-    setChatMessages((prev) => upsertChatMessage(prev, message).slice(-80));
+    setChatMessages((prev) => upsertChatMessage(prev, normalizeLiveChatMessage(message)).slice(-80));
   }, []);
 
   const pushNotice = useCallback(
@@ -1783,12 +1798,12 @@ export default function LiveRoomPage({
         console.info('[live.voice_broadcast] received', messageSummary);
         if (!realtimeLiveVoiceMatchesRoom(message, latestContext.current.room)) {
           console.warn('[live.voice_broadcast] ignored: liveSessionId mismatch', messageSummary);
+        } else if (latestContext.current.room.videoSource !== 'digitalHuman') {
+          console.info('[live.voice_broadcast] ignored: current room is not digital-human live', messageSummary);
+          stopLiveVoiceBroadcastPlayback();
         } else if (!voicePayload) {
           console.warn('[live.voice_broadcast] ignored: missing or invalid audioBase64 payload', messageSummary);
         } else {
-          queryClient.setQueryData<LiveRoom>(['live-room', roomId], (current) =>
-            liveRoomWithAIAssistantSwitch(current ?? latestContext.current.room, message.payload, true)
-          );
           playLiveVoiceBroadcast(voicePayload);
         }
       }
@@ -1907,7 +1922,7 @@ export default function LiveRoomPage({
       controlClient?.disconnect();
       client?.disconnect();
     };
-  }, [accessToken, acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, applyRankingUpdate, clearCountdownAmbientEndEffect, clearCountdownAmbientPulse, clearDelayedRankingSnapshot, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, handleBidResult, playLiveVoiceBroadcast, pushAuctionAtmosphereAlert, pushNotice, queryClient, requestFloatingAuctionCard, roomId, syncServerTimeOffset, triggerCountdownAmbientPulse, userAvatarUrl, userId, userNickname]);
+  }, [accessToken, acknowledgeChatMessage, activeLot?.auctionId, appendChatMessage, applyRankingUpdate, clearCountdownAmbientEndEffect, clearCountdownAmbientPulse, clearDelayedRankingSnapshot, failChatMessage, handleBidAcceptedFeedback, handleBidAck, handleBidRejectedFeedback, handleBidResult, playLiveVoiceBroadcast, pushAuctionAtmosphereAlert, pushNotice, queryClient, requestFloatingAuctionCard, roomId, stopLiveVoiceBroadcastPlayback, syncServerTimeOffset, triggerCountdownAmbientPulse, userAvatarUrl, userId, userNickname]);
 
   const enrollMutation = useMutation({
     mutationFn: (auctionId: string) => apiClient.enrollAuction(auctionId),
@@ -3288,6 +3303,35 @@ function createSystemChatMessage(roomId: string, content: string): LiveChatMessa
     content,
     createdAt: new Date().toISOString(),
     system: true
+  };
+}
+
+function normalizeLiveChatMessage(message: LiveChatMessage): LiveChatMessage {
+  if (message.system) return message;
+  const raw = message as LiveChatMessage & Record<string, unknown>;
+  const nestedUser = raw.user && typeof raw.user === 'object' ? (raw.user as Record<string, unknown>) : {};
+  const userId = firstNonEmptyString(raw.userId, raw.user_id, raw.senderId, raw.sender_id, nestedUser.id);
+  const explicitNickname = firstNonEmptyString(
+    raw.userNickname,
+    raw.user_nickname,
+    raw.userNickName,
+    raw.user_nick_name,
+    raw.senderNickname,
+    raw.sender_nickname,
+    raw.senderNickName,
+    raw.sender_nick_name,
+    raw.nickName,
+    raw.nick_name,
+    nestedUser.nickname,
+    nestedUser.nickName,
+    nestedUser.name
+  );
+  const rawNickname = firstNonEmptyString(raw.nickname, raw.name);
+  const nickname = explicitNickname ?? (rawNickname && rawNickname !== userId ? rawNickname : undefined) ?? (userId ? rankingBidderFallbackName(userId) : t('common.demoUser'));
+  return {
+    ...message,
+    userId: userId ?? message.userId,
+    nickname
   };
 }
 
