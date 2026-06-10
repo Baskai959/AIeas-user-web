@@ -18,7 +18,6 @@ import type {
   RankingSnapshotItem,
   SearchLiveRoomsOptions,
   SearchLotsOptions,
-  SearchMerchantsOptions,
   UserAuctionRecord,
   UserProfile
 } from './types';
@@ -948,12 +947,6 @@ export function searchDemoLiveRooms(options: SearchLiveRoomsOptions = {}): PageR
     .filter((room) => !keyword || liveRoomMatchesKeyword(room, keyword))
     .filter((room) => matchLiveRoomStatus(room.status, options.status ?? 'all'))
     .sort(liveRoomSorter(options.sort ?? 'default'));
-  return toPage(items);
-}
-
-export function searchDemoMerchants(options: SearchMerchantsOptions = {}): PageResult<Merchant> {
-  const keyword = normalizeKeyword(options.keyword);
-  const items = demoMerchants.filter((merchant) => !keyword || normalizeKeyword(merchant.name).includes(keyword));
   return toPage(items);
 }
 

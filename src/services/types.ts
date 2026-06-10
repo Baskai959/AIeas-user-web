@@ -198,10 +198,6 @@ export interface SearchLiveRoomsOptions {
   status?: LiveRoomStatusFilter;
 }
 
-export interface SearchMerchantsOptions {
-  keyword?: string;
-}
-
 export type MyAuctionTabKey = 'all' | 'pendingBid' | 'pendingPay' | 'pendingShipment' | 'pendingReceipt' | 'completed';
 
 export interface FollowedLiveRoom {

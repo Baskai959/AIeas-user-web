@@ -17,7 +17,6 @@ import {
   listDemoLots,
   searchDemoLiveRooms,
   searchDemoLots,
-  searchDemoMerchants,
   updateDemoUserAvatar,
   updateDemoUserProfile
 } from './mockData';
@@ -39,7 +38,6 @@ import type {
   RefreshResult,
   SearchLiveRoomsOptions,
   SearchLotsOptions,
-  SearchMerchantsOptions,
   UserAuctionRecord,
   UserProfile
 } from './types';
@@ -468,14 +466,6 @@ function liveSessionStatusParam(status: SearchLiveRoomsOptions['status']): strin
   return undefined;
 }
 
-function merchantSearchQuery(options: SearchMerchantsOptions = {}): string {
-  const params = new URLSearchParams();
-  params.set('limit', '20');
-  params.set('offset', '0');
-  if (options.keyword) params.set('keyword', options.keyword);
-  return params.toString();
-}
-
 export class ApiClient {
   private token = '';
   private authRefresh?: AuthRefreshOptions;
@@ -567,11 +557,6 @@ export class ApiClient {
   async listMerchantLiveSessions(merchantId: string, options: SearchLiveRoomsOptions = {}): Promise<PageResult<LiveRoom>> {
     const data = await this.request(`/api/v1/merchants/${encodeURIComponent(merchantId)}/live-sessions?${liveRoomSearchQuery(options)}`);
     return normalizePage(data, 'sessions', normalizeLiveRoom);
-  }
-
-  async searchMerchants(options: SearchMerchantsOptions = {}): Promise<PageResult<Merchant>> {
-    const data = await this.request(`/api/v1/search/merchants?${merchantSearchQuery(options)}`);
-    return normalizePage(data, 'merchants', normalizeMerchant);
   }
 
   async getMerchant(id: string): Promise<Merchant> {
@@ -860,10 +845,6 @@ export class DemoApiClient extends ApiClient {
       page: 1,
       page_size: 20
     };
-  }
-
-  override async searchMerchants(options: SearchMerchantsOptions = {}): Promise<PageResult<Merchant>> {
-    return searchDemoMerchants(options);
   }
 
   override async getMerchant(id: string): Promise<Merchant> {

@@ -471,7 +471,7 @@ button {
 }
 
 .tab-shell,
-.search-page,
+.discover-lots-page,
 .category-detail-page,
 .merchant-body,
 .product-page,
@@ -3284,7 +3284,7 @@ button {
 }
 
 .home-page,
-.search-page,
+.discover-lots-page,
 .category-index-page,
 .category-detail-page,
 .merchant-body,
@@ -3333,28 +3333,6 @@ button {
 .home-brand span {
   color: rgba(255, 255, 255, 0.76);
   font-size: 12px;
-}
-
-.home-search,
-.search-input {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  min-width: 0;
-  min-height: 42px;
-  padding: 0 12px;
-  color: #667085;
-  background: #fff;
-  border: 0;
-  border-radius: 8px;
-}
-
-.home-search span,
-.search-input input {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .category-rail {
@@ -3704,40 +3682,6 @@ button {
   gap: 10px;
 }
 
-.search-header {
-  position: sticky;
-  top: 0;
-  z-index: 12;
-  display: grid;
-  grid-template-columns: 34px 1fr auto;
-  gap: 8px;
-  align-items: center;
-  padding: 8px 0 10px;
-  background: rgba(246, 247, 251, 0.96);
-  backdrop-filter: blur(16px);
-}
-
-.search-header .back-button {
-  width: 34px;
-  min-height: 34px;
-  margin: 0;
-}
-
-.search-input {
-  min-height: 40px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-}
-
-.search-input input {
-  width: 100%;
-  border: 0;
-  outline: 0;
-}
-
-.search-page .adm-tabs-header {
-  background: transparent;
-}
-
 .discover-lots-page {
   height: calc(100dvh - env(safe-area-inset-top) - var(--bottom-tab-height));
   overflow-y: auto;
@@ -3977,18 +3921,6 @@ button {
 .lot-result-card:focus-visible {
   outline: 2px solid rgba(22, 119, 255, 0.72);
   outline-offset: 2px;
-}
-
-.live-result-card .result-media {
-  display: grid;
-  gap: 4px;
-  place-items: center;
-  background: linear-gradient(135deg, #111827, #2563eb);
-}
-
-.live-result-card .result-media span {
-  font-size: 11px;
-  font-weight: 800;
 }
 
 .result-meta {
