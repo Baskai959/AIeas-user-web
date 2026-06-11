@@ -2821,6 +2821,27 @@ button {
   align-items: center;
 }
 
+.quick-bid-countdown-extension {
+  position: absolute;
+  top: -16px;
+  left: calc(100% - 42px);
+  z-index: 1;
+  min-width: 46px;
+  padding: 3px 8px;
+  color: #d9163f;
+  font-size: 16px;
+  font-weight: 950;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  background: rgba(255, 228, 232, 0.96);
+  border: 1px solid rgba(255, 49, 88, 0.42);
+  border-radius: 999px;
+  box-shadow: 0 8px 20px rgba(255, 49, 88, 0.22), 0 0 18px rgba(255, 93, 116, 0.26);
+  pointer-events: none;
+  animation: quick-countdown-extension-float 1800ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 .quick-bid-countdown-unit {
   min-width: 34px;
   padding: 4px 5px;
@@ -5995,6 +6016,25 @@ button {
   }
 }
 
+@keyframes quick-countdown-extension-float {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.86);
+  }
+  18% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1.08);
+  }
+  72% {
+    opacity: 1;
+    transform: translate3d(0, -8px, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -18px, 0) scale(0.98);
+  }
+}
+
 @keyframes countdown-ambient-breathe {
   0%,
   100% {
@@ -6482,6 +6522,7 @@ button {
   .auction-float-countdown.is-critical,
   .quick-bid-countdown.is-warning .quick-bid-countdown-unit,
   .quick-bid-countdown.is-critical .quick-bid-countdown-unit,
+  .quick-bid-countdown-extension,
   .live-countdown-ambient-band,
   .live-countdown-ambient-bloom,
   .live-countdown-ambient-particle,

@@ -417,6 +417,10 @@ describe('mobile layout CSS', () => {
 
   it('styles quick bid countdown segments and the filled leader badge', () => {
     expect(rule('.quick-bid-countdown-display')).toContain('display: inline-flex');
+    expect(rule('.quick-bid-countdown-extension')).toContain('position: absolute');
+    expect(rule('.quick-bid-countdown-extension')).toContain('color: #d9163f');
+    expect(rule('.quick-bid-countdown-extension')).toContain('background: rgba(255, 228, 232, 0.96)');
+    expect(rule('.quick-bid-countdown-extension')).toContain('animation: quick-countdown-extension-float');
     expect(rule('.quick-bid-countdown-unit')).toContain('background: #ff8a00');
     expect(rule('.quick-bid-countdown-unit')).toContain('min-width: 34px');
     expect(rule('.quick-bid-countdown-unit.is-milliseconds')).toContain('min-width: 42px');
@@ -524,6 +528,7 @@ describe('mobile layout CSS', () => {
     expect(rule('.auction-float-countdown.is-critical')).toContain('animation: float-countdown-critical');
     expect(rule('.quick-bid-countdown.is-warning .quick-bid-countdown-unit')).toContain('animation: quick-countdown-warning');
     expect(rule('.quick-bid-countdown.is-critical .quick-bid-countdown-unit')).toContain('animation: quick-countdown-critical');
+    expect(rule('.quick-bid-countdown-extension')).toContain('animation: quick-countdown-extension-float');
     expect(css).toContain('@keyframes countdown-ambient-breathe');
     expect(css).toContain('@keyframes countdown-ambient-particle-float');
     expect(css).toContain('@keyframes countdown-ambient-bid-pulse');
@@ -534,5 +539,6 @@ describe('mobile layout CSS', () => {
     expect(css).toContain('@keyframes float-countdown-critical');
     expect(css).toContain('@keyframes quick-countdown-warning');
     expect(css).toContain('@keyframes quick-countdown-critical');
+    expect(css).toContain('@keyframes quick-countdown-extension-float');
   });
 });

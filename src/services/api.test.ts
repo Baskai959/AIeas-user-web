@@ -72,6 +72,7 @@ describe('ApiClient', () => {
               currentPrice: 150100,
               startTime: '2026-06-04T12:00:00+08:00',
               endTime: '2026-06-04T12:00:00+08:00',
+              ruleSnapshot: { extendSec: 10, antiSnipeSec: 15 },
               incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 }
             }
           ]
@@ -95,7 +96,14 @@ describe('ApiClient', () => {
         speakingVideoUrl: '/media/AI_Presenter_Speaking.mp4'
       }
     });
-    expect(lots.items[0]).toMatchObject({ auctionId: '2001', subtitle: 'Compact intro', description: 'Long detail text', currentPrice: 150100, startTsMs: Date.parse('2026-06-04T12:00:00+08:00') });
+    expect(lots.items[0]).toMatchObject({
+      auctionId: '2001',
+      subtitle: 'Compact intro',
+      description: 'Long detail text',
+      currentPrice: 150100,
+      startTsMs: Date.parse('2026-06-04T12:00:00+08:00'),
+      ruleSnapshot: expect.objectContaining({ antiExtendSec: 10, antiSnipingSec: 15 })
+    });
     expect(stats).toMatchObject({ roomId: '1001', onlineCount: 328, watcherCount: 1208, bidCount: 36 });
     expect(fetcher).toHaveBeenNthCalledWith(1, 'http://mock.local/api/v1/live-sessions?limit=20&offset=0', expect.any(Object));
     expect(fetcher).toHaveBeenNthCalledWith(3, 'http://mock.local/api/v1/live-sessions/1001/lots', expect.any(Object));

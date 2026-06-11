@@ -220,8 +220,8 @@ function normalizeRuleSnapshot(raw: Record<string, unknown>): NonNullable<LiveRo
     reservePrice: Number(snapshot.reservePrice ?? raw.reservePrice ?? 0),
     capPrice: Number(snapshot.capPrice ?? raw.capPrice ?? 0) || undefined,
     incrementRule,
-    antiSnipingSec: Number(snapshot.antiSnipingSec ?? raw.antiSnipingSec ?? 0) || undefined,
-    antiExtendSec: Number(snapshot.antiExtendSec ?? raw.antiExtendSec ?? 0) || undefined,
+    antiSnipingSec: Number(snapshot.antiSnipingSec ?? snapshot.antiSnipeSec ?? raw.antiSnipingSec ?? raw.antiSnipeSec ?? 0) || undefined,
+    antiExtendSec: Number(snapshot.antiExtendSec ?? snapshot.extendSec ?? snapshot.extensionSec ?? raw.antiExtendSec ?? raw.extendSec ?? raw.extensionSec ?? 0) || undefined,
     depositPolicy:
       snapshot.depositPolicy && typeof snapshot.depositPolicy === 'object'
         ? (snapshot.depositPolicy as NonNullable<LiveRoomLot['ruleSnapshot']>['depositPolicy'])

@@ -5245,7 +5245,7 @@ describe('App flow', () => {
     }
   });
 
-  it('shows extension and closed alerts from realtime auction events', async () => {
+  it('shows timer extensions in the quick-bid countdown without replacing the leading alert', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
     const sockets = installMockControlSocket();
@@ -5255,31 +5255,58 @@ describe('App flow', () => {
       renderApp();
 
       await flushApp();
-	      await act(async () => {
-	        emitLatestMockControl(sockets, {
-	          type: 'timer.extended',
-	          payload: {
-	            auctionId: 'auc_2001',
-	            endTime: new Date(now + 180_000).toISOString(),
-	            serverTime: new Date(now).toISOString()
-	          }
-	        });
-	      });
-      expect(screen.getByText('竞拍延时')).toBeInTheDocument();
-      expect(document.querySelector('.live-auction-alert.is-extended')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
+      await flushApp();
+      const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
+      fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+      await flushApp();
+      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('product.bidNow') }));
+      await flushApp();
+      const bidDialog = screen.getByRole('dialog', { name: getMessage('bid.confirmTitle') });
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'bid.accepted',
+          payload: {
+            auctionId: 'auc_2001',
+            bidderId: 'u1',
+            currentPrice: 150300,
+            leaderBidderId: 'u1',
+            bidTsMs: now + 1000
+          }
+        });
+      });
+      await flushApp();
+      const leadingAlert = document.querySelector('.live-auction-alert.is-leading');
+      expect(leadingAlert).toBeInTheDocument();
+
+      await act(async () => {
+        emitLatestMockControl(sockets, {
+          type: 'timer.extended',
+          payload: {
+            auctionId: 'auc_2001',
+            endTime: new Date(now + 130_000).toISOString(),
+            serverTime: new Date(now).toISOString()
+          }
+        });
+      });
+      await flushApp();
+      expect(document.querySelector('.live-auction-alert.is-extended')).not.toBeInTheDocument();
+      expect(document.querySelector('.live-auction-alert.is-leading')).toBe(leadingAlert);
+      expect(within(bidDialog).getByText('+10s')).toHaveClass('quick-bid-countdown-extension');
 
       await act(async () => {
         emitLatestMockControl(sockets, {
           type: 'auction.closed',
-	          payload: {
-	            auctionId: 'auc_2001',
-	            status: 'CLOSED_WON',
-	            winnerId: 'u2',
-	            price: 150300,
-	            closedAt: new Date(now).toISOString(),
-	            serverTime: new Date(now).toISOString()
-	          }
-	        });
+          payload: {
+            auctionId: 'auc_2001',
+            status: 'CLOSED_WON',
+            winnerId: 'u2',
+            price: 150300,
+            closedAt: new Date(now).toISOString(),
+            serverTime: new Date(now).toISOString()
+          }
+        });
       });
       const closedAlert = document.querySelector('.live-auction-alert.is-closed');
       expect(closedAlert).toBeInTheDocument();
@@ -5289,8 +5316,8 @@ describe('App flow', () => {
       expect(closedAlert).toHaveTextContent('恭喜成交!!');
     } finally {
       vi.useRealTimers();
-	    }
-	  });
+    }
+  });
 
 	  it('shows a local hammer-pending waiting state and performs bounded refresh when countdown reaches 0s before a backend HAMMER_PENDING/closed frame arrives', async () => {
 	    vi.useFakeTimers();

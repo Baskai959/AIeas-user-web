@@ -380,6 +380,11 @@ type CountdownAmbientEndEffect = {
   phase: 'hold' | 'leaving';
   pulseId: number;
 };
+type CountdownExtensionPulse = {
+  auctionId: string;
+  id: number;
+  seconds?: number;
+};
 
 const liveAuctionAlertPriority: Record<LiveAuctionAlertKind, number> = {
   countdown: 10,
@@ -401,7 +406,7 @@ const liveAuctionAlertDurationMs: Record<LiveAuctionAlertKind, number> = {
 
 const countdownPressureWarningMs = 10_000;
 const countdownPressureCriticalMs = 3000;
-const countdownPressureExtendedMs = 1200;
+const countdownPressureExtendedMs = 1800;
 const countdownAmbientThresholdMs = 30_000;
 const countdownAmbientBidPulseMs = 780;
 const countdownAmbientEndHoldMs = 1000;
@@ -520,7 +525,7 @@ export default function LiveRoomPage({
   const [enrolledAuctions, setEnrolledAuctions] = useState<Set<string>>(() => new Set());
   const [lotStates, setLotStates] = useState<Record<string, AuctionState>>({});
   const [liveStats, setLiveStats] = useState<LiveRoomStats>(demoLiveRoomStats);
-  const [countdownExtensionPulse, setCountdownExtensionPulse] = useState<{ auctionId: string; id: number } | undefined>();
+  const [countdownExtensionPulse, setCountdownExtensionPulse] = useState<CountdownExtensionPulse | undefined>();
   const [countdownAmbientPulse, setCountdownAmbientPulse] = useState<{ auctionId: string; id: number } | undefined>();
   const [countdownAmbientEndEffect, setCountdownAmbientEndEffect] = useState<CountdownAmbientEndEffect | undefined>();
   const [likeBurstId, setLikeBurstId] = useState(0);
@@ -850,8 +855,7 @@ export default function LiveRoomPage({
   }, [activeLot, displayCurrentState, lotStates]);
   const activeCountdownPressurePhase = getCountdownPressurePhase(
     activeCountdownRemainMs,
-    displayCurrentState?.status,
-    Boolean(countdownExtensionPulse && countdownExtensionPulse.auctionId === activeLot?.auctionId)
+    displayCurrentState?.status
   );
   const countdownAlert = useMemo<LiveAuctionAlert | undefined>(() => {
     if (!activeLot || !displayCurrentState || activeCountdownPressurePhase === 'idle') return undefined;
@@ -1600,17 +1604,14 @@ export default function LiveRoomPage({
         const auctionId = String(payload.auctionId ?? context.activeLot?.auctionId ?? '');
         const extendedLot = context.lots.find((lot) => lot.auctionId === auctionId);
         if (auctionId && extendedLot && context.activeLot?.auctionId === auctionId) {
-          const newEndTsMs = parseRealtimeTimestampMs(realtimeEndTimeValue(payload), context.currentState?.endTsMs ?? Date.now());
+          const previousEndTsMs = context.currentState?.endTsMs ?? extendedLot.endTsMs ?? Date.now();
+          const newEndTsMs = parseRealtimeTimestampMs(realtimeEndTimeValue(payload), previousEndTsMs);
+          const extendSeconds = realtimeExtendSeconds(payload, previousEndTsMs, newEndTsMs) ?? lotCountdownExtensionSeconds(extendedLot);
           if (countdownExtensionTimerRef.current) window.clearTimeout(countdownExtensionTimerRef.current);
-          setCountdownExtensionPulse({ auctionId, id: Date.now() });
+          setCountdownExtensionPulse({ auctionId, id: Date.now(), seconds: extendSeconds });
           countdownExtensionTimerRef.current = window.setTimeout(() => {
             setCountdownExtensionPulse((current) => (current?.auctionId === auctionId ? undefined : current));
           }, countdownPressureExtendedMs);
-          pushAuctionAtmosphereAlert('extended', {
-            auctionId,
-            lot: extendedLot,
-            subtitle: t('auctionAlert.extended.subtitleWithTime', { time: formatCountdown(countdownRemainMs(newEndTsMs, Date.now(), serverTimeOffsetRef.current)) })
-          });
         }
       }
       if (message.type === 'auction.started') {
@@ -2301,6 +2302,7 @@ export default function LiveRoomPage({
             lastBidAtMs={lastBidAtByAuction[sheetLot.auctionId]}
             nowMs={now}
             serverTimeOffsetMs={serverTimeOffsetMs}
+            countdownExtensionPulse={countdownExtensionPulse?.auctionId === sheetLot.auctionId ? countdownExtensionPulse : undefined}
             userId={userId}
             onClose={() => closeLiveSheet(sheet.id)}
             onSubmit={(price) => submitBid(sheetLot, sheetState, price)}
@@ -3571,17 +3573,26 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
   if (message.type === 'timer.extended') {
     const payload = message.payload as Record<string, unknown>;
     const auctionId = String(payload.auctionId ?? options.activeAuctionId ?? '');
-    options.setLotStates((prev) => ({
-      ...prev,
-      [auctionId]: {
-        ...(prev[auctionId] ?? fallbackAuctionState(auctionId)),
-        auctionId,
-        status: 'EXTENDED',
-        endTsMs: parseRealtimeTimestampMs(realtimeEndTimeValue(payload), prev[auctionId]?.endTsMs ?? Date.now()),
-        serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now())
-      }
-    }));
-    options.setNotice(t('auction.extended'));
+    if (!auctionId) return;
+    const previousEndTsMs = options.activeAuctionState?.endTsMs ?? Date.now();
+    const newEndTsMs = parseRealtimeTimestampMs(realtimeEndTimeValue(payload), previousEndTsMs);
+    const extendSeconds = realtimeExtendSeconds(payload, previousEndTsMs, newEndTsMs);
+    options.setLotStates((prev) => {
+      const previous = prev[auctionId] ?? fallbackAuctionState(auctionId);
+      const previousStateEndTsMs = previous.endTsMs ?? previousEndTsMs;
+      const nextEndTsMs = parseRealtimeTimestampMs(realtimeEndTimeValue(payload), previousStateEndTsMs);
+      return {
+        ...prev,
+        [auctionId]: {
+          ...previous,
+          auctionId,
+          status: 'EXTENDED',
+          endTsMs: nextEndTsMs,
+          serverTsMs: parseRealtimeTimestampMs(payload.serverTime, Date.now())
+        }
+      };
+    });
+    options.setNotice(extendSeconds ? t('auctionAlert.extended.subtitleWithDelay', { seconds: extendSeconds }) : t('auction.extended'));
   }
   if (message.type === 'auction.started') {
     const payload = realtimePayloadWithState(message.payload);
@@ -4131,6 +4142,7 @@ function BidSheet({
   lastBidAtMs,
   nowMs,
   serverTimeOffsetMs,
+  countdownExtensionPulse,
   userId,
   onClose,
   onSubmit
@@ -4146,6 +4158,7 @@ function BidSheet({
   lastBidAtMs?: number;
   nowMs: number;
   serverTimeOffsetMs: number;
+  countdownExtensionPulse?: CountdownExtensionPulse;
   userId: string;
   onClose: () => void;
   onSubmit: (price: number) => void;
@@ -4176,6 +4189,7 @@ function BidSheet({
   const countdownAriaLabel = [countdownParts.hours, countdownParts.minutes, countdownParts.seconds].join(':') + (countdownParts.milliseconds ? `.${countdownParts.milliseconds}` : '');
   const countdownPhase = getCountdownPressurePhase(remainMs, state.status);
   const countdownClassName = ['quick-bid-countdown', countdownPhase !== 'idle' ? `is-${countdownPhase}` : ''].filter(Boolean).join(' ');
+  const countdownExtensionText = countdownExtensionPulse?.seconds ? `+${countdownExtensionPulse.seconds}s` : undefined;
   const closedCountdown = isClosed ? Math.max(0, Math.ceil(((closedAtMs ?? nowMs) + AUCTION_ENDED_HOLD_MS - nowMs) / 1000)) : 5;
 
   useEffect(() => {
@@ -4259,6 +4273,11 @@ function BidSheet({
                   </>
                 ) : null}
               </span>
+              {countdownExtensionText ? (
+                <span key={countdownExtensionPulse?.id} className="quick-bid-countdown-extension" aria-label={countdownExtensionText}>
+                  {countdownExtensionText}
+                </span>
+              ) : null}
             </h2>
           )}
         </div>
@@ -4466,7 +4485,76 @@ function realtimeBidPriceValue(payload: Record<string, unknown>): unknown {
 }
 
 function realtimeEndTimeValue(payload: Record<string, unknown>): unknown {
-  return firstRealtimeDefined(payload.endTime, payload.endTimeMs, payload.endTsMs, payload.end_time, payload.end_time_ms, payload.end_ts_ms);
+  return firstRealtimeDefined(
+    payload.endTime,
+    payload.endTimeMs,
+    payload.endTsMs,
+    payload.end_time,
+    payload.end_time_ms,
+    payload.end_ts_ms,
+    payload.newEndTime,
+    payload.newEndTimeMs,
+    payload.newEndTsMs,
+    payload.new_end_time,
+    payload.new_end_time_ms,
+    payload.new_end_ts_ms
+  );
+}
+
+function realtimeExtendSeconds(payload: Record<string, unknown>, previousEndTsMs: number, newEndTsMs: number): number | undefined {
+  const explicitSeconds = realtimeOptionalNumber(firstRealtimeDefined(
+    payload.extendSeconds,
+    payload.extendSec,
+    payload.extensionSeconds,
+    payload.extensionSec,
+    payload.antiExtendSeconds,
+    payload.antiExtendSec,
+    payload.antiSnipingSec,
+    payload.antiSnipingExtendSec,
+    payload.extend_seconds,
+    payload.extend_sec,
+    payload.extension_seconds,
+    payload.extension_sec,
+    payload.anti_extend_seconds,
+    payload.anti_extend_sec,
+    payload.anti_sniping_sec,
+    payload.anti_sniping_extend_sec
+  ));
+  if (explicitSeconds && explicitSeconds > 0) return explicitSeconds;
+
+  const explicitMs = realtimeOptionalNumber(firstRealtimeDefined(
+    payload.extendMs,
+    payload.extensionMs,
+    payload.antiExtendMs,
+    payload.antiSnipingExtendMs,
+    payload.extend_ms,
+    payload.extension_ms,
+    payload.anti_extend_ms,
+    payload.anti_sniping_extend_ms
+  ));
+  if (explicitMs && explicitMs > 0) return Math.max(1, Math.round(explicitMs / 1000));
+
+  const derivedMs = newEndTsMs - previousEndTsMs;
+  if (Number.isFinite(derivedMs) && derivedMs > 0) return Math.max(1, Math.round(derivedMs / 1000));
+  return undefined;
+}
+
+function lotCountdownExtensionSeconds(lot?: LiveRoomLot): number | undefined {
+  const snapshot = lot?.ruleSnapshot;
+  if (!snapshot) return undefined;
+  const seconds = realtimeOptionalNumber(firstRealtimeDefined(
+    snapshot.antiExtendSec,
+    snapshot.extendSec,
+    snapshot.extensionSec,
+    snapshot.extensionSeconds,
+    snapshot.antiSnipingExtendSec,
+    snapshot.antiSnipeExtendSec,
+    snapshot.anti_sniping_extend_sec,
+    snapshot.anti_snipe_extend_sec,
+    snapshot.antiSnipingSec,
+    snapshot.antiSnipeSec
+  ));
+  return seconds && seconds > 0 ? seconds : undefined;
 }
 
 function updateLotStateFromBidPayload(payload: Record<string, unknown>, options: RealtimeHandlerOptions, incrementMissingBidCount: boolean) {
