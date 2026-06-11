@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const h5NodeClient = readFileSync(resolve(process.cwd(), 'h5_node_client.mjs'), 'utf8');
-const h5MigrationGuide = readFileSync(resolve(process.cwd(), 'doc/guides/H5用户端移植指南.md'), 'utf8');
+const h5MigrationGuide = readFileSync(resolve(process.cwd(), 'doc/用户端实现说明.md'), 'utf8');
 
 const requiredInlineVideoMarkers = [
   'webkit-playsinline',

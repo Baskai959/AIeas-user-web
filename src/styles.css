@@ -4781,6 +4781,41 @@ button {
   overflow-y: scroll;
 }
 
+.following-page {
+  min-height: 100vh;
+  padding-top: 18px;
+  padding-bottom: 24px;
+  background:
+    linear-gradient(180deg, #fff1f4 0, rgba(255, 241, 244, 0) 168px),
+    #f7f9fc;
+}
+
+.following-page .simple-page-header {
+  margin-bottom: 16px;
+}
+
+.following-page .activity-room-list {
+  gap: 14px;
+  max-height: none;
+  overflow: visible;
+}
+
+.following-page > .empty-state {
+  min-height: 220px;
+  margin-top: 14px;
+  color: #667085;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(255, 247, 250, 0.96)),
+    #fff;
+  border: 1px solid rgba(225, 29, 72, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.08);
+}
+
+.following-page > .empty-state svg {
+  color: #e11d48;
+}
+
 .activity-room-card {
   display: grid;
   grid-template-columns: 86px minmax(0, 1fr);
@@ -4792,8 +4827,47 @@ button {
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
 }
 
+.following-page .activity-room-card {
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+  border-color: rgba(15, 23, 42, 0.1);
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.08);
+}
+
+.following-page .activity-room-card.is-following-card {
+  position: relative;
+  grid-template-columns: 108px minmax(0, 1fr);
+  gap: 16px;
+  padding: 20px 18px 18px;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 247, 250, 0.96) 48%, rgba(239, 246, 255, 0.98) 100%),
+    #fff;
+  border-color: rgba(225, 29, 72, 0.12);
+  box-shadow: 0 18px 40px rgba(17, 24, 39, 0.12);
+}
+
+.following-page .activity-room-card.is-following-card::before {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 68px;
+  content: "";
+  background: linear-gradient(135deg, rgba(225, 29, 72, 0.14), rgba(22, 119, 255, 0.12));
+}
+
+.following-page .activity-room-card.is-following-card > * {
+  position: relative;
+  z-index: 1;
+}
+
 .activity-room-card.is-action-right {
   grid-template-columns: 86px minmax(0, 1fr);
+}
+
+.activity-room-body {
+  min-width: 0;
 }
 
 .activity-room-cover {
@@ -4806,10 +4880,28 @@ button {
   border-radius: 8px;
 }
 
+.following-page .activity-room-cover {
+  width: 96px;
+  border-radius: 50%;
+}
+
+.following-page .activity-room-card.is-following-card .activity-room-cover {
+  width: 108px;
+  border: 4px solid rgba(255, 255, 255, 0.92);
+  box-shadow:
+    0 16px 30px rgba(17, 24, 39, 0.18),
+    0 0 0 1px rgba(225, 29, 72, 0.16);
+}
+
 .activity-room-cover img,
 .activity-room-cover .visual-placeholder {
   width: 100%;
   height: 100%;
+}
+
+.activity-room-cover img {
+  object-fit: cover;
+  object-position: center;
 }
 
 .activity-room-card h2,
@@ -4831,6 +4923,19 @@ button {
   white-space: nowrap;
 }
 
+.following-page .activity-room-card h2 {
+  font-size: 18px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.following-page .activity-room-card.is-following-card h2 {
+  margin-top: 6px;
+  color: #101828;
+  font-size: 19px;
+  font-weight: 950;
+}
+
 .activity-room-card p,
 .activity-room-card span {
   display: block;
@@ -4839,11 +4944,82 @@ button {
   font-size: 12px;
 }
 
+.following-page .activity-room-card p,
+.following-page .activity-room-card span {
+  margin-top: 6px;
+  color: #475467;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.activity-room-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.following-room-chip,
+.following-status-pill,
+.activity-room-time {
+  display: inline-flex;
+  align-items: center;
+}
+
+.following-room-chip,
+.following-status-pill {
+  gap: 4px;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.following-room-chip {
+  color: #d9163f;
+  background: rgba(255, 241, 242, 0.96);
+  border: 1px solid rgba(225, 29, 72, 0.14);
+}
+
+.following-status-pill {
+  color: #047857;
+  background: rgba(236, 253, 245, 0.96);
+  border: 1px solid rgba(16, 185, 129, 0.18);
+}
+
+.following-page .activity-room-card.is-following-card p {
+  color: #344054;
+  font-weight: 750;
+}
+
+.following-page .activity-room-card.is-following-card .activity-room-time {
+  display: inline-flex;
+  gap: 5px;
+  width: fit-content;
+  margin-top: 8px;
+  padding: 5px 8px;
+  color: #667085;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .activity-room-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
+}
+
+.following-page .activity-room-actions {
+  gap: 10px;
+  margin-top: 16px;
 }
 
 .activity-room-card.is-action-right .activity-room-actions {
@@ -4864,12 +5040,137 @@ button {
   margin-top: 10px;
 }
 
+.activity-room-actions .adm-button {
+  min-width: 112px;
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.activity-room-actions .adm-button-content {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+  letter-spacing: 0;
+}
+
+.activity-room-actions .adm-button > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0;
+  color: inherit;
+  font-size: inherit;
+  line-height: 1;
+}
+
+.activity-room-actions .activity-primary-action.adm-button {
+  --background-color: #1677ff;
+  --border-color: #1677ff;
+  --text-color: #fff;
+  color: #fff;
+  background: linear-gradient(135deg, #1677ff 0%, #0f63d9 100%);
+  border-color: #1677ff;
+  box-shadow: 0 10px 20px rgba(22, 119, 255, 0.22);
+}
+
+.activity-room-actions .activity-primary-action.adm-button:not(.adm-button-disabled):active {
+  background: #0f63d9;
+  border-color: #0f63d9;
+}
+
+.activity-room-actions .activity-primary-action.adm-button .adm-button-content {
+  color: #fff;
+}
+
+.activity-room-actions .activity-secondary-action.adm-button {
+  --border-color: rgba(102, 112, 133, 0.62);
+  --text-color: #344054;
+  color: #344054;
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(102, 112, 133, 0.62);
+  box-shadow: none;
+}
+
+.activity-room-actions .activity-secondary-action.adm-button:not(.adm-button-disabled):active {
+  color: #182230;
+  background: #f2f4f7;
+  border-color: #475467;
+}
+
+.activity-room-actions .activity-secondary-action.adm-button .adm-button-content {
+  color: #344054;
+}
+
 .activity-primary-action.is-red-outline {
   --adm-color-primary: #e11d48;
   color: #e11d48;
   background: #fff;
   border-color: rgba(225, 29, 72, 0.45);
   box-shadow: 0 8px 18px rgba(225, 29, 72, 0.12);
+}
+
+.activity-room-actions .activity-primary-action.is-red-outline.adm-button {
+  --background-color: #fff;
+  --border-color: rgba(225, 29, 72, 0.48);
+  --text-color: #e11d48;
+  color: #e11d48;
+  background: #fff;
+  border-color: rgba(225, 29, 72, 0.48);
+}
+
+.activity-room-actions .activity-primary-action.is-red-outline.adm-button .adm-button-content {
+  color: #e11d48;
+}
+
+@media (max-width: 380px) {
+  .following-page .activity-room-card {
+    grid-template-columns: 80px minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .following-page .activity-room-cover {
+    width: 80px;
+  }
+
+  .following-page .activity-room-card.is-following-card {
+    grid-template-columns: 84px minmax(0, 1fr);
+    gap: 12px;
+    padding: 16px 12px 14px;
+  }
+
+  .following-page .activity-room-card.is-following-card .activity-room-cover {
+    width: 84px;
+    border-width: 3px;
+  }
+
+  .following-page .activity-room-card h2 {
+    font-size: 16px;
+  }
+
+  .following-page .activity-room-card.is-following-card h2 {
+    font-size: 17px;
+  }
+
+  .activity-room-meta-row {
+    justify-content: flex-start;
+  }
+
+  .following-page .activity-room-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .following-page .activity-room-actions .adm-button {
+    min-width: 0;
+    padding: 0 10px;
+    font-size: 13px;
+  }
 }
 
 .load-more-button {

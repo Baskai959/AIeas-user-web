@@ -25,6 +25,7 @@ import type {
   AuctionState,
   Category,
   EnrollResult,
+  FollowedMerchant,
   ListOrderOptions,
   LiveRoom,
   LiveRoomLot,
@@ -87,6 +88,14 @@ function toMs(value: unknown, fallback = Date.now() + 180_000): number {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
+function optionalFirstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const normalized = optionalString(value);
+    if (normalized) return normalized;
+  }
+  return undefined;
 }
 
 function optionalNumberString(value: unknown): string | undefined {
@@ -158,7 +167,7 @@ function normalizeLiveRoom(raw: Record<string, unknown>): LiveRoom {
     merchantName: optionalString(raw.merchantName) ?? merchantId,
     status: String(raw.status) as LiveRoom['status'],
     videoSource,
-    coverUrl: optionalString(raw.coverUrl),
+    coverUrl: optionalFirstString(raw.coverUrl, raw.cover_url, raw.cover, raw.posterUrl, raw.poster_url, raw.thumbnailUrl, raw.thumbnail_url, raw.videoCoverUrl, raw.video_cover_url),
     videoUrl: optionalString(raw.videoUrl),
     digitalHuman,
     aiAssistantEnabled,
@@ -167,6 +176,7 @@ function normalizeLiveRoom(raw: Record<string, unknown>): LiveRoom {
     likeCount: raw.likeCount === undefined ? undefined : Number(raw.likeCount),
     activeAuctionId: optionalNumberString(raw.activeAuctionId),
     liveSessionId: Number(raw.id),
+    merchantFollowerCount: raw.merchantFollowerCount === undefined ? undefined : Number(raw.merchantFollowerCount),
     startedAt: optionalString(raw.openedAt) ?? optionalString(raw.scheduledStartTime),
     endedAt: optionalString(raw.closedAt)
   };
@@ -248,8 +258,20 @@ function normalizeMerchant(raw: Record<string, unknown>): Merchant {
     description: optionalString(raw.description),
     followerCount: Number(raw.followerCount ?? 0),
     fansCount: raw.fansCount === undefined ? undefined : Number(raw.fansCount),
+    isFollowed: Boolean(raw.isFollowed),
     rating: raw.rating === undefined ? undefined : Number(raw.rating),
-    location: optionalString(raw.location)
+    location: optionalString(raw.location),
+    liveRoomId: optionalString(raw.liveRoomId),
+    liveSessionId: raw.liveSessionId === undefined ? undefined : Number(raw.liveSessionId),
+    currentLiveSession: raw.currentLiveSession && typeof raw.currentLiveSession === 'object' ? normalizeLiveRoom(raw.currentLiveSession as Record<string, unknown>) : undefined
+  };
+}
+
+function normalizeFollowedMerchant(raw: Record<string, unknown>): FollowedMerchant {
+  const merchant = raw.merchant && typeof raw.merchant === 'object' ? normalizeMerchant(raw.merchant as Record<string, unknown>) : normalizeMerchant(raw);
+  return {
+    merchant,
+    followedAt: optionalString(raw.followedAt) ?? new Date().toISOString()
   };
 }
 
@@ -441,6 +463,25 @@ function lotSearchQuery(options: SearchLotsOptions = {}): string {
   return params.toString();
 }
 
+function lotMatchesStatusFilter(lot: LiveRoomLot, status: SearchLotsOptions['status']): boolean {
+  if (!status || status === 'all') return isDiscoverLotStatus(lot.status);
+  if (status === 'RUNNING') return lot.status === 'RUNNING' || lot.status === 'EXTENDED';
+  return lot.status === status;
+}
+
+function isDiscoverLotStatus(status: LiveRoomLot['status']): boolean {
+  return status === 'READY' || status === 'WARMING_UP' || status === 'RUNNING' || status === 'EXTENDED';
+}
+
+function filterLotPageByStatus(page: PageResult<LiveRoomLot>, status: SearchLotsOptions['status']): PageResult<LiveRoomLot> {
+  const items = page.items.filter((lot) => lotMatchesStatusFilter(lot, status));
+  return {
+    ...page,
+    items,
+    total: items.length
+  };
+}
+
 function lotSortParam(sort: SearchLotsOptions['sort']): string | undefined {
   if (sort === 'priceAsc' || sort === 'priceDesc') return sort;
   if (sort === 'auctionTime') return 'startTimeAsc';
@@ -546,7 +587,7 @@ export class ApiClient {
 
   async searchLots(options: SearchLotsOptions = {}): Promise<PageResult<LiveRoomLot>> {
     const data = await this.request(`/api/v1/search/lots?${lotSearchQuery(options)}`);
-    return normalizePage(data, 'lots', normalizeLot);
+    return filterLotPageByStatus(normalizePage(data, 'lots', normalizeLot), options.status);
   }
 
   async searchLiveRooms(options: SearchLiveRoomsOptions = {}): Promise<PageResult<LiveRoom>> {
@@ -560,8 +601,29 @@ export class ApiClient {
   }
 
   async getMerchant(id: string): Promise<Merchant> {
-    const data = await this.request(`/api/v1/merchants/${id}`);
+    const data = await this.request(`/api/v1/merchants/${encodeURIComponent(id)}`);
     return normalizeMerchant(data as Record<string, unknown>);
+  }
+
+  async followMerchant(id: string): Promise<Merchant> {
+    const data = await this.request(`/api/v1/merchants/${encodeURIComponent(id)}/follow`, {
+      method: 'POST',
+      idempotencyKey: `follow-merchant-${id}-${Date.now()}`
+    });
+    return normalizeMerchant(data as Record<string, unknown>);
+  }
+
+  async unfollowMerchant(id: string): Promise<Merchant> {
+    const data = await this.request(`/api/v1/merchants/${encodeURIComponent(id)}/follow`, {
+      method: 'DELETE',
+      idempotencyKey: `unfollow-merchant-${id}-${Date.now()}`
+    });
+    return normalizeMerchant(data as Record<string, unknown>);
+  }
+
+  async listMyFollowedMerchants(limit = 20, offset = 0): Promise<PageResult<FollowedMerchant>> {
+    const data = await this.request(`/api/v1/merchant-follows/mine?limit=${limit}&offset=${offset}`);
+    return normalizePage(data, 'follows', normalizeFollowedMerchant);
   }
 
   async getLot(id: string): Promise<LiveRoomLot> {
@@ -749,6 +811,7 @@ async function blobToDemoAvatarUrl(blob: Blob): Promise<string> {
 export class DemoApiClient extends ApiClient {
   private orders = demoOrderPage.items.map(cloneOrder);
   private auctionRecords = listDemoAuctionRecords().items.map(cloneAuctionRecord);
+  private followedMerchantIds = new Set<string>();
 
   constructor(fetcher: Fetcher = defaultFetcher) {
     super('demo://local', fetcher);
@@ -777,6 +840,20 @@ export class DemoApiClient extends ApiClient {
       };
     });
     return cloneOrder(nextOrder);
+  }
+
+  private demoMerchantWithFollowState(id: string): Merchant {
+    const merchant = findDemoMerchant(id);
+    const isFollowed = this.followedMerchantIds.has(merchant.id);
+    const currentLiveSession = demoLiveRoomPage.items.find((room) => room.merchantId === merchant.id && room.status === 'LIVE');
+    return {
+      ...merchant,
+      followerCount: merchant.followerCount + (isFollowed && !merchant.isFollowed ? 1 : 0),
+      isFollowed,
+      liveRoomId: currentLiveSession?.id,
+      liveSessionId: currentLiveSession?.liveSessionId,
+      currentLiveSession: currentLiveSession ? cloneLiveRoom(currentLiveSession) : undefined
+    };
   }
 
   override setToken() {}
@@ -848,7 +925,27 @@ export class DemoApiClient extends ApiClient {
   }
 
   override async getMerchant(id: string): Promise<Merchant> {
-    return findDemoMerchant(id);
+    return this.demoMerchantWithFollowState(id);
+  }
+
+  override async followMerchant(id: string): Promise<Merchant> {
+    const merchant = findDemoMerchant(id);
+    this.followedMerchantIds.add(merchant.id);
+    return this.demoMerchantWithFollowState(merchant.id);
+  }
+
+  override async unfollowMerchant(id: string): Promise<Merchant> {
+    const merchant = findDemoMerchant(id);
+    this.followedMerchantIds.delete(merchant.id);
+    return this.demoMerchantWithFollowState(merchant.id);
+  }
+
+  override async listMyFollowedMerchants(): Promise<PageResult<FollowedMerchant>> {
+    const items = [...this.followedMerchantIds].map((id) => ({
+      merchant: this.demoMerchantWithFollowState(id),
+      followedAt: new Date().toISOString()
+    }));
+    return demoPage(items);
   }
 
   override async getLot(id: string): Promise<LiveRoomLot> {

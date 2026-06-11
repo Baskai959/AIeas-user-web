@@ -88,6 +88,7 @@ export interface LiveRoom {
   likeCount?: number;
   activeAuctionId?: string;
   liveSessionId?: number;
+  merchantFollowerCount?: number;
   startedAt?: string;
   endedAt?: string;
 }
@@ -113,8 +114,12 @@ export interface Merchant {
   description?: string;
   followerCount: number;
   fansCount?: number;
+  isFollowed?: boolean;
   rating?: number;
   location?: string;
+  liveRoomId?: string;
+  liveSessionId?: number;
+  currentLiveSession?: LiveRoom;
 }
 
 export interface UserProfile {
@@ -160,12 +165,7 @@ export type LotStatusFilter =
   | 'all'
   | 'READY'
   | 'WARMING_UP'
-  | 'RUNNING'
-  | 'EXTENDED'
-  | 'HAMMER_PENDING'
-  | 'CLOSED_WON'
-  | 'CLOSED_FAILED'
-  | 'SETTLED';
+  | 'RUNNING';
 
 export interface SearchLotsOptions {
   keyword?: string;
@@ -205,6 +205,11 @@ export interface FollowedLiveRoom {
   title: string;
   merchantName: string;
   coverUrl?: string;
+  followedAt: string;
+}
+
+export interface FollowedMerchant {
+  merchant: Merchant;
   followedAt: string;
 }
 

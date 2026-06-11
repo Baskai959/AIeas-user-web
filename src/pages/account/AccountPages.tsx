@@ -15,7 +15,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { Button, Toast } from 'antd-mobile';
-import { ArrowLeft, Camera, Check, ChevronRight, Gavel, LogOut, Package, Settings, ShoppingBag, Trophy, WalletCards } from 'lucide-react';
+import { ArrowLeft, CalendarClock, Camera, Check, ChevronRight, Gavel, Heart, HeartOff, LogOut, Package, Radio, Settings, ShoppingBag, Trophy, WalletCards } from 'lucide-react';
 
 import { LoadingBlock } from '../../components/LoadingBlock';
 import { SheetHeader } from '../../components/SheetHeader';
@@ -28,6 +28,7 @@ import { classifyAuctionRecord, groupAuctionRecords, myAuctionTabKeys } from '..
 import type { ApiClient } from '../../services/api';
 import type {
   AvatarCropState,
+  FollowedMerchant,
   FollowedLiveRoom,
   LiveRoomFootprint,
   LiveRoomLot,
@@ -73,13 +74,14 @@ export function MePage({
   const queryClient = useQueryClient();
   const profileOverride = useProfileStore((state) => state.profileOverride);
   const setProfileOverride = useProfileStore((state) => state.setProfileOverride);
-  const followedCount = useLiveActivityStore((state) => state.followedRooms.length);
   const footprintCount = useLiveActivityStore((state) => state.footprints.length + state.lotFootprints.length);
   const profileQuery = useQuery({ queryKey: ['my-profile'], queryFn: () => apiClient.getMyProfile() });
+  const followedMerchantsQuery = useQuery({ queryKey: ['my-followed-merchants'], queryFn: () => apiClient.listMyFollowedMerchants(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 } });
   const recordsQuery = useQuery({ queryKey: ['my-auction-records'], queryFn: () => apiClient.listMyAuctionRecords(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 }, refetchOnMount: 'always' });
   const ordersQuery = useQuery({ queryKey: ['my-orders'], queryFn: () => apiClient.listMyOrders({ limit: 100 }), placeholderData: { items: [], total: 0, page: 1, page_size: 100 }, refetchOnMount: 'always' });
   const baseProfile = profileQuery.data ?? profileFromSession(userId, sessionUser);
   const profile = mergeProfile(baseProfile, profileOverride);
+  const followedCount = followedMerchantsQuery.data?.total ?? profile.followingCount;
   const mergedRecords = useMemo(() => mergeAuctionRecordsWithOrders(recordsQuery.data?.items ?? [], ordersQuery.data?.items ?? []), [ordersQuery.data?.items, recordsQuery.data?.items]);
   const groupedRecords = groupAuctionRecords(mergedRecords);
   const avatarMutation = useMutation({
@@ -366,12 +368,24 @@ export function OrdersPage({
   );
 }
 
-export function FollowingPage({ onBack, onOpenRoom }: { onBack: () => void; onOpenRoom: (roomId: string) => void }) {
-  const followedRooms = useLiveActivityStore((state) => state.followedRooms);
-  const unfollowRoom = useLiveActivityStore((state) => state.unfollowRoom);
+export function FollowingPage({ apiClient, onBack, onOpenRoom }: { apiClient: ApiClient; onBack: () => void; onOpenRoom: (roomId: string) => void }) {
+  const queryClient = useQueryClient();
+  const followedMerchants = useQuery({ queryKey: ['my-followed-merchants'], queryFn: () => apiClient.listMyFollowedMerchants(), placeholderData: { items: [], total: 0, page: 1, page_size: 20 }, refetchOnMount: 'always' });
+  const unfollowMerchant = useMutation({
+    mutationFn: (merchantId: string) => apiClient.unfollowMerchant(merchantId),
+    onSuccess: (merchant) => {
+      queryClient.setQueryData(['merchant', merchant.id], merchant);
+      void queryClient.invalidateQueries({ queryKey: ['my-followed-merchants'] });
+      void queryClient.invalidateQueries({ queryKey: ['merchant', merchant.id] });
+    },
+    onError: () => {
+      Toast.show({ content: t('state.error') });
+    }
+  });
+  const follows = followedMerchants.data?.items ?? [];
 
   return (
-    <section className="activity-page">
+    <section className="activity-page following-page">
       <header className="simple-page-header">
         <button className="back-button" type="button" onClick={onBack} aria-label={t('common.back')}>
           <ArrowLeft size={18} />
@@ -380,22 +394,24 @@ export function FollowingPage({ onBack, onOpenRoom }: { onBack: () => void; onOp
           <h1>{t('profile.followingTitle')}</h1>
         </div>
       </header>
-      {followedRooms.length ? (
+      {follows.length ? (
         <div className="activity-room-list">
-          {followedRooms.map((room) => (
-            <LiveActivityRoomCard
-              key={room.roomId}
-              item={room}
-              timeLabel={t('profile.followedAt')}
-              timeValue={room.followedAt}
-              primaryAction={t('profile.enterLiveRoom')}
-              primaryActionClassName="is-red-outline"
-              onPrimary={() => onOpenRoom(room.roomId)}
-              secondaryAction={t('profile.cancelFollow')}
-              onSecondary={() => unfollowRoom(room.roomId)}
-              variant="following"
-            />
-          ))}
+          {follows.map((follow) => {
+            const item = followedMerchantToActivityRoom(follow);
+            return (
+              <LiveActivityRoomCard
+                key={follow.merchant.id}
+                item={item}
+                variant="following"
+                timeLabel={t('profile.followedAt')}
+                timeValue={follow.followedAt}
+                primaryAction={t('profile.enterLiveRoom')}
+                onPrimary={() => (item.roomId ? onOpenRoom(item.roomId) : Toast.show({ content: t('merchant.noLive') }))}
+                secondaryAction={t('profile.cancelFollow')}
+                onSecondary={() => unfollowMerchant.mutate(follow.merchant.id)}
+              />
+            );
+          })}
         </div>
       ) : (
         <EmptyState text={t('profile.noFollowing')} />
@@ -405,20 +421,24 @@ export function FollowingPage({ onBack, onOpenRoom }: { onBack: () => void; onOp
 }
 
 export function FootprintsPage({
+  apiClient,
   onBack,
   onOpenRoom,
   onOpenLot
 }: {
+  apiClient: ApiClient;
   onBack: () => void;
   onOpenRoom: (roomId: string) => void;
   onOpenLot: (lotId: string, returnTo: string) => void;
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const pageRef = useRef<HTMLElement | null>(null);
+  const coverHydrationRequestedRef = useRef<Set<string>>(new Set());
   const footprints = useLiveActivityStore((state) => state.footprints);
   const lotFootprints = useLiveActivityStore((state) => state.lotFootprints);
   const getFootprintsPage = useLiveActivityStore((state) => state.getFootprintsPage);
   const getLotFootprintsPage = useLiveActivityStore((state) => state.getLotFootprintsPage);
+  const updateFootprintCover = useLiveActivityStore((state) => state.updateFootprintCover);
   const [activeTab, setActiveTab] = useState<FootprintTabKey>(() => parseFootprintTab(searchParams.get('tab')));
   const [visibleRoomCount, setVisibleRoomCount] = useState(() => parseFootprintCountParam(searchParams.get('visibleRooms'), 10));
   const [visibleLotCount, setVisibleLotCount] = useState(() => parseFootprintCountParam(searchParams.get('visibleLots'), 10));
@@ -440,6 +460,26 @@ export function FootprintsPage({
     if (!restoreScrollTop || !pageRef.current) return;
     pageRef.current.scrollTop = restoreScrollTop;
   }, [restoreScrollTop, activeTab, visibleRoomCount, visibleLotCount]);
+
+  useEffect(() => {
+    if (activeTab !== 'rooms') return;
+    visibleRoomFootprints.forEach((room) => {
+      if (room.coverUrl || coverHydrationRequestedRef.current.has(room.roomId)) return;
+      coverHydrationRequestedRef.current.add(room.roomId);
+      void apiClient
+        .getLiveRoom(room.roomId)
+        .then(async (freshRoom) => {
+          if (freshRoom.coverUrl) {
+            updateFootprintCover(room.roomId, freshRoom.coverUrl);
+            return;
+          }
+          const lots = await apiClient.listLiveRoomLots(room.roomId);
+          const fallbackCoverUrl = firstLotCoverUrl(lots.items);
+          if (fallbackCoverUrl) updateFootprintCover(room.roomId, fallbackCoverUrl);
+        })
+        .catch(() => undefined);
+    });
+  }, [activeTab, apiClient, updateFootprintCover, visibleRoomFootprints]);
 
   const switchTab = (nextTab: FootprintTabKey) => {
     setActiveTab(nextTab);
@@ -905,6 +945,27 @@ function AvatarDialog({
   );
 }
 
+function followedMerchantToActivityRoom(follow: FollowedMerchant): FollowedLiveRoom {
+  const merchant = follow.merchant;
+  const room = merchant.currentLiveSession;
+  return {
+    roomId: merchant.liveRoomId ?? room?.id ?? '',
+    title: room?.title ?? merchant.name,
+    merchantName: merchant.name,
+    coverUrl: room?.coverUrl ?? merchant.avatarUrl,
+    followedAt: follow.followedAt
+  };
+}
+
+function firstLotCoverUrl(lots: LiveRoomLot[]): string | undefined {
+  for (const lot of lots) {
+    if (lot.imageUrl) return lot.imageUrl;
+    const firstImageUrl = lot.imageUrls?.[0];
+    if (firstImageUrl) return firstImageUrl;
+  }
+  return undefined;
+}
+
 function LiveActivityRoomCard({
   item,
   timeLabel,
@@ -928,9 +989,13 @@ function LiveActivityRoomCard({
   actionAlign?: 'inline' | 'right';
   variant?: 'default' | 'following';
 }) {
-  const cardClassName = ['activity-room-card', actionAlign === 'right' ? 'is-action-right' : '', variant === 'following' ? 'is-following' : '']
-    .filter(Boolean)
-    .join(' ');
+  const isFollowingVariant = variant === 'following';
+  const cardClassName = [
+    'activity-room-card',
+    actionAlign === 'right' ? 'is-action-right' : '',
+    isFollowingVariant ? 'is-following' : '',
+    isFollowingVariant ? 'is-following-card' : ''
+  ].filter(Boolean).join(' ');
 
   return (
     <article className={cardClassName}>
@@ -938,15 +1003,32 @@ function LiveActivityRoomCard({
         <VisualPlaceholder title={item.title} imageUrl={item.coverUrl} tone="blue" />
       </button>
       <div className="activity-room-body">
+        {isFollowingVariant ? (
+          <div className="activity-room-meta-row">
+            <span className="following-room-chip">
+              <Radio size={13} aria-hidden="true" />
+              {t('merchant.liveWindow')}
+            </span>
+            <span className="following-status-pill">
+              <Heart size={12} aria-hidden="true" />
+              {t('live.followed')}
+            </span>
+          </div>
+        ) : null}
         <h2>{item.title}</h2>
         <p>{item.merchantName}</p>
-        <span>{timeLabel} {formatDate(timeValue)}</span>
+        <span className={isFollowingVariant ? 'activity-room-time' : undefined}>
+          {isFollowingVariant ? <CalendarClock size={14} aria-hidden="true" /> : null}
+          {timeLabel} {formatDate(timeValue)}
+        </span>
         <div className="activity-room-actions">
           <Button className={primaryActionClassName ? `activity-primary-action ${primaryActionClassName}` : 'activity-primary-action'} size="small" color="primary" onClick={onPrimary}>
+            {isFollowingVariant ? <Radio size={16} aria-hidden="true" /> : null}
             {primaryAction}
           </Button>
           {secondaryAction && onSecondary ? (
-            <Button size="small" fill="outline" onClick={onSecondary}>
+            <Button className="activity-secondary-action" size="small" fill="outline" onClick={onSecondary}>
+              {isFollowingVariant ? <HeartOff size={15} aria-hidden="true" /> : null}
               {secondaryAction}
             </Button>
           ) : null}

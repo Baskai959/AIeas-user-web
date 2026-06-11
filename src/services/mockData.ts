@@ -974,8 +974,13 @@ function toPage<T>(items: T[]): PageResult<T> {
 }
 
 function matchLotStatus(status: AuctionStatus, filter: LotStatusFilter): boolean {
-  if (filter === 'all') return true;
+  if (filter === 'all') return isDiscoverLotStatus(status);
+  if (filter === 'RUNNING') return status === 'RUNNING' || status === 'EXTENDED';
   return status === filter;
+}
+
+function isDiscoverLotStatus(status: AuctionStatus): boolean {
+  return status === 'READY' || status === 'WARMING_UP' || status === 'RUNNING' || status === 'EXTENDED';
 }
 
 function matchLiveRoomStatus(status: LiveRoomStatus, filter: LiveRoomStatusFilter): boolean {

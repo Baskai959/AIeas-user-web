@@ -643,10 +643,7 @@ export default function LiveRoomPage({
     delayedRankingSnapshotMessageRef.current = undefined;
     rankingSnapshotDelayUntilRef.current = 0;
   }, []);
-  const followedRooms = useLiveActivityStore((state) => state.followedRooms);
   const roomLocalLikeCount = useLiveActivityStore((state) => state.roomLikeCounts[roomId] ?? 0);
-  const followRoom = useLiveActivityStore((state) => state.followRoom);
-  const unfollowRoom = useLiveActivityStore((state) => state.unfollowRoom);
   const likeRoom = useLiveActivityStore((state) => state.likeRoom);
   const setStoredCommentDraft = useLiveActivityStore((state) => state.setCommentDraft);
   const clearStoredCommentDraft = useLiveActivityStore((state) => state.clearCommentDraft);
@@ -680,6 +677,27 @@ export default function LiveRoomPage({
 
   const room = roomQuery.data ?? findDemoLiveRoom(roomId);
   const lots = lotsQuery.data?.items ?? listDemoLots(roomId).items;
+  const merchantQuery = useQuery({
+    queryKey: ['merchant', room.merchantId],
+    queryFn: () => {
+      if (!room.merchantId) throw new Error('No merchant');
+      return apiClient.getMerchant(room.merchantId);
+    },
+    enabled: Boolean(room.merchantId)
+  });
+  const followMerchantMutation = useMutation({
+    mutationFn: ({ merchantId, followed }: { merchantId: string; followed: boolean }) =>
+      followed ? apiClient.unfollowMerchant(merchantId) : apiClient.followMerchant(merchantId),
+    onSuccess: (merchant, variables) => {
+      queryClient.setQueryData(['merchant', variables.merchantId], merchant);
+      if (merchant.id !== variables.merchantId) queryClient.setQueryData(['merchant', merchant.id], merchant);
+      void queryClient.invalidateQueries({ queryKey: ['my-followed-merchants'] });
+      void queryClient.invalidateQueries({ queryKey: ['live-room', roomId] });
+    },
+    onError: () => {
+      Toast.show({ content: t('state.error') });
+    }
+  });
   const myAuctionRecordItems = myAuctionRecordsQuery.data?.items;
   const myOrderItems = myOrdersQuery.data?.items;
   const orderByAuctionId = useMemo(() => buildOrderByAuctionId(myAuctionRecordItems, myOrderItems), [myAuctionRecordItems, myOrderItems]);
@@ -687,7 +705,8 @@ export default function LiveRoomPage({
   const initialMediaPosition = isPreviewMediaSnapshotApplicable(initialPreviewMedia, room, roomPreviewMediaSource) ? initialPreviewMedia : undefined;
   const activeLot = selectCurrentRunningLot(room, lots, lotStates);
   const selectedLot = lots.find((lot) => lot.id === selectedLotId) ?? activeLot ?? lots[0];
-  const isFollowingRoom = followedRooms.some((item) => item.roomId === room.id);
+  const merchant = merchantQuery.data;
+  const isFollowingMerchant = Boolean(merchant?.isFollowed);
   const activeLotInitialState = useMemo(() => (activeLot ? stateFromLot(activeLot) : undefined), [activeLot]);
   const canFetchActiveAuctionState =
     Boolean(activeLot?.auctionId) && (import.meta.env.MODE === 'test' || import.meta.env.VITE_API_MODE !== 'remote' || isBackendAuctionId(activeLot?.auctionId));
@@ -708,8 +727,9 @@ export default function LiveRoomPage({
   }, [statsQuery.data]);
 
   useEffect(() => {
-    recordFootprint(room);
-  }, [recordFootprint, room]);
+    const coverUrl = liveRoomFootprintCoverUrl(room, lots, activeLot);
+    recordFootprint(coverUrl && coverUrl !== room.coverUrl ? { ...room, coverUrl } : room);
+  }, [activeLot, lots, recordFootprint, room]);
 
   const applyServerTimeOffset = useCallback((offsetMs: number) => {
     if (!Number.isFinite(offsetMs)) return;
@@ -2110,12 +2130,9 @@ export default function LiveRoomPage({
     openQuickBid(lot, { variant: 'quickBidFast' });
   };
 
-  const toggleFollowRoom = () => {
-    if (isFollowingRoom) {
-      unfollowRoom(room.id);
-      return;
-    }
-    followRoom(room);
+  const toggleFollowMerchant = () => {
+    if (!room.merchantId || followMerchantMutation.isPending) return;
+    followMerchantMutation.mutate({ merchantId: room.merchantId, followed: isFollowingMerchant });
   };
   const handleLikeRoom = () => {
     likeRoom(room.id);
@@ -2132,7 +2149,10 @@ export default function LiveRoomPage({
   };
   const liveLikeCount = (room.likeCount ?? 0) + roomLocalLikeCount;
   const hasLikedRoom = roomLocalLikeCount > 0;
-  const liveShopMetaText = t('live.likes', { count: formatCompactNumber(liveLikeCount) });
+  const merchantFollowerCount = merchant?.followerCount ?? room.merchantFollowerCount;
+  const liveShopMetaText = merchantFollowerCount === undefined
+    ? t('live.likes', { count: formatCompactNumber(liveLikeCount) })
+    : t('live.shopStats', { followers: formatCompactNumber(merchantFollowerCount), likes: formatCompactNumber(liveLikeCount) });
   const showSoundBlockedToast = useCallback(() => {
     Toast.show({ content: t('live.soundBlocked') });
   }, []);
@@ -2232,8 +2252,8 @@ export default function LiveRoomPage({
             <strong>{room.merchantName}</strong>
             <span>{liveShopMetaText}</span>
           </div>
-          <button className={isFollowingRoom ? 'live-follow-pill is-followed' : 'live-follow-pill'} type="button" onClick={toggleFollowRoom} aria-pressed={isFollowingRoom}>
-            {isFollowingRoom ? t('live.followed') : `+${t('live.follow')}`}
+          <button className={isFollowingMerchant ? 'live-follow-pill is-followed' : 'live-follow-pill'} type="button" onClick={toggleFollowMerchant} aria-pressed={isFollowingMerchant} disabled={!room.merchantId || followMerchantMutation.isPending}>
+            {isFollowingMerchant ? t('live.followed') : `+${t('live.follow')}`}
           </button>
         </div>
         <div className="live-header-right">
@@ -3675,7 +3695,7 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
         }
       };
     });
-    options.setNotice(extendSeconds ? t('auctionAlert.extended.subtitleWithDelay', { seconds: extendSeconds }) : t('auction.extended'));
+    options.setNotice(extendSeconds ? t('auctionAlert.extended.subtitleWithDelay', { seconds: extendSeconds }) : t('auctionAlert.extended.subtitle'));
   }
   if (message.type === 'auction.started') {
     const payload = realtimePayloadWithState(message.payload);
@@ -4832,6 +4852,14 @@ function firstNonEmptyString(...values: unknown[]): string | undefined {
     if (text) return text;
   }
   return undefined;
+}
+
+function lotCoverUrl(lot?: LiveRoomLot): string | undefined {
+  return firstNonEmptyString(lot?.imageUrl, lot?.imageUrls?.[0]);
+}
+
+function liveRoomFootprintCoverUrl(room: LiveRoom, lots: LiveRoomLot[], activeLot?: LiveRoomLot): string | undefined {
+  return firstNonEmptyString(room.coverUrl, lotCoverUrl(activeLot), lots.map(lotCoverUrl).find(Boolean));
 }
 
 function rankingBidderFallbackName(bidderId: string): string {

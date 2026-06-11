@@ -54,12 +54,14 @@ const api = {
       {
         id: 'room_1001',
         title: '珠宝严选直播间',
+        merchantId: 'merchant_01',
         merchantName: '云上珠宝',
         status: 'LIVE',
         videoSource: 'recorded',
         onlineCount: 328,
         watcherCount: 1208,
         likeCount: 0,
+        merchantFollowerCount: 128000,
         activeAuctionId: 'auc_2001',
         videoUrl: '/media/live-room-demo.mp4'
       }
@@ -71,12 +73,14 @@ const api = {
   getLiveRoom: vi.fn(async () => ({
     id: 'room_1001',
     title: '珠宝严选直播间',
+    merchantId: 'merchant_01',
     merchantName: '云上珠宝',
     status: 'LIVE',
     videoSource: 'recorded',
     onlineCount: 328,
     watcherCount: 1208,
     likeCount: 0,
+    merchantFollowerCount: 128000,
     activeAuctionId: 'auc_2001',
     videoUrl: '/media/live-room-demo.mp4'
   })),
@@ -191,24 +195,32 @@ const api = {
     page_size: 20
   })),
   searchLiveRooms: vi.fn(async () => ({
-    items: [{ id: 'room_1001', title: '珠宝严选直播间', merchantName: '云上珠宝', status: 'LIVE', videoSource: 'recorded', onlineCount: 328, watcherCount: 1208 }],
+    items: [{ id: 'room_1001', title: '珠宝严选直播间', merchantId: 'merchant_01', merchantName: '云上珠宝', status: 'LIVE', videoSource: 'recorded', onlineCount: 328, watcherCount: 1208, merchantFollowerCount: 128000 }],
     total: 1,
     page: 1,
     page_size: 20
   })),
   listMerchantLiveSessions: vi.fn(async () => ({
-    items: [{ id: 'room_1001', title: '珠宝严选直播间', merchantId: 'merchant_01', merchantName: '云上珠宝', status: 'LIVE', videoSource: 'recorded', onlineCount: 328, watcherCount: 1208 }],
+    items: [{ id: 'room_1001', title: '珠宝严选直播间', merchantId: 'merchant_01', merchantName: '云上珠宝', status: 'LIVE', videoSource: 'recorded', onlineCount: 328, watcherCount: 1208, merchantFollowerCount: 128000 }],
     total: 1,
     page: 1,
     page_size: 20
   })),
   searchMerchants: vi.fn(async () => ({
-    items: [{ id: 'merchant_01', name: '云上珠宝', description: '珠宝直播拍卖商家', followerCount: 128000, rating: 4.9 }],
+    items: [{ id: 'merchant_01', name: '云上珠宝', description: '珠宝直播拍卖商家', followerCount: 128000, rating: 4.9, location: '浙江省 / 杭州市 / 西湖区' }],
     total: 1,
     page: 1,
     page_size: 20
   })),
-  getMerchant: vi.fn(async () => ({ id: 'merchant_01', name: '云上珠宝', description: '珠宝直播拍卖商家', followerCount: 128000, rating: 4.9 })),
+  getMerchant: vi.fn(async () => ({ id: 'merchant_01', name: '云上珠宝', description: '珠宝直播拍卖商家', followerCount: 128000, rating: 4.9, location: '浙江省 / 杭州市 / 西湖区' })),
+  followMerchant: vi.fn(async () => ({ id: 'merchant_01', name: '云上珠宝', description: '珠宝直播拍卖商家', followerCount: 128001, isFollowed: true, rating: 4.9, location: '浙江省 / 杭州市 / 西湖区' })),
+  unfollowMerchant: vi.fn(async () => ({ id: 'merchant_01', name: '云上珠宝', description: '珠宝直播拍卖商家', followerCount: 128000, isFollowed: false, rating: 4.9, location: '浙江省 / 杭州市 / 西湖区' })),
+  listMyFollowedMerchants: vi.fn(async () => ({
+    items: [],
+    total: 0,
+    page: 1,
+    page_size: 20
+  })),
   getLot: vi.fn(async (lotId: string) => {
     if (lotId === 'lot_3001') {
       return {
@@ -731,7 +743,7 @@ describe('App flow', () => {
     expect(await screen.findByText('云上珠宝')).toBeInTheDocument();
     const liveShop = screen.getByText('云上珠宝').closest('.live-shop');
     expect(liveShop).not.toBeNull();
-    expect(within(liveShop as HTMLElement).getByText(getMessage('live.likes', undefined, { count: '0' }))).toBeInTheDocument();
+    await waitFor(() => expect(within(liveShop as HTMLElement).getByText(getMessage('live.shopStats', undefined, { followers: '12.8万', likes: '0' }))).toBeInTheDocument());
     expect(within(liveShop as HTMLElement).getByRole('button', { name: `+${getMessage('live.follow')}` })).toHaveClass('live-follow-pill');
     const headerWatchers = screen.getByLabelText(getMessage('live.statsOnline', undefined, { count: '328' }));
     expect(headerWatchers).toHaveClass('live-header-watchers');
@@ -1580,7 +1592,7 @@ describe('App flow', () => {
     expect(likeButton).not.toHaveClass('is-liked');
 
     await user.click(likeButton);
-    expect(await screen.findByText(getMessage('live.likes', undefined, { count: '1' }))).toBeInTheDocument();
+    expect(await screen.findByText(getMessage('live.shopStats', undefined, { followers: '12.8万', likes: '1' }))).toBeInTheDocument();
     expect(likeButton).toHaveClass('is-liked');
     expect(likeButton).toHaveAttribute('aria-pressed', 'true');
     expect(likeButton.querySelector('.comment-like-burst')).toBeInTheDocument();
@@ -1630,7 +1642,82 @@ describe('App flow', () => {
     expect(await screen.findByRole('button', { name: getMessage('live.commentInput') })).toBeInTheDocument();
   });
 
-  it('toggles live-room following and manages followed rooms from the following page', async () => {
+  it('toggles merchant following and manages followed merchants from the following page', async () => {
+    let followed = false;
+    vi.mocked(api.getMerchant).mockImplementation(async () => ({
+      id: 'merchant_01',
+      name: '云上珠宝',
+      description: '珠宝直播拍卖商家',
+      followerCount: followed ? 128001 : 128000,
+      isFollowed: followed,
+      rating: 4.9,
+      liveRoomId: 'room_1001',
+      currentLiveSession: {
+        id: 'room_1001',
+        title: '珠宝严选直播间',
+        merchantId: 'merchant_01',
+        merchantName: '云上珠宝',
+        status: 'LIVE',
+        videoSource: 'recorded',
+        onlineCount: 328,
+        watcherCount: 1208
+      }
+    }));
+    vi.mocked(api.followMerchant).mockImplementation(async () => {
+      followed = true;
+      return {
+        id: 'merchant_01',
+        name: '云上珠宝',
+        description: '珠宝直播拍卖商家',
+        followerCount: 128001,
+        isFollowed: true,
+        rating: 4.9,
+        liveRoomId: 'room_1001'
+      };
+    });
+    vi.mocked(api.unfollowMerchant).mockImplementation(async () => {
+      followed = false;
+      return {
+        id: 'merchant_01',
+        name: '云上珠宝',
+        description: '珠宝直播拍卖商家',
+        followerCount: 128000,
+        isFollowed: false,
+        rating: 4.9,
+        liveRoomId: 'room_1001'
+      };
+    });
+    vi.mocked(api.listMyFollowedMerchants).mockImplementation(async () => ({
+      items: followed
+        ? [
+            {
+              merchant: {
+                id: 'merchant_01',
+                name: '云上珠宝',
+                description: '珠宝直播拍卖商家',
+                followerCount: 128001,
+                isFollowed: true,
+                rating: 4.9,
+                liveRoomId: 'room_1001',
+                currentLiveSession: {
+                  id: 'room_1001',
+                  title: '珠宝严选直播间',
+                  merchantId: 'merchant_01',
+                  merchantName: '云上珠宝',
+                  status: 'LIVE',
+                  videoSource: 'recorded',
+                  onlineCount: 328,
+                  watcherCount: 1208
+                }
+              },
+              followedAt: new Date().toISOString()
+            }
+          ]
+        : [],
+      total: followed ? 1 : 0,
+      page: 1,
+      page_size: 20
+    }));
     renderApp();
     const user = userEvent.setup();
 
@@ -1639,7 +1726,7 @@ describe('App flow', () => {
 
     await user.click(await screen.findByRole('button', { name: `+${getMessage('live.follow')}` }));
     expect(await screen.findByRole('button', { name: getMessage('live.followed') })).toBeInTheDocument();
-    expect(useLiveActivityStore.getState().followedRooms).toHaveLength(1);
+    expect(api.followMerchant).toHaveBeenCalledWith('merchant_01');
 
     await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
@@ -1658,7 +1745,7 @@ describe('App flow', () => {
 
     await user.click(screen.getByRole('button', { name: getMessage('profile.cancelFollow') }));
     expect(await screen.findByText(getMessage('profile.noFollowing'))).toBeInTheDocument();
-    expect(useLiveActivityStore.getState().followedRooms).toHaveLength(0);
+    expect(api.unfollowMerchant).toHaveBeenCalledWith('merchant_01');
   });
 
   it('records live room footprints only when entering the full live room and shows them on the footprints page', async () => {
@@ -1672,6 +1759,11 @@ describe('App flow', () => {
     await user.click(await screen.findByRole('button', { name: getMessage('discover.enterLive') }));
     await screen.findByText('云上珠宝');
     expect(useLiveActivityStore.getState().footprints).toHaveLength(1);
+    act(() => {
+      useLiveActivityStore.setState((state) => ({
+        footprints: state.footprints.map((footprint) => ({ ...footprint, coverUrl: undefined }))
+      }));
+    });
 
     await user.click(screen.getByRole('button', { name: getMessage('common.back') }));
     await user.click(await screen.findByRole('button', { name: getMessage('nav.me') }));
@@ -1692,6 +1784,7 @@ describe('App flow', () => {
     expect(screen.getByRole('button', { name: getMessage('profile.enterLiveRoom') })).toHaveClass(
       'is-red-outline',
     );
+    await waitFor(() => expect(useLiveActivityStore.getState().footprints[0].coverUrl).toBe('/gallery/necklace-1.jpg'));
 
     await user.click(screen.getByRole('tab', { name: getMessage('profile.lotFootprints') }));
     expect(screen.getByText(getMessage('profile.noLotFootprints'))).toBeInTheDocument();
@@ -1811,6 +1904,10 @@ describe('App flow', () => {
     expect(await screen.findByRole('heading', { name: '云上珠宝' })).toBeInTheDocument();
     expect(screen.queryByText(getMessage('merchant.liveWindow'))).not.toBeInTheDocument();
     expect(screen.queryByText(getMessage('merchant.title'))).not.toBeInTheDocument();
+    expect(screen.getByText(getMessage('merchant.rating'))).toBeInTheDocument();
+    expect(screen.getByText('5.0')).toBeInTheDocument();
+    expect(screen.getByText(getMessage('merchant.location'))).toBeInTheDocument();
+    expect(screen.getByText('杭州市')).toBeInTheDocument();
 
     const liveCard = document.querySelector('.merchant-live-card') as HTMLElement;
     expect(liveCard).toBeInTheDocument();

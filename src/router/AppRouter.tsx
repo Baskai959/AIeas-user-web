@@ -87,13 +87,15 @@ function parseMyAuctionTab(tab: string | null): MyAuctionTabKey {
 }
 
 const lotSortKeys: LotSortKey[] = ['default', 'auctionTime', 'publishedAt', 'priceAsc', 'priceDesc'];
-const lotStatusKeys: LotStatusFilter[] = ['all', 'READY', 'WARMING_UP', 'RUNNING', 'EXTENDED', 'HAMMER_PENDING', 'CLOSED_WON', 'CLOSED_FAILED', 'SETTLED'];
+const lotStatusKeys: LotStatusFilter[] = ['all', 'READY', 'WARMING_UP', 'RUNNING'];
 
 function parseLotSort(value: string | null): LotSortKey {
   return lotSortKeys.includes(value as LotSortKey) ? (value as LotSortKey) : 'default';
 }
 
 function parseLotStatus(value: string | null): LotStatusFilter {
+  if (value === 'EXTENDED') return 'RUNNING';
+  if (value === 'HAMMER_PENDING' || value === 'CLOSED_WON' || value === 'CLOSED_FAILED' || value === 'SETTLED') return 'all';
   return lotStatusKeys.includes(value as LotStatusFilter) ? (value as LotStatusFilter) : 'all';
 }
 
@@ -234,8 +236,8 @@ export default function AppRoutes({ apiClient = defaultApiClient }: AppProps) {
           <Route path="/pay/:orderId" element={<PayRoutePage apiClient={apiClient} />} />
           <Route path="/settings" element={<SettingsRoutePage apiClient={apiClient} />} />
           <Route path="/orders" element={<OrdersRoutePage apiClient={apiClient} />} />
-          <Route path="/following" element={<FollowingRoutePage />} />
-          <Route path="/footprints" element={<FootprintsRoutePage />} />
+          <Route path="/following" element={<FollowingRoutePage apiClient={apiClient} />} />
+          <Route path="/footprints" element={<FootprintsRoutePage apiClient={apiClient} />} />
           <Route path="/history" element={<HistoryRoutePage apiClient={apiClient} />} />
         </Route>
         <Route path="*" element={<Navigate to={accessToken ? '/' : '/login'} replace />} />
@@ -457,15 +459,16 @@ function OrdersRoutePage({ apiClient }: { apiClient: ApiClient }) {
   );
 }
 
-function FollowingRoutePage() {
+function FollowingRoutePage({ apiClient }: { apiClient: ApiClient }) {
   const { navigate, openRoom } = useAppNavigation();
-  return <FollowingPage onBack={() => navigateWithTransition(navigate, '/me')} onOpenRoom={(roomId) => openRoom(roomId)} />;
+  return <FollowingPage apiClient={apiClient} onBack={() => navigateWithTransition(navigate, '/me')} onOpenRoom={(roomId) => openRoom(roomId)} />;
 }
 
-function FootprintsRoutePage() {
+function FootprintsRoutePage({ apiClient }: { apiClient: ApiClient }) {
   const { navigate, openRoom } = useAppNavigation();
   return (
     <FootprintsPage
+      apiClient={apiClient}
       onBack={() => navigateWithTransition(navigate, '/me')}
       onOpenRoom={(roomId) => openRoom(roomId)}
       onOpenLot={(lotId, returnTo) => navigateWithTransition(navigate, `/product/${lotId}`, { state: { returnTo, sourceTab: 'me' } })}
@@ -1151,8 +1154,8 @@ function MerchantPage({ apiClient, merchantId, onBack, onOpenRoom, onOpenLot }: 
             </div>
             <div className="merchant-stats">
               <Metric label={t('merchant.followers')} value={formatCompactNumber(data.followerCount)} icon={<Users size={16} />} />
-              <Metric label={t('merchant.rating')} value={String(data.rating ?? '-')} icon={<Star size={16} />} />
-              <Metric label={t('merchant.location')} value={data.location ?? '-'} icon={<MapPin size={16} />} />
+              <Metric label={t('merchant.rating')} value="5.0" icon={<Star size={16} />} />
+              <Metric label={t('merchant.location')} value={merchantCityLabel(data.location)} icon={<MapPin size={16} />} />
             </div>
           </>
         ) : (
@@ -1269,6 +1272,15 @@ function LiveRoomCard({ room, onOpen }: { room: LiveRoom; onOpen: () => void }) 
       </div>
     </article>
   );
+}
+
+function merchantCityLabel(location?: string): string {
+  const parts = (location ?? '')
+    .split(/[/／]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (parts.length >= 2) return parts[1];
+  return parts[0] ?? '-';
 }
 
 function LotResultCard({ lot, onOpen, onOpenMerchant }: { lot: LiveRoomLot; onOpen: () => void; onOpenMerchant?: (merchantId: string) => void }) {
@@ -1392,12 +1404,7 @@ function lotStatusOptions() {
     { value: 'all', label: t('status.all') },
     { value: 'READY', label: t('auction.ready') },
     { value: 'WARMING_UP', label: t('auction.warmingUp') },
-    { value: 'RUNNING', label: t('auction.running') },
-    { value: 'EXTENDED', label: t('auction.extended') },
-    { value: 'HAMMER_PENDING', label: t('auction.hammerPending') },
-    { value: 'CLOSED_WON', label: t('auction.closedWon') },
-    { value: 'CLOSED_FAILED', label: t('auction.closedFailed') },
-    { value: 'SETTLED', label: t('auction.settled') }
+    { value: 'RUNNING', label: t('auction.running') }
   ];
 }
 

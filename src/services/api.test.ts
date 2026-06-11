@@ -54,8 +54,8 @@ describe('ApiClient', () => {
   it('uses the live-session REST resources registered by the backend', async () => {
     const fetcher = vi
       .fn()
-      .mockImplementationOnce(() => ok({ sessions: [{ id: 1001, merchantId: 'merchant_01', title: '珠宝严选直播间', status: 'LIVE', viewerTotal: 1208, aiAssistantEnabled: false }] }))
-      .mockImplementationOnce(() => ok({ id: 1001, merchantId: 'merchant_01', title: '珠宝严选直播间', status: 'LIVE', activeAuctionId: 2001, aiAssistantEnabled: true }))
+      .mockImplementationOnce(() => ok({ sessions: [{ id: 1001, merchantId: 'merchant_01', title: '珠宝严选直播间', status: 'LIVE', viewerTotal: 1208, aiAssistantEnabled: false, cover_url: '/api/v1/images/live-list.png' }] }))
+      .mockImplementationOnce(() => ok({ id: 1001, merchantId: 'merchant_01', title: '珠宝严选直播间', status: 'LIVE', activeAuctionId: 2001, aiAssistantEnabled: true, cover_url: '/api/v1/images/live-detail.png' }))
       .mockImplementationOnce(() =>
         ok({
           lots: [
@@ -86,11 +86,12 @@ describe('ApiClient', () => {
     const lots = await api.listLiveRoomLots('1001');
     const stats = await api.getLiveRoomStats('1001');
 
-    expect(rooms.items[0]).toMatchObject({ id: '1001', title: '珠宝严选直播间', merchantId: 'merchant_01', status: 'LIVE', watcherCount: 1208, videoSource: 'recorded', aiAssistantEnabled: false });
+    expect(rooms.items[0]).toMatchObject({ id: '1001', title: '珠宝严选直播间', merchantId: 'merchant_01', status: 'LIVE', watcherCount: 1208, videoSource: 'recorded', aiAssistantEnabled: false, coverUrl: '/api/v1/images/live-list.png' });
     expect(room).toMatchObject({
       activeAuctionId: '2001',
       videoSource: 'digitalHuman',
       aiAssistantEnabled: true,
+      coverUrl: '/api/v1/images/live-detail.png',
       digitalHuman: {
         idleVideoUrl: '/media/AI_Presenter_Silent.mp4',
         speakingVideoUrl: '/media/AI_Presenter_Speaking.mp4'
@@ -317,9 +318,17 @@ describe('ApiClient', () => {
     const fetcher = vi
       .fn()
       .mockImplementationOnce(() => ok({ categories: [{ id: 'jewelry', name: '珠宝玉石', iconName: 'gem' }] }))
-      .mockImplementationOnce(() => ok({ lots: [{ auctionId: 1001, liveSessionId: 9001, sellerId: 'merchant_1', category: '珠宝玉石', categoryId: 'jewelry', title: '钻石项链', imageUrl: 'https://cdn.example.com/lot.jpg', status: 'RUNNING', startPrice: 0, currentPrice: 1000, participantCount: 12, endTime: '2026-06-04T12:00:00+08:00' }] }))
+      .mockImplementationOnce(() =>
+        ok({
+          lots: [
+            { auctionId: 1001, liveSessionId: 9001, sellerId: 'merchant_1', category: '珠宝玉石', categoryId: 'jewelry', title: '钻石项链', imageUrl: 'https://cdn.example.com/lot.jpg', status: 'RUNNING', startPrice: 0, currentPrice: 1000, participantCount: 12, endTime: '2026-06-04T12:00:00+08:00' },
+            { auctionId: 1002, liveSessionId: 9001, sellerId: 'merchant_1', category: '珠宝玉石', categoryId: 'jewelry', title: '钻石手链', status: 'EXTENDED', startPrice: 0, currentPrice: 1200, participantCount: 8, endTime: '2026-06-04T12:03:00+08:00' },
+            { auctionId: 1003, liveSessionId: 9001, sellerId: 'merchant_1', category: '珠宝玉石', categoryId: 'jewelry', title: '钻石戒指', status: 'READY', startPrice: 0, currentPrice: 800, participantCount: 3, endTime: '2026-06-04T12:10:00+08:00' }
+          ]
+        })
+      )
       .mockImplementationOnce(() => ok({ sessions: [{ id: 9001, merchantId: 'merchant_1', merchantName: '云上珠宝', title: '珠宝直播间', status: 'LIVE', onlineCount: 12, viewerTotal: 99 }] }))
-      .mockImplementationOnce(() => ok({ id: 'merchant_1', name: '云上珠宝', followerCount: 1200 }))
+      .mockImplementationOnce(() => ok({ id: 'merchant_1', name: '云上珠宝', followerCount: 1200, location: '杭州' }))
       .mockImplementationOnce(() => ok({ sessions: [{ id: 9002, merchantId: 'merchant_1', merchantName: '云上珠宝', title: '商家直播中', status: 'LIVE', onlineCount: 8, viewerTotal: 18 }] }))
       .mockImplementationOnce(() => ok({ auctionId: 1001, liveSessionId: 9001, sellerId: 'merchant_1', category: 'jewelry', title: '钻石项链', status: 'RUNNING', startPrice: 0, currentPrice: 1000, endTime: '2026-06-04T12:00:00+08:00' }));
     const api = new ApiClient('http://mock.local', fetcher);
@@ -333,13 +342,38 @@ describe('ApiClient', () => {
 
     expect(categories.items[0].name).toBe('珠宝玉石');
     expect(lots.items[0]).toMatchObject({ id: '1001', merchantId: 'merchant_1', categoryId: 'jewelry', imageUrl: 'https://cdn.example.com/lot.jpg', participantCount: 12 });
+    expect(lots.items.map((item) => item.status)).toEqual(['RUNNING', 'EXTENDED']);
     expect(rooms.items[0]).toMatchObject({ merchantName: '云上珠宝', onlineCount: 12, watcherCount: 99 });
-    expect(merchant.id).toBe('merchant_1');
+    expect(merchant).toMatchObject({ id: 'merchant_1', location: '杭州' });
     expect(merchantRooms.items[0]).toMatchObject({ id: '9002', merchantId: 'merchant_1', status: 'LIVE' });
     expect(lot.title).toBe('钻石项链');
     expect(fetcher).toHaveBeenNthCalledWith(2, 'http://mock.local/api/v1/search/lots?limit=20&offset=0&keyword=%E9%92%BB%E7%9F%B3&sort=priceDesc&status=RUNNING&categoryId=jewelry', expect.any(Object));
     expect(fetcher).toHaveBeenNthCalledWith(3, 'http://mock.local/api/v1/live-sessions?limit=20&offset=0&keyword=%E7%8F%A0%E5%AE%9D&sort=viewerDesc&status=LIVE', expect.any(Object));
     expect(fetcher).toHaveBeenNthCalledWith(5, 'http://mock.local/api/v1/merchants/merchant_1/live-sessions?limit=20&offset=0&sort=openedAtDesc&status=LIVE', expect.any(Object));
+  });
+
+  it('keeps discover lot search limited to upcoming, warming, and running lots', async () => {
+    const fetcher = vi.fn(() =>
+      ok({
+        lots: [
+          { auctionId: 1001, liveSessionId: 9001, title: '待开拍拍品', status: 'READY', startPrice: 1000, currentPrice: 1000, endTime: '2026-06-04T12:00:00+08:00' },
+          { auctionId: 1002, liveSessionId: 9001, title: '预热中拍品', status: 'WARMING_UP', startPrice: 1000, currentPrice: 1000, endTime: '2026-06-04T12:00:00+08:00' },
+          { auctionId: 1003, liveSessionId: 9001, title: '竞拍中拍品', status: 'RUNNING', startPrice: 1000, currentPrice: 1200, endTime: '2026-06-04T12:00:00+08:00' },
+          { auctionId: 1004, liveSessionId: 9001, title: '延时拍品', status: 'EXTENDED', startPrice: 1000, currentPrice: 1300, endTime: '2026-06-04T12:00:00+08:00' },
+          { auctionId: 1005, liveSessionId: 9001, title: '落槌拍品', status: 'HAMMER_PENDING', startPrice: 1000, currentPrice: 1300, endTime: '2026-06-04T12:00:00+08:00' },
+          { auctionId: 1006, liveSessionId: 9001, title: '成交拍品', status: 'CLOSED_WON', startPrice: 1000, currentPrice: 1300, endTime: '2026-06-04T12:00:00+08:00' },
+          { auctionId: 1007, liveSessionId: 9001, title: '结算拍品', status: 'SETTLED', startPrice: 1000, currentPrice: 1300, endTime: '2026-06-04T12:00:00+08:00' }
+        ],
+        total: 7
+      })
+    );
+    const api = new ApiClient('http://mock.local', fetcher);
+
+    const lots = await api.searchLots();
+
+    expect(lots.items.map((item) => item.status)).toEqual(['READY', 'WARMING_UP', 'RUNNING', 'EXTENDED']);
+    expect(lots.total).toBe(4);
+    expect(fetcher).toHaveBeenCalledWith('http://mock.local/api/v1/search/lots?limit=20&offset=0', expect.any(Object));
   });
 
   it('normalizes profile and my auction participation resources', async () => {

@@ -116,6 +116,32 @@ describe('live activity store', () => {
     expect(useLiveActivityStore.getState().getLotFootprintsPage(0, 10)).toHaveLength(10);
   });
 
+  it('refreshes a room footprint cover when the room is visited again', () => {
+    useLiveActivityStore.getState().recordFootprint({ ...room('room_1001'), coverUrl: undefined });
+    expect(useLiveActivityStore.getState().footprints[0].coverUrl).toBeUndefined();
+
+    useLiveActivityStore.getState().recordFootprint({ ...room('room_1001'), coverUrl: '/cover-updated.png' });
+
+    expect(useLiveActivityStore.getState().footprints).toHaveLength(1);
+    expect(useLiveActivityStore.getState().footprints[0]).toMatchObject({
+      roomId: 'room_1001',
+      coverUrl: '/cover-updated.png'
+    });
+  });
+
+  it('updates an existing room footprint cover without changing its browsing time', () => {
+    useLiveActivityStore.getState().recordFootprint({ ...room('room_1001'), coverUrl: undefined });
+    const viewedAt = useLiveActivityStore.getState().footprints[0].viewedAt;
+
+    useLiveActivityStore.getState().updateFootprintCover('room_1001', '/cover-backfilled.png');
+
+    expect(useLiveActivityStore.getState().footprints[0]).toMatchObject({
+      roomId: 'room_1001',
+      coverUrl: '/cover-backfilled.png',
+      viewedAt
+    });
+  });
+
   it('uses the lot subtitle as the compact footprint intro before the long detail text', () => {
     useLiveActivityStore.getState().recordLotFootprint({
       ...lot('lot_intro'),

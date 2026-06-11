@@ -17,6 +17,7 @@ interface LiveActivityState {
   setCommentDraft: (roomId: string, draft: string) => void;
   clearCommentDraft: (roomId: string) => void;
   recordFootprint: (room: LiveRoom) => void;
+  updateFootprintCover: (roomId: string, coverUrl: string) => void;
   getFootprintsPage: (offset: number, limit: number) => LiveRoomFootprint[];
   recordLotFootprint: (lot: LiveRoomLot) => void;
   getLotFootprintsPage: (offset: number, limit: number) => LotFootprint[];
@@ -70,6 +71,13 @@ export const useLiveActivityStore = create<LiveActivityState>()(
         const item = roomToFootprint(room);
         set((state) => ({
           footprints: [item, ...state.footprints.filter((footprint) => footprint.roomId !== item.roomId)].slice(0, maxFootprints)
+        }));
+      },
+      updateFootprintCover: (roomId, coverUrl) => {
+        const normalizedCoverUrl = coverUrl.trim();
+        if (!normalizedCoverUrl) return;
+        set((state) => ({
+          footprints: state.footprints.map((footprint) => (footprint.roomId === roomId && footprint.coverUrl !== normalizedCoverUrl ? { ...footprint, coverUrl: normalizedCoverUrl } : footprint))
         }));
       },
       getFootprintsPage: (offset, limit) => get().footprints.slice(offset, offset + limit),
