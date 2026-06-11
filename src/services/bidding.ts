@@ -28,7 +28,7 @@ export type BidValidationResult =
   | { valid: false; reason: 'aboveMaxBidSteps'; maxPrice: number };
 
 export const QUICK_BID_MAX_STEPS = 3;
-export const DEFAULT_MIN_BID_INTERVAL_MS = 1000;
+export const DEFAULT_MIN_BID_INTERVAL_MS = 3000;
 
 export function getNextBidPrice(rule: BidRuleInput): number {
   const nextPrice = rule.currentPrice + rule.minIncrement;
@@ -108,6 +108,10 @@ export function getMinBidIntervalMs(rule: BidRuleInput): number {
 export function getQuickBidIntervalRemainingMs(lastBidAtMs: number | undefined, nowMs: number, minBidIntervalMs: number): number {
   if (!lastBidAtMs) return 0;
   return Math.max(0, minBidIntervalMs - (nowMs - lastBidAtMs));
+}
+
+export function isQuickBidIntervalActive(lastBidAtMs: number | undefined, nowMs: number, minBidIntervalMs: number): boolean {
+  return getQuickBidIntervalRemainingMs(lastBidAtMs, nowMs, minBidIntervalMs) > 0;
 }
 
 export function isQuickBidOutdated(price: number | undefined, rule: BidRuleInput): boolean {

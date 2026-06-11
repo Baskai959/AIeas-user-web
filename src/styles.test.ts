@@ -255,6 +255,19 @@ describe('mobile layout CSS', () => {
     expect(rules('.merchant-live-card')).toContain('grid-template-columns: 108px minmax(0, 1fr)');
   });
 
+  it('anchors the payment-page back button at the top-left without reusing the shared subpage header container', () => {
+    expect(rule('.pay-page > .back-button')).toContain('justify-self: start');
+    expect(rule('.pay-page > .back-button')).toContain('align-self: start');
+    expect(rule('.pay-page > .back-button')).toContain('margin-bottom: 0');
+  });
+
+  it('uses a following-specific room-card variant that keeps the secondary unfollow action in the bottom action row', () => {
+    expect(rule('.activity-room-card.is-following')).toContain('grid-template-columns: 86px minmax(0, 1fr)');
+    expect(rule('.activity-room-card.is-following .activity-room-body')).toContain('display: grid');
+    expect(rule('.activity-room-card.is-following .activity-room-actions')).toContain('justify-content: flex-start');
+    expect(rule('.activity-room-card.is-following .activity-room-actions')).toContain('margin-top: 10px');
+  });
+
   it('docks the live ranking rail under the follow button with a low-alpha background', () => {
     expect(rule('.live-ranking-rail')).toContain('position: absolute');
     expect(rule('.live-ranking-rail')).toContain('right: 0');

@@ -20,7 +20,7 @@ import { buildPreviewMediaSnapshot, discoverPreviewVideoUrl, isPreviewMediaSnaps
 import type { MessageKey } from '../../i18n/messages';
 import { getRuntimeLocale, t } from '../../i18n/runtime';
 import { hasZeroDepositEnrollment, selectCurrentRunningLot } from '../../services/auctionViews';
-import { buildBidPlacePayload, getMinBidIntervalMs, getQuickBidIntervalRemainingMs, getQuickBidMaxSteps, getQuickBidPrice, isQuickBidOutdated, validateBidPrice, type BidValidationResult } from '../../services/bidding';
+import { buildBidPlacePayload, getMinBidIntervalMs, getQuickBidIntervalRemainingMs, getQuickBidMaxSteps, getQuickBidPrice, isQuickBidIntervalActive, isQuickBidOutdated, validateBidPrice, type BidValidationResult } from '../../services/bidding';
 import type { ApiClient } from '../../services/api';
 import { defaultDigitalHumanMedia, getLiveVoiceBroadcastAudioPlayer, type LiveVoiceBroadcastAudioPlayer, type LiveVoiceBroadcastAudioPayload } from '../../services/digitalHuman';
 import { demoLiveRoomStats, findDemoLiveRoom, listDemoLots } from '../../services/mockData';
@@ -513,7 +513,11 @@ export default function LiveRoomPage({
   const [hiddenAuctionCardId, setHiddenAuctionCardId] = useState<string | undefined>();
   const [runtimeStartedAuctionId, setRuntimeStartedAuctionId] = useState<string | undefined>();
   const [lastBidAtByAuction, setLastBidAtByAuction] = useState<Record<string, number>>({});
+  const lastBidAtByAuctionRef = useRef<Record<string, number>>({});
+  const [quickBidIntervalNoticeUntilByAuction, setQuickBidIntervalNoticeUntilByAuction] = useState<Partial<Record<string, number>>>({});
   const [quickBidFeedback, setQuickBidFeedback] = useState<QuickBidFeedback>({ status: 'idle' });
+  const pendingBidAuctionIdsRef = useRef<Set<string>>(new Set());
+  const pendingBidRequestAuctionMapRef = useRef<Record<string, string>>({});
   const [rankingCollapsed, setRankingCollapsed] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(true);
   const [commentComposerOpen, setCommentComposerOpen] = useState(false);
@@ -533,6 +537,48 @@ export default function LiveRoomPage({
   const [digitalHumanSpeaking, setDigitalHumanSpeaking] = useState(false);
   const [liveSoundAutoplayBlocked, setLiveSoundAutoplayBlocked] = useState(false);
   const [liveVoicePermissionPromptVisible, setLiveVoicePermissionPromptVisible] = useState(false);
+
+  const clearQuickBidIntervalNotice = useCallback((auctionId: string | undefined) => {
+    if (!auctionId) return;
+    setQuickBidIntervalNoticeUntilByAuction((prev) => {
+      if (prev[auctionId] === undefined) return prev;
+      const next = { ...prev };
+      delete next[auctionId];
+      return next;
+    });
+  }, []);
+
+  const showQuickBidIntervalNotice = useCallback((auctionId: string | undefined, remainingMs: number) => {
+    if (!auctionId) return;
+    const safeRemainingMs = Math.max(0, remainingMs);
+    if (safeRemainingMs <= 0) return;
+    const noticeUntilMs = Date.now() + safeRemainingMs;
+    setQuickBidIntervalNoticeUntilByAuction((prev) => ({ ...prev, [auctionId]: noticeUntilMs }));
+  }, []);
+
+  const recordAcceptedBidAt = useCallback((auctionId: string | undefined, acceptedAtMs = Date.now()) => {
+    if (!auctionId) return;
+    lastBidAtByAuctionRef.current[auctionId] = acceptedAtMs;
+    setLastBidAtByAuction((prev) => ({ ...prev, [auctionId]: acceptedAtMs }));
+  }, []);
+
+  const lockQuickBidSubmission = useCallback((auctionId: string, requestId: string) => {
+    pendingBidAuctionIdsRef.current.add(auctionId);
+    pendingBidRequestAuctionMapRef.current[requestId] = auctionId;
+  }, []);
+
+  const releaseQuickBidSubmission = useCallback(({ auctionId, requestId }: { auctionId?: string; requestId?: string }) => {
+    const mappedAuctionId = requestId ? pendingBidRequestAuctionMapRef.current[requestId] : undefined;
+    const resolvedAuctionId = auctionId ?? mappedAuctionId;
+    if (resolvedAuctionId) {
+      pendingBidAuctionIdsRef.current.delete(resolvedAuctionId);
+    }
+    for (const [currentRequestId, currentAuctionId] of Object.entries(pendingBidRequestAuctionMapRef.current)) {
+      if ((requestId && currentRequestId === requestId) || (resolvedAuctionId && currentAuctionId === resolvedAuctionId)) {
+        delete pendingBidRequestAuctionMapRef.current[currentRequestId];
+      }
+    }
+  }, []);
   const [now, setNow] = useState(Date.now());
   const [serverTimeOffsetMs, setServerTimeOffsetMs] = useState(0);
   const { alerts: auctionAlerts, pushAlert: pushAuctionAlert, dismissAlert: dismissAuctionAlert } = useLiveAuctionAlerts();
@@ -870,7 +916,7 @@ export default function LiveRoomPage({
       tone: activeCountdownPressurePhase,
       kicker: activeCountdownPressurePhase === 'critical' ? t('countdownPressure.criticalKicker') : t('countdownPressure.kicker'),
       title: isExtended ? t('countdownPressure.extendedTitle') : t('countdownPressure.title', { seconds }),
-      subtitle: activeLot.title ? `${subtitle} 路 ${activeLot.title}` : subtitle,
+      subtitle: activeLot.title ? `${subtitle} · ${activeLot.title}` : subtitle,
       value: isExtended ? '+' : String(seconds),
       priority: liveAuctionAlertPriority.countdown,
       durationMs: liveAuctionAlertDurationMs.countdown
@@ -1140,6 +1186,9 @@ export default function LiveRoomPage({
       bidConfirmTimerRef.current = window.setTimeout(() => {
         bidConfirmTimerRef.current = undefined;
         console.warn('[bid.place] confirmation timeout', { requestId });
+        const auctionId = pendingBidRequestAuctionMapRef.current[requestId];
+        releaseQuickBidSubmission({ requestId });
+        clearQuickBidIntervalNotice(auctionId);
         setQuickBidFeedback((prev) =>
           prev.status === 'submitting' && prev.requestId === requestId
             ? { status: 'error', requestId, message: t('auction.bidRealtimeTimeout') }
@@ -1148,7 +1197,7 @@ export default function LiveRoomPage({
         void refetchAuctionStateRef.current();
       }, BID_CONFIRM_TIMEOUT_MS);
     },
-    [clearBidConfirmTimer]
+    [clearBidConfirmTimer, clearQuickBidIntervalNotice, releaseQuickBidSubmission]
   );
 
   // Async bid acknowledgements can remain queued until a later bid.result arrives.
@@ -1368,6 +1417,9 @@ export default function LiveRoomPage({
         // A rejected async ack is already terminal.
         logBidRejectedDebug('bid.ack', requestId, payload);
         clearBidConfirmTimer();
+        const auctionId = String(payload.auctionId ?? '');
+        releaseQuickBidSubmission({ auctionId, requestId });
+        clearQuickBidIntervalNotice(auctionId);
         setQuickBidFeedback((prev) => (prev.status === 'submitting' && (!requestId || prev.requestId === requestId) ? { status: 'error', requestId, message: formatBidRejectedMessage(payload) } : prev));
         return;
       }
@@ -1385,15 +1437,19 @@ export default function LiveRoomPage({
     if (payload.accepted === false) {
       logBidRejectedDebug('bid.ack', requestId, payload);
       clearBidConfirmTimer();
+      const auctionId = String(payload.auctionId ?? '');
+      releaseQuickBidSubmission({ auctionId, requestId });
+      clearQuickBidIntervalNotice(auctionId);
       setQuickBidFeedback((prev) => (prev.status === 'submitting' && (!requestId || prev.requestId === requestId) ? { status: 'error', requestId, message: formatBidRejectedMessage(payload) } : prev));
       return;
     }
     if (payload.accepted === true) {
       const bidderId = String(payload.bidderId ?? payload.leaderBidderId ?? '');
       const auctionId = String(payload.auctionId ?? '');
-      if (bidderId === userId && auctionId) {
-        setLastBidAtByAuction((prev) => ({ ...prev, [auctionId]: Date.now() }));
-      }
+      // bid.ack is the directed result for the current user's bid request, so a successful ack
+      // should always start the local cooldown even when the backend omits bidder identity fields.
+      if (auctionId) recordAcceptedBidAt(auctionId);
+      releaseQuickBidSubmission({ auctionId, requestId });
       setQuickBidFeedback((prev) => {
         if (prev.status !== 'submitting') return prev;
         if (requestId && prev.requestId !== requestId && bidderId !== userId) return prev;
@@ -1403,35 +1459,42 @@ export default function LiveRoomPage({
       return;
     }
     setQuickBidFeedback((prev) => (prev.status === 'submitting' && (!requestId || prev.requestId === requestId) ? { ...prev, message: t('auction.bidSubmitted') } : prev));
-  }, [clearBidConfirmTimer, scheduleBidArbitrationTimeout, userId]);
+  }, [clearBidConfirmTimer, clearQuickBidIntervalNotice, recordAcceptedBidAt, releaseQuickBidSubmission, scheduleBidArbitrationTimeout, userId]);
 
   const handleBidAcceptedFeedback = useCallback(
     (requestId: string | undefined, payload: Record<string, unknown>) => {
       const bidderId = String(payload.bidderId ?? payload.leaderBidderId ?? '');
       const auctionId = String(payload.auctionId ?? '');
-      if (bidderId === userId && auctionId) {
-        setLastBidAtByAuction((prev) => ({ ...prev, [auctionId]: Date.now() }));
-      }
+      let isOwnAcceptedBid = bidderId === userId;
+      releaseQuickBidSubmission({ auctionId, requestId });
       setQuickBidFeedback((prev) => {
         if (prev.status === 'submitting' && requestId && prev.requestId === requestId) {
+          isOwnAcceptedBid = true;
           clearBidConfirmTimer();
           return { status: 'success', requestId, message: t('auction.bidAccepted') };
         }
         if (bidderId === userId) {
+          isOwnAcceptedBid = true;
           clearBidConfirmTimer();
           return { status: 'success', requestId, message: t('auction.bidAccepted') };
         }
         return prev;
       });
+      if (isOwnAcceptedBid && auctionId) {
+        recordAcceptedBidAt(auctionId);
+      }
     },
-    [clearBidConfirmTimer, userId]
+    [clearBidConfirmTimer, recordAcceptedBidAt, releaseQuickBidSubmission, userId]
   );
 
   const handleBidRejectedFeedback = useCallback((requestId: string | undefined, payload: Record<string, unknown>) => {
     logBidRejectedDebug('bid.rejected', requestId, payload);
     clearBidConfirmTimer();
+    const auctionId = String(payload.auctionId ?? '');
+    releaseQuickBidSubmission({ auctionId, requestId });
+    clearQuickBidIntervalNotice(auctionId);
     setQuickBidFeedback((prev) => (prev.status === 'submitting' && (!requestId || prev.requestId === requestId) ? { status: 'error', requestId, message: formatBidRejectedMessage(payload) } : prev));
-  }, [clearBidConfirmTimer]);
+  }, [clearBidConfirmTimer, clearQuickBidIntervalNotice, releaseQuickBidSubmission]);
 
   // bid.result is the final directed result for an async bid attempt.
   const handleBidResult = useCallback((payload: Record<string, unknown>): boolean => {
@@ -1457,19 +1520,24 @@ export default function LiveRoomPage({
           bidTsMs: parseRealtimeTimestampMs(payload.bidTsMs ?? payload.serverTimeMs ?? payload.serverTime, Date.now())
         };
       }
-      if (auctionId) setLastBidAtByAuction((prev) => ({ ...prev, [auctionId]: Date.now() }));
+      if (auctionId) {
+        recordAcceptedBidAt(auctionId);
+      }
+      releaseQuickBidSubmission({ auctionId });
       setQuickBidFeedback((prev) => (prev.status === 'submitting' || prev.status === 'arbitrating' ? { status: 'success', requestId: prev.requestId, message: t('auction.bidAccepted') } : prev));
       return true;
     }
     if (finalStatus === 'REJECTED') {
       logBidRejectedDebug('bid.ack', undefined, payload);
       clearBidConfirmTimer();
+      releaseQuickBidSubmission({ auctionId });
+      clearQuickBidIntervalNotice(auctionId);
       setQuickBidFeedback((prev) => (prev.status === 'submitting' || prev.status === 'arbitrating' ? { status: 'error', requestId: prev.requestId, message: formatBidRejectedMessage(payload) } : prev));
       void refetchAuctionStateRef.current();
       return true;
     }
     return true;
-  }, [clearBidConfirmTimer, userId]);
+  }, [clearBidConfirmTimer, clearQuickBidIntervalNotice, recordAcceptedBidAt, releaseQuickBidSubmission, userId]);
 
   const sendComment = useCallback(() => {
     const content = commentDraft.trim();
@@ -1982,12 +2050,23 @@ export default function LiveRoomPage({
       return;
     }
     const rule = bidRuleFromLot(lot, state);
+    const minBidIntervalMs = getMinBidIntervalMs(rule);
     const validation = validateBidPrice(price, rule);
     if (!validation.valid) {
       setQuickBidFeedback({ status: 'error', message: formatBidValidationNotice(validation) });
       return;
     }
+    if (pendingBidAuctionIdsRef.current.has(lot.auctionId)) {
+      showQuickBidIntervalNotice(lot.auctionId, minBidIntervalMs);
+      return;
+    }
+    const intervalRemainingMs = getQuickBidIntervalRemainingMs(lastBidAtByAuctionRef.current[lot.auctionId], Date.now(), minBidIntervalMs);
+    if (intervalRemainingMs > 0) {
+      showQuickBidIntervalNotice(lot.auctionId, intervalRemainingMs);
+      return;
+    }
     const requestId = makeRequestId('bid');
+    lockQuickBidSubmission(lot.auctionId, requestId);
     setQuickBidFeedback({ status: 'submitting', requestId, message: t('auction.bidSubmitted') });
     const sent = realtimeRef.current?.send({
       type: 'bid.place',
@@ -1999,6 +2078,8 @@ export default function LiveRoomPage({
       })
     }) ?? false;
     if (!sent) {
+      releaseQuickBidSubmission({ auctionId: lot.auctionId, requestId });
+      clearQuickBidIntervalNotice(lot.auctionId);
       clearBidConfirmTimer();
       console.warn('[bid.place] send skipped: realtime socket is not ready', { requestId, auctionId: lot.auctionId });
       setQuickBidFeedback({ status: 'error', requestId, message: t('auction.bidRealtimeUnavailable') });
@@ -2021,6 +2102,7 @@ export default function LiveRoomPage({
   const openQuickBid = (lot: LiveRoomLot, options: { variant?: LiveSheetVariant } = {}) => {
     setSelectedLotId(lot.id);
     setQuickBidFeedback({ status: 'idle' });
+    clearQuickBidIntervalNotice(lot.auctionId);
     openLiveSheet('quickBid', lot.id, options);
   };
 
@@ -2300,6 +2382,7 @@ export default function LiveRoomPage({
             ranking={ranking}
             feedback={quickBidFeedback}
             lastBidAtMs={lastBidAtByAuction[sheetLot.auctionId]}
+            intervalNoticeUntilMs={quickBidIntervalNoticeUntilByAuction[sheetLot.auctionId]}
             nowMs={now}
             serverTimeOffsetMs={serverTimeOffsetMs}
             countdownExtensionPulse={countdownExtensionPulse?.auctionId === sheetLot.auctionId ? countdownExtensionPulse : undefined}
@@ -3690,7 +3773,7 @@ function AuctionFloatingCard({
           <strong>{formatMoney(priceValue(lot, state))}</strong>
           <small>
             {t('auction.countdown')} {formatCountdown(remainMs, { milliseconds: true })}
-            {leader ? ` 路 ${leader}` : ''}
+            {leader ? ` · ${leader}` : ''}
           </small>
         </div>
       </button>
@@ -4140,6 +4223,7 @@ function BidSheet({
   ranking,
   feedback,
   lastBidAtMs,
+  intervalNoticeUntilMs,
   nowMs,
   serverTimeOffsetMs,
   countdownExtensionPulse,
@@ -4156,6 +4240,7 @@ function BidSheet({
   ranking: RankingItem[];
   feedback: QuickBidFeedback;
   lastBidAtMs?: number;
+  intervalNoticeUntilMs?: number;
   nowMs: number;
   serverTimeOffsetMs: number;
   countdownExtensionPulse?: CountdownExtensionPulse;
@@ -4174,6 +4259,12 @@ function BidSheet({
   const minBidIntervalMs = getMinBidIntervalMs(rule);
   const maxBidSteps = getQuickBidMaxSteps(rule);
   const intervalRemainingMs = getQuickBidIntervalRemainingMs(lastBidAtMs, nowMs, minBidIntervalMs);
+  const intervalActive = isQuickBidIntervalActive(lastBidAtMs, nowMs, minBidIntervalMs);
+  const intervalNoticeRemainingMs = intervalNoticeUntilMs ? Math.max(0, intervalNoticeUntilMs - Date.now()) : 0;
+  const shouldShowIntervalNotice = intervalNoticeRemainingMs > 0;
+  const effectiveIntervalNoticeRemainingMs = intervalActive
+    ? (shouldShowIntervalNotice ? Math.min(intervalRemainingMs, intervalNoticeRemainingMs) : intervalRemainingMs)
+    : intervalNoticeRemainingMs;
   const outdated = isQuickBidOutdated(selectedPrice, rule);
   const validation = validateBidPrice(selectedPrice, rule);
   const hasLeader = Boolean(state.leaderBidderId);
@@ -4234,8 +4325,8 @@ function BidSheet({
         ? t('bid.priceOutdated')
         : !validation.valid
           ? formatBidValidationNotice(validation)
-          : !isUserLeader && intervalRemainingMs > 0
-            ? t('bid.intervalWaiting', { seconds: Math.ceil(intervalRemainingMs / 1000) })
+          : shouldShowIntervalNotice && effectiveIntervalNoticeRemainingMs > 0
+            ? t('bid.intervalWaiting', { seconds: Math.ceil(effectiveIntervalNoticeRemainingMs / 1000) })
             : '';
   const canSubmit = !disabledReason && !isBidPending;
   const submitText = isHammerPending

@@ -89,7 +89,7 @@ export function PayPage({
   const showLoading = order.isLoading && !order.data && !paymentComplete && !paymentUnavailable;
 
   return (
-    <section className="page-content result-page">
+    <section className="page-content result-page pay-page">
       <button className="back-button" onClick={() => onBack(targetAuctionId)} type="button" aria-label={t('common.back')}>
         <ArrowLeft size={18} />
       </button>

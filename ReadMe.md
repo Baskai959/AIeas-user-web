@@ -19,8 +19,9 @@
 - 商家页直播区使用独立紧凑卡片，弱化重复标题并突出直播入口
 - 全屏直播间、评论区、统一声音开关、竞拍清单、拍品详情与快速出价
 - 实时排行榜、倒计时提醒、竞价氛围弹层与最后 30 秒光带氛围
+- 倒计时/竞拍提示中的拍品标题统一使用 `·` 分隔，避免 Demo 文案出现异常前缀
 - 成交结果页、模拟支付、订单列表与确认收货
-- “我的”页、设置页、关注列表、直播间/拍品足迹
+- “我的”页、设置页、关注列表、直播间/拍品足迹；关注列表直播间卡片对齐足迹卡片骨架，并保留取消关注按钮
 - 本地 Demo 数据、Mock realtime client、Mock 控制桥注入验证
 
 ## 技术架构
@@ -52,13 +53,14 @@
 - 默认模式：前端 `MockRealtimeClient`
 - 真实联调：`VITE_REALTIME_MODE=websocket` + `VITE_WS_URL`
 - 断线恢复：按直播间持久化 `lastSeq`，支持重连、去重、快照恢复
+- 快速出价冷却：前端按 `LiveRoomLot.ruleSnapshot.minBidIntervalMs` 强制同一用户的连续出价最小间隔；接口缺失时默认使用 `3000ms`。同一用户上一笔出价被前端确认接受后，即使已经成为当前最高价，也必须等待冷却结束后才能再次出价；但“出价太频繁”提示只会在冷却期内再次尝试出价时出现，并展示距离限制解除的倒计时。发送 `bid.place` 前还会按 `auctionId` 做同步提交锁，防止双击或极短时间内重复点击在按钮禁用生效前发出第二次请求；如果用户在这段本地锁定窗口内再次点按，弹层会立即给出同样的 `3000ms` 冷却提示，并按本地提示截止时间计算剩余秒数，避免首帧误显示 `4s`。同时会在本地同步记录最近一次本人成功出价时间，避免首笔成功回包很快时第二次点击读到旧冷却状态。对于 `bid.ack` 这类当前请求的定向成功回包，前端会直接启动这段冷却，不再依赖 `bidderId` 字段是否返回
 
 ### 工程拆分
 
 - `src/router/AppRouter.tsx`：路由装配、登录守卫、页面级导航衔接
 - `src/pages/live-room/LiveRoomPage.tsx`：直播间主页面与实时交互
 - `src/pages/account/AccountPages.tsx`：我的、设置、订单、关注、足迹
-- `src/pages/pay/PayPage.tsx`：支付页
+- `src/pages/pay/PayPage.tsx`：支付页与支付状态动画，返回按钮保持左上角入口位置
 - `src/pages/result/ResultPage.tsx`：成交结果页
 - `src/features/*`：按业务域抽离的复用逻辑
 - `src/components/*`：通用展示与交互组件
@@ -230,14 +232,7 @@ npm run dev:mock-control
 
 ### 补充指南
 
-- [doc/guides/H5用户端移植指南.md](G:/bytedance/AIeas-user-web/doc/guides/H5用户端移植指南.md)
-- [doc/guides/WebSocket断线重连客户端实现指南.md](G:/bytedance/AIeas-user-web/doc/guides/WebSocket断线重连客户端实现指南.md)
 - [doc/Mock控制桥使用说明.md](G:/bytedance/AIeas-user-web/doc/Mock控制桥使用说明.md)
-
-### 展示材料
-
-- [doc/user-client-ui-function-design-showcase.docx](G:/bytedance/AIeas-user-web/doc/user-client-ui-function-design-showcase.docx)
-- [doc/用户端技术难点与联调对齐复盘.docx](G:/bytedance/AIeas-user-web/doc/用户端技术难点与联调对齐复盘.docx)
 
 ### 历史归档
 

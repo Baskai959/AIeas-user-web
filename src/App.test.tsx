@@ -529,6 +529,13 @@ async function flushApp(): Promise<void> {
   });
 }
 
+async function flushAppUntil(check: () => boolean, attempts = 8): Promise<void> {
+  for (let index = 0; index < attempts; index += 1) {
+    if (check()) return;
+    await flushApp();
+  }
+}
+
 function installMockControlSocket() {
   const sockets: Array<{
     listeners: Record<string, Array<(event: { data: string }) => void>>;
@@ -1642,6 +1649,12 @@ describe('App flow', () => {
     expect(followingHeading).toBeInTheDocument();
     expect(followingHeading.closest('.simple-page-header')?.querySelector('.eyebrow')).not.toBeInTheDocument();
     expect(await screen.findByText('珠宝严选直播间')).toBeInTheDocument();
+    const followingCard = document.querySelector('.activity-room-card.is-following') as HTMLElement;
+    expect(followingCard).toBeInTheDocument();
+    expect(followingCard.querySelector('.activity-room-body')).toBeInTheDocument();
+    expect(followingCard.querySelector('.activity-room-actions')).toBeInTheDocument();
+    expect(within(followingCard).getByRole('button', { name: getMessage('profile.enterLiveRoom') })).toBeInTheDocument();
+    expect(within(followingCard).getByRole('button', { name: getMessage('profile.cancelFollow') })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: getMessage('profile.cancelFollow') }));
     expect(await screen.findByText(getMessage('profile.noFollowing'))).toBeInTheDocument();
@@ -1979,7 +1992,13 @@ describe('App flow', () => {
     const pendingPayRecord = await screen.findByTestId('order-record-ord_pending_pay');
     await user.click(within(pendingPayRecord).getByRole('button', { name: getMessage('profile.payNow') }));
 
-    expect(await screen.findByText(getMessage('pay.title'))).toBeInTheDocument();
+    const paymentTitle = await screen.findByRole('heading', { name: getMessage('pay.title') });
+    const paymentPage = paymentTitle.closest('.result-page') as HTMLElement | null;
+    expect(paymentTitle).toBeInTheDocument();
+    expect(paymentPage).toBeInTheDocument();
+    expect(paymentPage).toHaveClass('pay-page');
+    expect(paymentPage?.querySelector('.simple-page-header')).not.toBeInTheDocument();
+    expect(paymentPage?.firstElementChild).toBe(paymentPage?.querySelector('.back-button'));
     expect(window.location.pathname).toBe('/pay/ord_pending_pay');
   });
 
@@ -2567,7 +2586,7 @@ describe('App flow', () => {
       window.history.pushState(null, '', '/live/room_1001');
       renderApp();
 
-      await flushApp();
+      await flushAppUntil(() => sockets.length > 0);
       expect(sockets.length).toBeGreaterThan(0);
       fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
       await flushApp();
@@ -2612,56 +2631,163 @@ describe('App flow', () => {
     }
   });
 
-  it('confirms a quick bid from backend bid ack without waiting for the broadcast echo', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(now);
+  it('shows the quick-bid cooldown only after the current user retries during the interval', async () => {
+    const sockets = installMockControlSocket();
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+
+    fireEvent.click(await screen.findByRole('button', { name: getMessage('auction.lookAround') }));
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+    fireEvent.click(await within(detailDialog).findByRole('button', { name: getMessage('product.bidNow') }));
+    const bidDialog = await screen.findByRole('dialog', { name: getMessage('bid.confirmTitle') });
+
+    await act(async () => {
+      emitLatestMockControl(sockets, {
+        type: 'bid.accepted',
+        payload: {
+          auctionId: 'auc_2001',
+          bidderId: 'u1',
+          bidderNickname: '竞拍用户001',
+          price: 150200,
+          currentPrice: 150200,
+          leaderBidderId: 'u1',
+          accepted: true,
+          bidTsMs: Date.now(),
+          endTime: new Date(Date.now() + 120_000).toISOString()
+        }
+      });
+    });
+
+    const submitButton = within(bidDialog).getByRole('button', { name: getMessage('bid.submitNow') });
+    await waitFor(() => expect(within(bidDialog).getByText(getMessage('bid.highestPriceNotice'))).toBeInTheDocument());
+    expect(within(bidDialog).queryByText(/出价太频繁/)).not.toBeInTheDocument();
+    expect(submitButton).not.toBeDisabled();
+    expect(screen.getAllByText(/1502\.00/).length).toBeGreaterThan(0);
+
+    fireEvent.click(submitButton);
+
+    await waitFor(() => expect(within(bidDialog).getByText(getMessage('bid.intervalWaiting', 'zh-CN', { seconds: 3 }))).toBeInTheDocument());
+    expect(within(bidDialog).getByText(getMessage('bid.highestPriceNotice'))).toBeInTheDocument();
+    expect(submitButton).toBeDisabled();
+
+    await waitFor(
+      () => expect(submitButton).not.toBeDisabled(),
+      { timeout: 4000 }
+    );
+    expect(within(bidDialog).queryByText(/出价太频繁/)).not.toBeInTheDocument();
+  });
+
+  it('sends only one bid.place when the quick-bid submit button is tapped twice in the same burst', async () => {
     const sockets = installNativeRealtimeSocket();
-    try {
-      seedSession();
-      window.history.pushState(null, '', '/live/room_1001');
-      renderApp();
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
 
-      await flushApp();
-      expect(sockets.length).toBeGreaterThan(0);
-      fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
-      await flushApp();
-      const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
-      fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
-      await flushApp();
-      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('product.bidNow') }));
-      await flushApp();
-      const bidDialog = screen.getByRole('dialog', { name: getMessage('bid.confirmTitle') });
+    fireEvent.click(await screen.findByRole('button', { name: getMessage('auction.lookAround') }));
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+    fireEvent.click(await within(detailDialog).findByRole('button', { name: getMessage('product.bidNow') }));
+    const bidDialog = await screen.findByRole('dialog', { name: getMessage('bid.confirmTitle') });
+    const submitButton = within(bidDialog).getByRole('button', { name: getMessage('bid.submitNow') });
+    const socket = sockets[sockets.length - 1];
 
-      fireEvent.click(within(bidDialog).getByRole('button', { name: getMessage('bid.submitNow') }));
-      await flushApp();
-      await act(async () => {
-        emitLatestMockControl(sockets, {
-          type: 'bid.ack',
-          payload: {
-            requestId: 'payload-only-request-id',
-            accepted: true,
-            auctionId: 'auc_2001',
-            bidderId: 'u1',
-            price: 150200,
-            currentPrice: 150200,
-            leaderBidderId: 'u1',
-            endTime: new Date(now + 120_000).toISOString()
-          }
-        });
+    await act(async () => {
+      fireEvent.click(submitButton);
+      fireEvent.click(submitButton);
+    });
+
+    const bidPlaceMessages = socket.sent.filter((raw) => {
+      try {
+        return (JSON.parse(raw) as { type?: string }).type === 'bid.place';
+      } catch {
+        return false;
+      }
+    });
+    expect(bidPlaceMessages).toHaveLength(1);
+    expect(within(bidDialog).getByText(getMessage('bid.intervalWaiting', 'zh-CN', { seconds: 3 }))).toBeInTheDocument();
+  });
+
+  it('does not send a second bid.place when the first bid is accepted before the cooldown state rerenders', async () => {
+    const sockets = installNativeRealtimeSocket();
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+
+    fireEvent.click(await screen.findByRole('button', { name: getMessage('auction.lookAround') }));
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+    fireEvent.click(await within(detailDialog).findByRole('button', { name: getMessage('product.bidNow') }));
+    const bidDialog = await screen.findByRole('dialog', { name: getMessage('bid.confirmTitle') });
+    const submitButton = within(bidDialog).getByRole('button', { name: getMessage('bid.submitNow') });
+    const socket = sockets[sockets.length - 1];
+
+    await act(async () => {
+      fireEvent.click(submitButton);
+      emitLatestMockControl(sockets, {
+        type: 'bid.accepted',
+        payload: {
+          auctionId: 'auc_2001',
+          bidderId: 'u1',
+          bidderNickname: '竞拍用户001',
+          price: 150200,
+          currentPrice: 150200,
+          leaderBidderId: 'u1',
+          accepted: true,
+          bidTsMs: Date.now(),
+          endTime: new Date(Date.now() + 120_000).toISOString()
+        }
       });
-      await flushApp();
+      fireEvent.click(submitButton);
+    });
 
-      expect(within(bidDialog).getByText(getMessage('bid.highestPriceNotice'))).toBeInTheDocument();
-      expect(within(bidDialog).queryByText(getMessage('bid.intervalWaiting', 'zh-CN', { seconds: 2 }))).not.toBeInTheDocument();
-      expect(screen.getAllByText(/1502\.00/).length).toBeGreaterThan(0);
+    const bidPlaceMessages = socket.sent.filter((raw) => {
+      try {
+        return (JSON.parse(raw) as { type?: string }).type === 'bid.place';
+      } catch {
+        return false;
+      }
+    });
+    expect(bidPlaceMessages).toHaveLength(1);
+  });
 
-      await act(async () => {
-        vi.advanceTimersByTime(8000);
+  it('does not send a second bid.place when bid.ack accepts the first bid without bidder identity fields', async () => {
+    const sockets = installNativeRealtimeSocket();
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+
+    fireEvent.click(await screen.findByRole('button', { name: getMessage('auction.lookAround') }));
+    const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
+    fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
+    fireEvent.click(await within(detailDialog).findByRole('button', { name: getMessage('product.bidNow') }));
+    const bidDialog = await screen.findByRole('dialog', { name: getMessage('bid.confirmTitle') });
+    const submitButton = within(bidDialog).getByRole('button', { name: getMessage('bid.submitNow') });
+    const socket = sockets[sockets.length - 1];
+
+    await act(async () => {
+      fireEvent.click(submitButton);
+      emitLatestMockControl(sockets, {
+        type: 'bid.ack',
+        payload: {
+          accepted: true,
+          auctionId: 'auc_2001',
+          currentPrice: 150200
+        }
       });
-      expect(within(bidDialog).queryByText(getMessage('auction.bidRealtimeTimeout'))).not.toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
+      fireEvent.click(submitButton);
+    });
+
+    const bidPlaceMessages = socket.sent.filter((raw) => {
+      try {
+        return (JSON.parse(raw) as { type?: string }).type === 'bid.place';
+      } catch {
+        return false;
+      }
+    });
+    expect(bidPlaceMessages).toHaveLength(1);
+    expect(within(bidDialog).getByText(getMessage('bid.intervalWaiting', 'zh-CN', { seconds: 3 }))).toBeInTheDocument();
   });
 
   it('keeps an async-queued bid in arbitration without misfiring the sync confirm timeout', async () => {
@@ -4729,10 +4855,14 @@ describe('App flow', () => {
       renderApp();
 
       await flushApp();
-      const pressureLayer = document.querySelector('.live-auction-alert.is-countdown.is-warning');
-      expect(pressureLayer).toBeInTheDocument();
+      await flushAppUntil(() => Boolean(document.querySelector('.live-auction-alert.is-countdown.is-warning')), 32);
+      const pressureLayer = document.querySelector('.live-auction-alert.is-countdown.is-warning') as HTMLElement;
+      expect(pressureLayer).not.toBeNull();
+      if (!pressureLayer) throw new Error('Expected countdown alert layer to be rendered');
       expect(pressureLayer).toHaveTextContent('9');
       expect(pressureLayer).not.toHaveTextContent('10');
+      expect(pressureLayer).toHaveTextContent('当前拍品即将截拍 · 18K 金钻石项链');
+      expect(pressureLayer).not.toHaveTextContent('路 18K 金钻石项链');
       expect(document.querySelector('.live-auction-alert-layer')).toContainElement(pressureLayer);
       expect(document.querySelector('.live-countdown-pressure')).not.toBeInTheDocument();
       expect(document.querySelector('.auction-float-countdown.is-warning')).toBeInTheDocument();
@@ -5083,7 +5213,7 @@ describe('App flow', () => {
       expect(document.querySelector('.live-auction-alert.is-countdown')).not.toBeInTheDocument();
       const closedAlert = document.querySelector('.live-auction-alert.is-closed');
       expect(closedAlert).toBeInTheDocument();
-      expect(closedAlert).toHaveTextContent('落拍定音');
+      expect(closedAlert).toHaveTextContent('落槌定音');
       expect(closedAlert).toHaveTextContent('恭喜成交!!');
       expect(closedAlert).toHaveTextContent('黄***');
       expect(closedAlert).toHaveTextContent('经过3轮的激烈竞拍成功拍下');
@@ -5312,7 +5442,7 @@ describe('App flow', () => {
       expect(closedAlert).toBeInTheDocument();
       expect(document.querySelectorAll('.live-auction-alert')).toHaveLength(1);
       expect(document.querySelector('.live-auction-alert.is-extended')).not.toBeInTheDocument();
-      expect(closedAlert).toHaveTextContent('落拍定音');
+      expect(closedAlert).toHaveTextContent('落槌定音');
       expect(closedAlert).toHaveTextContent('恭喜成交!!');
     } finally {
       vi.useRealTimers();

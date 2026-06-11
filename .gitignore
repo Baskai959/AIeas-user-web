@@ -8,8 +8,8 @@ vite-dev.*.log
 *.local
 .env.local
 .env.*.local
-/AGENTS.md
 /参考UI
 /public/media/*
 !/public/media/AI_Presenter_Silent.mp4
 !/public/media/AI_Presenter_Speaking.mp4
+/docs

@@ -3138,6 +3138,12 @@ button {
   text-align: center;
 }
 
+.pay-page > .back-button {
+  justify-self: start;
+  align-self: start;
+  margin-bottom: 0;
+}
+
 .result-page svg {
   color: #1677ff;
 }
@@ -4811,6 +4817,10 @@ button {
   margin: 0;
 }
 
+.activity-room-body {
+  min-width: 0;
+}
+
 .activity-room-card h2 {
   overflow: hidden;
   color: #111827;
@@ -4838,6 +4848,20 @@ button {
 
 .activity-room-card.is-action-right .activity-room-actions {
   justify-content: flex-end;
+}
+
+.activity-room-card.is-following {
+  grid-template-columns: 86px minmax(0, 1fr);
+}
+
+.activity-room-card.is-following .activity-room-body {
+  display: grid;
+  align-content: start;
+}
+
+.activity-room-card.is-following .activity-room-actions {
+  justify-content: flex-start;
+  margin-top: 10px;
 }
 
 .activity-primary-action.is-red-outline {

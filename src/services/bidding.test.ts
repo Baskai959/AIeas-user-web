@@ -9,6 +9,7 @@ import {
   getQuickBidIntervalRemainingMs,
   getQuickBidMaxSteps,
   getQuickBidPrice,
+  isQuickBidIntervalActive,
   isQuickBidOutdated,
   parseBidAmountToCents,
   validateBidPrice
@@ -70,8 +71,14 @@ describe('bidding helpers', () => {
   it('uses the default minimum bid interval and reports cooldown remaining time', () => {
     expect(getMinBidIntervalMs({ currentPrice: 1000, minIncrement: 100 })).toBe(DEFAULT_MIN_BID_INTERVAL_MS);
     expect(getMinBidIntervalMs({ currentPrice: 1000, minIncrement: 100, minBidIntervalMs: 1600 })).toBe(1600);
-    expect(getQuickBidIntervalRemainingMs(1000, 1400, 1000)).toBe(600);
-    expect(getQuickBidIntervalRemainingMs(1000, 2100, 1000)).toBe(0);
+    expect(getQuickBidIntervalRemainingMs(1000, 1400, 3000)).toBe(2600);
+    expect(getQuickBidIntervalRemainingMs(1000, 4100, 3000)).toBe(0);
+  });
+
+  it('treats the minimum bid interval as active until the cooldown fully expires', () => {
+    expect(isQuickBidIntervalActive(1000, 1500, 3000)).toBe(true);
+    expect(isQuickBidIntervalActive(1000, 4000, 3000)).toBe(false);
+    expect(isQuickBidIntervalActive(undefined, 1500, 3000)).toBe(false);
   });
 
   it('marks a selected quick bid as outdated once it no longer exceeds the current price', () => {

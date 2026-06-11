@@ -389,9 +389,11 @@ export function FollowingPage({ onBack, onOpenRoom }: { onBack: () => void; onOp
               timeLabel={t('profile.followedAt')}
               timeValue={room.followedAt}
               primaryAction={t('profile.enterLiveRoom')}
+              primaryActionClassName="is-red-outline"
               onPrimary={() => onOpenRoom(room.roomId)}
               secondaryAction={t('profile.cancelFollow')}
               onSecondary={() => unfollowRoom(room.roomId)}
+              variant="following"
             />
           ))}
         </div>
@@ -912,7 +914,8 @@ function LiveActivityRoomCard({
   secondaryAction,
   onSecondary,
   primaryActionClassName,
-  actionAlign = 'inline'
+  actionAlign = 'inline',
+  variant = 'default'
 }: {
   item: FollowedLiveRoom | LiveRoomFootprint;
   timeLabel: string;
@@ -923,13 +926,18 @@ function LiveActivityRoomCard({
   onSecondary?: () => void;
   primaryActionClassName?: string;
   actionAlign?: 'inline' | 'right';
+  variant?: 'default' | 'following';
 }) {
+  const cardClassName = ['activity-room-card', actionAlign === 'right' ? 'is-action-right' : '', variant === 'following' ? 'is-following' : '']
+    .filter(Boolean)
+    .join(' ');
+
   return (
-    <article className={actionAlign === 'right' ? 'activity-room-card is-action-right' : 'activity-room-card'}>
+    <article className={cardClassName}>
       <button className="activity-room-cover" type="button" onClick={onPrimary}>
         <VisualPlaceholder title={item.title} imageUrl={item.coverUrl} tone="blue" />
       </button>
-      <div>
+      <div className="activity-room-body">
         <h2>{item.title}</h2>
         <p>{item.merchantName}</p>
         <span>{timeLabel} {formatDate(timeValue)}</span>
