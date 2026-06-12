@@ -304,7 +304,7 @@ describe('mobile layout CSS', () => {
     expect(rule('.live-ranking-divider')).toContain('margin: 0 2px');
     expect(rule('.live-ranking-current-row')).toContain('min-height: 28px');
     expect(rule('.live-ranking-current-row')).toContain('padding-top: 0');
-    expect(rule('.live-ranking-row.is-moving-target')).toContain('animation: ranking-target-reveal var(--ranking-duration-ms');
+    expect(rule('.live-ranking-row.is-moving-target')).not.toContain('animation: ranking-target-reveal');
     expect(css).toContain('.live-ranking-row.is-moving-target > .live-ranking-name');
     expect(css).toContain('.live-ranking-row.is-moving-target > .live-ranking-price');
     expect(css).toContain('opacity: 0');
@@ -321,6 +321,16 @@ describe('mobile layout CSS', () => {
     expect(css).toContain('@keyframes ranking-top-slot-to-first');
     expect(css).toContain('@keyframes ranking-divider-to-first');
     expect(css).toContain('@keyframes ranking-current-row-to-first');
+    expect(keyframes('ranking-target-reveal')).toContain('99%');
+    expect(keyframes('ranking-target-reveal')).toContain('opacity: 0');
+    expect(keyframes('ranking-target-reveal')).toContain('100%');
+    expect(keyframes('ranking-target-reveal')).toContain('opacity: 1');
+    expect(keyframes('ranking-top-slot-to-first')).toContain('99%');
+    expect(keyframes('ranking-top-slot-to-first')).toContain('opacity: 1');
+    expect(keyframes('ranking-divider-to-first')).toContain('99%');
+    expect(keyframes('ranking-divider-to-first')).toContain('opacity: 1');
+    expect(keyframes('ranking-current-row-to-first')).toContain('99%');
+    expect(keyframes('ranking-current-row-to-first')).toContain('opacity: 1');
     expect(css).toContain('@keyframes ranking-row-exit-divider');
     expect(keyframes('ranking-row-exit-divider')).toContain('transform: translate3d(0, calc(var(--ranking-exit-to-y, 0px) - var(--ranking-exit-from-y, 0px)), 0)');
     expect(keyframes('ranking-row-exit-divider')).toContain('99%');

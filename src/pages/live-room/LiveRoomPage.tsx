@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, type SetStateAction, type SyntheticEvent as ReactSyntheticEvent } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type AnimationEvent as ReactAnimationEvent, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, type SetStateAction, type SyntheticEvent as ReactSyntheticEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Toast } from 'antd-mobile';
 import { ArrowLeft, Gavel, Minus, Package, Plus, Radio, ShoppingBag, Trophy, Users, VideoOff, Volume2, VolumeX, WalletCards, X } from 'lucide-react';
@@ -2887,7 +2887,7 @@ function LiveRankingRail({
   const previousItemsRef = useRef<RankingItem[]>([]);
   const activeAnimationRef = useRef<RankingAnimation>();
   const animationTimerRef = useRef<number>();
-  const pinnedCurrentUserTimerRef = useRef<number>();
+  const animationCompletionFrameRef = useRef<number>();
   const [animation, setAnimation] = useState<RankingAnimation>();
   const [animationLayout, setAnimationLayout] = useState<RankingAnimationLayout>();
   const [pinnedCurrentUser, setPinnedCurrentUser] = useState<{ active: boolean; item?: RankingItem }>();
@@ -2916,9 +2916,9 @@ function LiveRankingRail({
       window.clearTimeout(animationTimerRef.current);
       animationTimerRef.current = undefined;
     }
-    if (pinnedCurrentUserTimerRef.current) {
-      window.clearTimeout(pinnedCurrentUserTimerRef.current);
-      pinnedCurrentUserTimerRef.current = undefined;
+    if (animationCompletionFrameRef.current !== undefined) {
+      window.cancelAnimationFrame(animationCompletionFrameRef.current);
+      animationCompletionFrameRef.current = undefined;
     }
   }, []);
 
@@ -2929,6 +2929,32 @@ function LiveRankingRail({
     setAnimationLayout(undefined);
     setPinnedCurrentUser(undefined);
   }, [clearRankingAnimationTimers]);
+
+  const completeRankingAnimation = useCallback(
+    (animationId?: string) => {
+      if (!animationId || activeAnimationRef.current?.id !== animationId) return;
+      clearRankingAnimationTimers();
+      activeAnimationRef.current = undefined;
+      setAnimation((current) => (current?.id === animationId ? undefined : current));
+      setAnimationLayout((current) => (current?.id === animationId ? undefined : current));
+      setPinnedCurrentUser(undefined);
+    },
+    [clearRankingAnimationTimers]
+  );
+
+  const scheduleRankingAnimationCompletion = useCallback(
+    (animationId?: string) => {
+      if (!animationId) return;
+      if (animationCompletionFrameRef.current !== undefined) {
+        window.cancelAnimationFrame(animationCompletionFrameRef.current);
+      }
+      animationCompletionFrameRef.current = window.requestAnimationFrame(() => {
+        animationCompletionFrameRef.current = undefined;
+        completeRankingAnimation(animationId);
+      });
+    },
+    [completeRankingAnimation]
+  );
 
   useEffect(() => {
     const previousItems = previousItemsRef.current;
@@ -2952,24 +2978,16 @@ function LiveRankingRail({
     setAnimationLayout(nextAnimation ? fallbackRankingAnimationLayout(nextAnimation) : undefined);
     if (nextAnimation?.kind === 'current-row-to-first' && nextAnimation.isSelfBid) {
       setPinnedCurrentUser({ active: true, item: previousItems.find((item) => item.bidderId === userId) });
-      pinnedCurrentUserTimerRef.current = window.setTimeout(() => {
-        setPinnedCurrentUser(undefined);
-        pinnedCurrentUserTimerRef.current = undefined;
-      }, Math.round(nextAnimation.durationMs * 0.5));
     } else {
       setPinnedCurrentUser(undefined);
     }
     if (nextAnimation) {
       animationTimerRef.current = window.setTimeout(() => {
-        activeAnimationRef.current = undefined;
-        setAnimation(undefined);
-        setAnimationLayout(undefined);
-        setPinnedCurrentUser(undefined);
-        animationTimerRef.current = undefined;
+        completeRankingAnimation(nextAnimation.id);
       }, nextAnimation.durationMs);
     }
     previousItemsRef.current = items;
-  }, [animateChanges, clearRankingAnimation, clearRankingAnimationTimers, items, lastBid, userId]);
+  }, [animateChanges, clearRankingAnimation, clearRankingAnimationTimers, completeRankingAnimation, items, lastBid, userId]);
 
   useEffect(() => {
     return () => {
@@ -3040,7 +3058,7 @@ function LiveRankingRail({
             rowRef={(node) => (currentRowRef.current = node)}
           />
           {animation && animation.kind !== 'price-only' && resolvedAnimationLayout ? (
-            <LiveRankingGhost animation={animation} layout={resolvedAnimationLayout} />
+            <LiveRankingGhost animation={animation} layout={resolvedAnimationLayout} onComplete={scheduleRankingAnimationCompletion} />
           ) : null}
         </div>
       ) : null}
@@ -3071,6 +3089,7 @@ function LiveRankingRow({
   const animationBidderId = item?.bidderId;
   const isMovementAnimation = animation && animation.kind !== 'price-only';
   const isMovingTarget = Boolean(isMovementAnimation && animationBidderId === animation.bidderId && !current);
+  const isEnteringRow = Boolean(!isMovingTarget && !current && animationBidderId && animation?.enteringIds.includes(animationBidderId));
   const rowClassName = joinClassNames(
     'live-ranking-row',
     current && 'live-ranking-current-row',
@@ -3078,7 +3097,7 @@ function LiveRankingRow({
     isCurrentUser && 'is-current-user',
     isTopLeader && 'is-leading',
     !current && animationBidderId && animation?.shiftedIds.includes(animationBidderId) && 'is-shifted-down',
-    !current && animationBidderId && animation?.enteringIds.includes(animationBidderId) && 'is-entering',
+    isEnteringRow && 'is-entering',
     isMovingTarget && 'is-moving-target',
     animationBidderId && animation?.priceUpdateIds.includes(animationBidderId) && 'is-price-updating'
   );
@@ -3106,14 +3125,32 @@ function LiveRankingRow({
   );
 }
 
-function LiveRankingGhost({ animation, layout }: { animation: RankingAnimation; layout: RankingAnimationLayout }) {
+function LiveRankingGhost({
+  animation,
+  layout,
+  onComplete
+}: {
+  animation: RankingAnimation;
+  layout: RankingAnimationLayout;
+  onComplete: (animationId: string) => void;
+}) {
+  const handleAnimationEnd = useCallback(
+    (event: ReactAnimationEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget) return;
+      if (event.animationName && event.animationName !== rankingGhostAnimationName(animation.kind)) return;
+      onComplete(animation.id);
+    },
+    [animation.id, animation.kind, onComplete]
+  );
+
   return (
     <div
-      className={joinClassNames('live-ranking-ghost', `is-${animation.kind}`, animation.isSelfBid ? 'is-self-bid' : 'is-other-bid')}
+      className={joinClassNames('live-ranking-ghost', 'live-ranking-row', 'is-leading', `is-${animation.kind}`, animation.isSelfBid ? 'is-self-bid' : 'is-other-bid')}
       data-origin={animation.origin}
       data-from-rank={animation.fromRank}
       data-to-rank={animation.toRank}
       data-bidder-id={animation.bidderId}
+      onAnimationEnd={handleAnimationEnd}
       style={
         {
           '--ranking-duration-ms': `${animation.durationMs}ms`,
@@ -3126,7 +3163,7 @@ function LiveRankingGhost({ animation, layout }: { animation: RankingAnimation; 
       <span className="live-ranking-rank is-gold">1</span>
       <RankingAvatar item={animation.movingItem} />
       <strong className="live-ranking-name">{animation.movingItem.nicknameMask}</strong>
-      <b className="live-ranking-price is-price-updating">{formatMoney(animation.movingItem.price)}</b>
+      <b className="live-ranking-price is-leading-price is-price-updating">{formatMoney(animation.movingItem.price)}</b>
     </div>
   );
 }
@@ -3226,7 +3263,6 @@ function buildRankingAnimation(previousItems: RankingItem[], nextItems: RankingI
         : 'divider-to-first'
     : 'price-only';
   if (kind === 'price-only' && !priceChanged) return undefined;
-  if (kind !== 'price-only' && !enteringIds.includes(bidderId)) enteringIds.push(bidderId);
   const exitItem = kind !== 'price-only' ? sortRankingItems(previousItems).find((item) => exitingIds.includes(item.bidderId) && item.bidderId !== bidderId) : undefined;
   return {
     id: `${bidderId}-${movingItem.bidTsMs}-${movingItem.price}`,
@@ -3251,6 +3287,13 @@ function rankingAnimationOrigin(kind: RankingAnimationKind): RankingAnimationOri
   if (kind === 'divider-to-first') return 'divider';
   if (kind === 'current-row-to-first') return 'current-row';
   return 'price';
+}
+
+function rankingGhostAnimationName(kind: RankingAnimationKind): string {
+  if (kind === 'top-slot-to-first') return 'ranking-top-slot-to-first';
+  if (kind === 'divider-to-first') return 'ranking-divider-to-first';
+  if (kind === 'current-row-to-first') return 'ranking-current-row-to-first';
+  return '';
 }
 
 function resolveRankingAnimationBidder(previousItems: RankingItem[], nextItems: RankingItem[], lastBid?: RankingBidHint): string | undefined {

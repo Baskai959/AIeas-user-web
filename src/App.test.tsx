@@ -4078,6 +4078,7 @@ describe('App flow', () => {
       window.history.pushState(null, '', '/live/room_1001');
       renderApp();
       await flushApp();
+      await flushAppUntil(() => sockets.length > 0);
 
       const baseItems = [
         { rank: 1, bidderId: 'u2', bidderNickname: '用户**02', price: 150100 },
@@ -4124,7 +4125,7 @@ describe('App flow', () => {
       });
       expect(document.querySelector('.live-ranking-ghost.is-other-bid')).not.toBeInTheDocument();
       expect(document.querySelector('.live-ranking-ghost.is-self-bid')).toBeInTheDocument();
-      expect(document.querySelector('.live-ranking-row.is-entering')).toBeInTheDocument();
+      expect(document.querySelector('.live-ranking-top-list [data-bidder-id="u1"]')).not.toHaveClass('is-entering');
       expect(document.querySelector('.live-ranking-current-row')).not.toHaveClass('is-exiting');
       expect(document.querySelector('.live-ranking-current-row')).not.toHaveClass('is-shifted-down');
 
@@ -4146,6 +4147,7 @@ describe('App flow', () => {
       window.history.pushState(null, '', '/live/room_1001');
       renderApp();
       await flushApp();
+      await flushAppUntil(() => sockets.length > 0);
 
       const baseItems = [
         { rank: 1, bidderId: 'u2', bidderNickname: '用户**02', price: 150100 },
@@ -4251,6 +4253,67 @@ describe('App flow', () => {
     }
   });
 
+  it('completes the top-slot ranking animation from the ghost animation event', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const sockets = installMockControlSocket();
+    try {
+      seedSession();
+      window.history.pushState(null, '', '/live/room_1001');
+      renderApp();
+      await flushApp();
+      await flushAppUntil(() => sockets.length > 0);
+      expect(sockets.length).toBeGreaterThan(0);
+
+      const baseItems = [
+        { rank: 1, bidderId: 'u2', bidderNickname: '用户**02', price: 150100 },
+        { rank: 2, bidderId: 'u3', bidderNickname: '用户**03', price: 150000 },
+        { rank: 3, bidderId: 'u4', bidderNickname: '用户**04', price: 149900 },
+        { rank: 4, bidderId: 'u5', bidderNickname: '用户**05', price: 149800 }
+      ];
+
+      await act(async () => {
+        emitLatestMockControl(sockets, rankingUpdated(baseItems));
+      });
+
+      await act(async () => {
+        emitLatestMockControl(sockets, { type: 'bid.accepted', payload: { auctionId: 'auc_2001', bidderId: 'u5', price: 150200, currentPrice: 150200, leaderBidderId: 'u5', accepted: true, endTime: new Date(now + 120_000).toISOString() } });
+        emitLatestMockControl(sockets, rankingUpdated([
+          { rank: 1, bidderId: 'u5', bidderNickname: '用户**05', price: 150200 },
+          { rank: 2, bidderId: 'u2', bidderNickname: '用户**02', price: 150100 },
+          { rank: 3, bidderId: 'u3', bidderNickname: '用户**03', price: 150000 },
+          { rank: 4, bidderId: 'u4', bidderNickname: '用户**04', price: 149900 }
+        ]));
+      });
+      await flushApp();
+
+      const ghost = document.querySelector('.live-ranking-ghost.is-top-slot-to-first') as HTMLElement;
+      const targetRow = document.querySelector('[data-bidder-id="u5"]') as HTMLElement;
+      expect(ghost).toBeInTheDocument();
+      expect(ghost).toHaveClass('live-ranking-row');
+      expect(ghost).toHaveClass('is-leading');
+      expect(ghost.querySelector('.live-ranking-price')).toHaveClass('is-leading-price');
+      expect(targetRow).toHaveClass('is-moving-target');
+
+      fireEvent.animationEnd(ghost, { animationName: 'ranking-top-slot-to-first' });
+      await flushApp();
+
+      expect(document.querySelector('.live-ranking-ghost')).toBeInTheDocument();
+      expect(targetRow).toHaveClass('is-moving-target');
+
+      await act(async () => {
+        vi.advanceTimersByTime(16);
+      });
+      await flushApp();
+
+      expect(document.querySelector('.live-ranking-ghost')).not.toBeInTheDocument();
+      expect(targetRow).not.toHaveClass('is-moving-target');
+      expect(targetRow.querySelector('.live-ranking-price')).toHaveTextContent('1502.00');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('animates an accepted bid.result for the current user when no bid.accepted broadcast arrives', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
@@ -4340,6 +4403,7 @@ describe('App flow', () => {
       });
 
       const ghost = document.querySelector('.live-ranking-ghost') as HTMLElement;
+      const targetRow = document.querySelector('[data-bidder-id="u5"]') as HTMLElement;
       expect(ghost).toHaveClass('is-top-slot-to-first');
       expect(ghost).toHaveAttribute('data-origin', 'top-slot');
       expect(ghost).toHaveAttribute('data-from-rank', '4');
@@ -4349,7 +4413,23 @@ describe('App flow', () => {
       expect(document.querySelector('[data-bidder-id="u2"]')).toHaveClass('is-shifted-down');
       expect(document.querySelector('[data-bidder-id="u3"]')).toHaveClass('is-shifted-down');
       expect(document.querySelector('[data-bidder-id="u4"]')).toHaveClass('is-shifted-down');
-      expect(document.querySelector('[data-bidder-id="u5"]')).toHaveClass('is-moving-target');
+      expect(targetRow).toHaveClass('is-moving-target');
+      expect(targetRow).not.toHaveClass('is-entering');
+
+      await act(async () => {
+        vi.advanceTimersByTime(499);
+      });
+      await flushApp();
+      expect(document.querySelector('.live-ranking-ghost.is-top-slot-to-first')).toBeInTheDocument();
+      expect(targetRow).toHaveClass('is-moving-target');
+
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
+      await flushApp();
+      expect(document.querySelector('.live-ranking-ghost')).not.toBeInTheDocument();
+      expect(targetRow).not.toHaveClass('is-moving-target');
+      expect(targetRow.querySelector('.live-ranking-price')).toHaveTextContent('1502.00');
     } finally {
       vi.useRealTimers();
     }
@@ -4397,6 +4477,7 @@ describe('App flow', () => {
       });
 
       const ghost = document.querySelector('.live-ranking-ghost') as HTMLElement;
+      const targetRow = document.querySelector('[data-bidder-id="u12"]') as HTMLElement;
       expect(ghost).toHaveClass('is-divider-to-first');
       expect(ghost).toHaveAttribute('data-origin', 'divider');
       expect(ghost).toHaveAttribute('data-from-rank', '12');
@@ -4406,6 +4487,23 @@ describe('App flow', () => {
       expect(exitRow).toHaveClass('is-exiting-to-divider');
       expect(exitRow).not.toHaveClass('live-ranking-ghost');
       expect(exitRow).toHaveAttribute('data-bidder-id', 'u9');
+      expect(targetRow).toHaveClass('is-moving-target');
+      expect(targetRow).not.toHaveClass('is-entering');
+
+      await act(async () => {
+        vi.advanceTimersByTime(499);
+      });
+      await flushApp();
+      expect(document.querySelector('.live-ranking-ghost.is-divider-to-first')).toBeInTheDocument();
+      expect(targetRow).toHaveClass('is-moving-target');
+
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
+      await flushApp();
+      expect(document.querySelector('.live-ranking-ghost')).not.toBeInTheDocument();
+      expect(targetRow).not.toHaveClass('is-moving-target');
+      expect(targetRow.querySelector('.live-ranking-price')).toHaveTextContent('1503.00');
     } finally {
       vi.useRealTimers();
     }
@@ -4420,6 +4518,8 @@ describe('App flow', () => {
       window.history.pushState(null, '', '/live/room_1001');
       renderApp();
       await flushApp();
+      await flushAppUntil(() => sockets.length > 0);
+      expect(sockets.length).toBeGreaterThan(0);
 
       const baseItems = [
         { rank: 1, bidderId: 'u2', bidderNickname: '用户**02', price: 150100 },
@@ -4469,17 +4569,20 @@ describe('App flow', () => {
       expect(exitRow).toHaveClass('live-ranking-row');
       expect(exitRow).not.toHaveClass('live-ranking-ghost');
       expect(exitRow).toHaveAttribute('data-bidder-id', 'u9');
+      const topListCurrentUserRow = document.querySelector('.live-ranking-top-list [data-bidder-id="u1"]') as HTMLElement;
+      expect(topListCurrentUserRow).toHaveClass('is-moving-target');
+      expect(topListCurrentUserRow).not.toHaveClass('is-entering');
 
       await act(async () => {
-        vi.advanceTimersByTime(520);
+        vi.advanceTimersByTime(999);
       });
 
-      expect(currentRow.querySelector('.live-ranking-rank')).toHaveTextContent('1');
-      expect(currentRow.querySelector('.live-ranking-price')).toHaveTextContent('1504.00');
+      expect(currentRow.querySelector('.live-ranking-rank')).toHaveTextContent('9');
+      expect(currentRow.querySelector('.live-ranking-price')).toHaveTextContent('1488.00');
       expect(currentRow.querySelector('.live-ranking-name')).not.toHaveTextContent('后端校准我');
 
       await act(async () => {
-        vi.advanceTimersByTime(479);
+        vi.advanceTimersByTime(0);
       });
       expect(currentRow.querySelector('.live-ranking-name')).not.toHaveTextContent('后端校准我');
 

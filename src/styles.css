@@ -1062,15 +1062,12 @@ button {
   animation: ranking-exit-down 1000ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.live-ranking-row.is-moving-target {
-  animation: ranking-target-reveal var(--ranking-duration-ms, 500ms) steps(1, end) forwards;
-}
-
 .live-ranking-row.is-moving-target > .live-ranking-rank,
 .live-ranking-row.is-moving-target > .live-ranking-avatar,
 .live-ranking-row.is-moving-target > .live-ranking-name,
 .live-ranking-row.is-moving-target > .live-ranking-price {
   opacity: 0;
+  animation: ranking-target-reveal var(--ranking-duration-ms, 500ms) steps(1, end) forwards;
 }
 
 .live-ranking-row.is-price-updating {
@@ -1144,6 +1141,9 @@ button {
 
 @keyframes ranking-target-reveal {
   0%,
+  99% {
+    opacity: 0;
+  }
   100% {
     opacity: 1;
   }
@@ -1188,6 +1188,10 @@ button {
     opacity: 1;
     transform: translate3d(0, 3px, 0) scale(1.04);
   }
+  99% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
   100% {
     opacity: 0;
     transform: translate3d(0, 0, 0) scale(1);
@@ -1211,6 +1215,10 @@ button {
     opacity: 1;
     transform: translate3d(0, 3px, 0) scale(1.04);
   }
+  99% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
   100% {
     opacity: 0;
     transform: translate3d(0, 0, 0) scale(1);
@@ -1233,6 +1241,10 @@ button {
   76% {
     opacity: 1;
     transform: translate3d(0, 4px, 0) scale(1.06);
+  }
+  99% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
   }
   100% {
     opacity: 0;
@@ -6838,7 +6850,10 @@ button {
   .live-ranking-row.is-shifted-down,
   .live-ranking-row.is-entering,
   .live-ranking-row.is-exiting,
-  .live-ranking-row.is-moving-target,
+  .live-ranking-row.is-moving-target > .live-ranking-rank,
+  .live-ranking-row.is-moving-target > .live-ranking-avatar,
+  .live-ranking-row.is-moving-target > .live-ranking-name,
+  .live-ranking-row.is-moving-target > .live-ranking-price,
   .live-ranking-price.is-price-updating,
   .live-ranking-ghost.is-top-slot-to-first,
   .live-ranking-ghost.is-divider-to-first,

@@ -329,7 +329,7 @@ export const messages = {
     'auctionAlert.extended.title': '竞拍延时',
     'auctionAlert.extended.subtitle': '最后出价触发延时',
     'auctionAlert.extended.subtitleWithTime': '倒计时更新为 {time}',
-    'auctionAlert.extended.subtitleWithDelay': '反狙击触发，已延迟 {seconds} 秒',
+    'auctionAlert.extended.subtitleWithDelay': '竞拍倒计时已延长 {seconds} 秒',
     'auctionAlert.extended.kicker': '延时保护',
     'auctionAlert.closed.title': '竞拍结束',
     'auctionAlert.closed.subtitle': '本件拍品已完成截拍',
