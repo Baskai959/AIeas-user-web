@@ -60,11 +60,13 @@ function ResultWinningCelebration({ auctionId, price }: { auctionId: string; pri
   if (!visible) return null;
 
   return (
-    <div className="live-auction-alert-layer">
-      <div className="live-auction-alert-card is-won" data-testid={`result-winning-alert-${auctionId}`}>
-        <strong>{t('auctionAlert.won.title')}</strong>
-        <span>{t('auctionAlert.won.subtitle')}</span>
-        {price !== undefined ? <b>{formatMoney(price)}</b> : null}
+    <div className="result-winning-celebration" data-testid={`result-winning-alert-${auctionId}`}>
+      <div className="result-winning-card">
+        <div className="live-auction-alert-card">
+          <strong>{t('auctionAlert.won.title')}</strong>
+          <span>{t('auctionAlert.won.subtitle')}</span>
+          {price !== undefined ? <b>{formatMoney(price)}</b> : null}
+        </div>
       </div>
     </div>
   );

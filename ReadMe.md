@@ -54,15 +54,19 @@
 - 默认模式：前端 `MockRealtimeClient`
 - 真实联调：`VITE_REALTIME_MODE=websocket` + `VITE_WS_URL`
 - 断线恢复：按直播间持久化 `lastSeq`，支持重连、去重、快照恢复
+- 快速出价规则：前端按 `LiveRoomLot.ruleSnapshot.incrementRule` 计算加价额，支持 `fixed` 固定加价和 `ladder` 阶梯加价；快速出价面板单次最多允许的步数直接使用 `incrementRule.maxBidSteps`，接口缺失时默认使用 3 步，手动输入价格也会按同一上限校验。
 - 快速出价冷却：前端按 `LiveRoomLot.ruleSnapshot.minBidIntervalMs` 强制同一用户的连续出价最小间隔；接口缺失时默认使用 `3000ms`。同一用户上一笔出价被前端确认接受后，即使已经成为当前最高价，也必须等待冷却结束后才能再次出价；但“出价太频繁”提示只会在冷却期内再次尝试出价时出现，并展示距离限制解除的倒计时。发送 `bid.place` 前还会按 `auctionId` 做同步提交锁，防止双击或极短时间内重复点击在按钮禁用生效前发出第二次请求；如果用户在这段本地锁定窗口内再次点按，弹层会立即给出同样的 `3000ms` 冷却提示，并按本地提示截止时间计算剩余秒数，避免首帧误显示 `4s`。同时会在本地同步记录最近一次本人成功出价时间，避免首笔成功回包很快时第二次点击读到旧冷却状态。对于 `bid.ack` 这类当前请求的定向成功回包，前端会直接启动这段冷却，不再依赖 `bidderId` 字段是否返回
 
 ### 工程拆分
 
 - `src/router/AppRouter.tsx`：路由装配、登录守卫、页面级导航衔接
-- `src/pages/live-room/LiveRoomPage.tsx`：直播间主页面与实时交互
+- `src/pages/live-room/LiveRoomPage.tsx`：直播间主页面与实时交互编排
+- `src/pages/live-room/LiveRankingRail.tsx` + `src/pages/live-room/liveRankingModel.ts`：实时排行榜 UI 与动画模型
+- `src/pages/live-room/LiveAuctionFeedback.tsx` + `src/pages/live-room/liveAuctionFeedbackModel.ts`：倒计时氛围层、竞拍提示层与提示状态模型
 - `src/pages/account/AccountPages.tsx`：我的、设置、订单、关注、足迹
 - `src/pages/pay/PayPage.tsx`：支付页与支付状态动画，返回按钮保持左上角入口位置
 - `src/pages/result/ResultPage.tsx`：成交结果页
+- `src/components/ResultList.tsx`、`src/components/EmptyState.tsx`：跨页面复用的加载/空态容器
 - `src/features/*`：按业务域抽离的复用逻辑
 - `src/components/*`：通用展示与交互组件
 
@@ -157,6 +161,8 @@ VITE_DEV_PROXY_TARGET=http://47.97.82.143:8888 \
 npm run dev -- --host 127.0.0.1 --port 5176
 ```
 
+远程联调模式下，直播间页面在真实 `LiveRoom` 和拍品清单返回前只使用轻量 loading 占位，不再把本地 Demo 房间、拍品或商家 ID 混入真实接口请求，避免出现 `/api/v1/merchants/merchant_01` 这类无效联调请求。
+
 ### 3. Mock 控制桥模式
 
 用于在本地 Demo / mock realtime 模式下，从命令行向已打开的直播间注入实时事件，便于验证竞拍、评论、倒计时和结束态。
@@ -245,3 +251,15 @@ npm run dev:mock-control
 
 - 如文档内容与代码行为不一致，以当前实现和权威文档为准。
 - 历史归档仅用于回看早期方案，不再作为实现或联调基线。
+
+## 2026-06-12 收尾巡检
+
+- 路由切换统一改为通过 React Router 的 `viewTransition + flushSync` 选项提交，避免在支持 View Transition 的浏览器中出现 `Transition was aborted because of timeout in DOM update` 控制台错误。
+- 本轮以 `npm run lint`、`npm run build`、`npm run test:run` 和移动端浏览器烟测作为收尾基线，重点覆盖首页、发现、我的和直播间入口的运行时稳定性。
+
+## 2026-06-13 全量巡检补修
+
+- 本地 Demo 的商家关注状态改为写入 `localStorage`，直播间内点击 `关注 / 已关注` 后，刷新页面或重新进入 `/following` 仍可保持一致，不再出现按钮已切换但关注列表为空的断层。
+- 模拟支付页在未传入 `returnTo` 时，支付成功后的默认回跳目标改为对应的成交结果页 `/result/:auctionId`；若存在 `returnTo`，仍按原逻辑优先返回订单页或直播间来源页。
+- 成交结果页的中标提示卡片从全屏 fixed 覆盖层调整为页面流内的居中庆祝卡片，避免遮挡左上角返回按钮，同时保留中标提示文案与视觉强调。
+- 真实后端联调巡检确认“商家001”直播间的阶梯加价、`maxBidSteps`、REST 主要查询接口与 `/ws/live-rooms/{roomId}` 握手参数可用；分页 `total`、拍品列表 `currentPrice`、商家嵌套直播间 `videoSource` 等字段偏差已记录在 `doc/接口对齐文档.md`。

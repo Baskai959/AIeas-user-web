@@ -3150,6 +3150,38 @@ button {
   text-align: center;
 }
 
+.result-winning-celebration {
+  width: 100%;
+  pointer-events: none;
+}
+
+.result-winning-card {
+  position: relative;
+  width: 100%;
+}
+
+.result-winning-card .live-auction-alert-card {
+  position: relative;
+  top: auto;
+  left: auto;
+  width: min(100%, 344px);
+  margin: 0 auto;
+  min-width: 0;
+  padding: 28px 20px 18px;
+  color: #14151a;
+  background:
+    linear-gradient(135deg, rgba(255, 232, 235, 0.58), rgba(232, 246, 255, 0.72) 38%, rgba(255, 255, 255, 0.98) 39%),
+    #ffffff;
+  border-color: rgba(255, 255, 255, 0.92);
+  border-radius: 20px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38), 0 0 32px rgba(255, 49, 88, 0.18);
+  transform: none;
+}
+
+.result-winning-card .live-auction-alert-card span {
+  color: #b75a1b;
+}
+
 .pay-page > .back-button {
   justify-self: start;
   align-self: start;

@@ -7,7 +7,8 @@ export function bidRuleFromLot(lot: LiveRoomLot, state: AuctionState): BidRuleIn
     minIncrement: minIncrementForLot(lot, state),
     startPrice: lot.startPrice,
     capPrice: capPriceForLot(lot),
-    maxBidSteps: maxBidStepsForLot(lot)
+    maxBidSteps: maxBidStepsForLot(lot),
+    minBidIntervalMs: minBidIntervalMsForLot(lot)
   };
 }
 
@@ -34,4 +35,9 @@ export function capPriceForLot(lot: LiveRoomLot): number | undefined {
 export function maxBidStepsForLot(lot: LiveRoomLot): number | undefined {
   const maxBidSteps = Number(lot.ruleSnapshot?.incrementRule?.maxBidSteps);
   return Number.isFinite(maxBidSteps) && maxBidSteps > 0 ? Math.floor(maxBidSteps) : undefined;
+}
+
+export function minBidIntervalMsForLot(lot: LiveRoomLot): number | undefined {
+  const minBidIntervalMs = Number(lot.ruleSnapshot?.minBidIntervalMs);
+  return Number.isFinite(minBidIntervalMs) && minBidIntervalMs > 0 ? Math.floor(minBidIntervalMs) : undefined;
 }

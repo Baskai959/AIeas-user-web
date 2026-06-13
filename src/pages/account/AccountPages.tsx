@@ -7,7 +7,6 @@ import {
   useState,
   type ChangeEvent,
   type PointerEvent as ReactPointerEvent,
-  type ReactNode,
   type TouchEvent as ReactTouchEvent,
   type UIEvent as ReactUIEvent,
   type WheelEvent as ReactWheelEvent
@@ -17,7 +16,8 @@ import { useSearchParams } from 'react-router-dom';
 import { Button, Toast } from 'antd-mobile';
 import { ArrowLeft, CalendarClock, Camera, Check, ChevronRight, Gavel, Heart, HeartOff, LogOut, Package, Radio, Settings, ShoppingBag, Trophy, WalletCards } from 'lucide-react';
 
-import { LoadingBlock } from '../../components/LoadingBlock';
+import { EmptyState } from '../../components/EmptyState';
+import { ResultList } from '../../components/ResultList';
 import { SheetHeader } from '../../components/SheetHeader';
 import { VisualPlaceholder } from '../../components/VisualPlaceholder';
 import { mergeAuctionRecordsWithOrders } from '../../features/account/auctionRecords';
@@ -328,7 +328,7 @@ export function OrdersPage({
           </button>
         ))}
       </div>
-      <ResultList loading={recordsQuery.isLoading || ordersQuery.isLoading} empty={!groupedRecords[activeTab].length}>
+      <ResultList loading={recordsQuery.isLoading || ordersQuery.isLoading} empty={!groupedRecords[activeTab].length} emptyText={t('search.empty')}>
         {groupedRecords[activeTab].map((record) => {
           const order = record.order;
           return (
@@ -584,21 +584,6 @@ export function FootprintsPage({
         <EmptyState text={t('profile.noLotFootprints')} />
       )}
     </section>
-  );
-}
-
-function ResultList({ loading, empty, children }: { loading: boolean; empty: boolean; children: ReactNode }) {
-  if (loading) return <LoadingBlock />;
-  if (empty) return <EmptyState text={t('search.empty')} />;
-  return <div className="result-list">{children}</div>;
-}
-
-function EmptyState({ text }: { text: string }) {
-  return (
-    <div className="empty-state">
-      <Package size={30} />
-      <span>{text}</span>
-    </div>
   );
 }
 

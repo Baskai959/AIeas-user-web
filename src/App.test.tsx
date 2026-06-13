@@ -763,6 +763,41 @@ describe('App flow', () => {
     expect(window.location.search).toBe('?focusRoomId=room_1001');
   });
 
+  it('does not request the demo merchant while a remote live room is loading', async () => {
+    const env = import.meta.env as Record<string, string | undefined>;
+    env.VITE_API_MODE = 'remote';
+    let resolveRoom: (room: Awaited<ReturnType<ApiClient['getLiveRoom']>>) => void = () => undefined;
+    vi.mocked(api.getLiveRoom).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRoom = resolve;
+        })
+    );
+    await import('./pages/live-room/LiveRoomPage');
+    seedSession();
+    renderWithRouter('/live/90000044');
+
+    await waitFor(() => expect(api.getLiveRoom).toHaveBeenCalledWith('90000044'));
+    expect(api.getMerchant).not.toHaveBeenCalledWith('merchant_01');
+
+    await act(async () => {
+      resolveRoom({
+        id: '90000044',
+        merchantId: '2001',
+        title: 'Merchant 001 live room',
+        merchantName: 'Merchant 001',
+        status: 'LIVE',
+        videoSource: 'digitalHuman',
+        onlineCount: 0,
+        watcherCount: 0,
+        activeAuctionId: '59201783202304'
+      });
+    });
+
+    await waitFor(() => expect(api.getMerchant).toHaveBeenCalledWith('2001'));
+    expect(api.getMerchant).not.toHaveBeenCalledWith('merchant_01');
+  });
+
   it('keeps live room media inline on mobile browsers instead of exposing native video windows', async () => {
     renderApp();
     const user = userEvent.setup();
@@ -2157,6 +2192,42 @@ describe('App flow', () => {
     });
     await waitFor(() => expect(window.location.pathname).toBe('/live/room_1001'));
     expect(window.location.search).toBe('?from=home');
+  });
+
+  it('returns to the result page by default after payment succeeds', async () => {
+    let delayedReturn: (() => void) | undefined;
+    const originalSetTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, 'setTimeout').mockImplementation(((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+      if (timeout === 2000 && typeof handler === 'function') {
+        delayedReturn = () => handler(...args);
+        return 2_000_003;
+      }
+      return originalSetTimeout(handler, timeout, ...args);
+    }) as typeof window.setTimeout);
+    vi.mocked(api.payOrder).mockResolvedValueOnce({
+      id: 'ord_pending_pay',
+      auctionId: 'auc_pending_pay',
+      buyerId: 'u1',
+      amount: 46600,
+      status: 'PAID',
+      payStatus: 'PAID',
+      fulfillmentStatus: 'UNSHIPPED',
+      paidAt: '2026-06-05T12:00:00+08:00'
+    });
+    seedSession();
+    renderWithRouter('/pay/ord_pending_pay');
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: getMessage('pay.submit') }));
+    expect(await screen.findByRole('img', { name: getMessage('pay.successStatus') })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/pay/ord_pending_pay');
+    expect(delayedReturn).toBeDefined();
+
+    await act(async () => {
+      delayedReturn?.();
+    });
+
+    await waitFor(() => expect(window.location.pathname).toBe('/result/auc_pending_pay'));
   });
 
   it('disables payment when the latest backend order has timed out', async () => {

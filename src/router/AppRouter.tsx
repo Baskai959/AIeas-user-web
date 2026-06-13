@@ -1,11 +1,13 @@
 ﻿import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type TouchEvent as ReactTouchEvent, type TransitionEvent as ReactTransitionEvent, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
-import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams, type Location, type NavigateFunction } from 'react-router-dom';
+import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams, type Location } from 'react-router-dom';
 import { Button, SafeArea, Tabs, Toast } from 'antd-mobile';
-import { ArrowLeft, Gavel, MapPin, Package, Plus, Radio, SlidersHorizontal, Star, Users, WalletCards, Wifi } from 'lucide-react';
+import { ArrowLeft, Gavel, MapPin, Plus, Radio, SlidersHorizontal, Star, Users, WalletCards, Wifi } from 'lucide-react';
 import logoUrl from '../../logo.png';
+import { EmptyState } from '../components/EmptyState';
 import { LoadingBlock } from '../components/LoadingBlock';
 import { Metric } from '../components/Metric';
+import { ResultList } from '../components/ResultList';
 import { VisualPlaceholder } from '../components/VisualPlaceholder';
 import { minIncrementForLot } from '../features/auction/bidRules';
 import { formatCompactNumber, formatDate, lotStatusLabel, priceLabel, priceValue, scheduledStartText, stateFromLot, statusLabel } from '../features/auction/presentation';
@@ -28,6 +30,7 @@ import { FootprintsPage, FollowingPage, MePage, OrdersPage, SettingsPage } from 
 import { orderTabFromOrder } from '../features/order/status';
 import { PayPage } from '../pages/pay/PayPage';
 import { ResultPage } from '../pages/result/ResultPage';
+import { navigateWithTransition } from './navigation';
 
 let activeLocale: Locale = defaultLocale;
 let t = createTranslator(activeLocale);
@@ -38,10 +41,6 @@ type AppLocationState = {
   parentReturnTo?: string;
   sourceTab?: MainTab;
   previewMedia?: PreviewMediaSnapshot;
-};
-
-type ViewTransitionDocument = Document & {
-  startViewTransition?: (callback: () => void) => { finished: Promise<void> };
 };
 
 type FeedDragState = {
@@ -145,19 +144,6 @@ function ordersPath(tab: MyAuctionTabKey, orderId?: string): string {
   const params = new URLSearchParams({ tab });
   if (orderId) params.set('orderId', orderId);
   return `/orders?${params.toString()}`;
-}
-
-function transitionRouteUpdate(update: () => void): void {
-  const startViewTransition = (document as ViewTransitionDocument).startViewTransition;
-  if (startViewTransition) {
-    void startViewTransition.call(document, update).finished.catch(() => undefined);
-    return;
-  }
-  update();
-}
-
-function navigateWithTransition(navigate: NavigateFunction, to: string, options?: { replace?: boolean; state?: AppLocationState }): void {
-  transitionRouteUpdate(() => navigate(to, options));
 }
 
 function loginReturnPath(location: Location<AppLocationState | null>): string {
@@ -408,10 +394,10 @@ function PayRoutePage({ apiClient }: { apiClient: ApiClient }) {
       orderId={orderId}
       onBack={(auctionId) => navigateWithTransition(navigate, backTarget(auctionId))}
       onPaid={(paidOrder) => {
-        if (returnTo) {
-          const target = returnTo.startsWith('/orders') ? ordersPath(orderTabFromOrder(paidOrder), paidOrder.id) : returnTo;
-          navigateWithTransition(navigate, target, { replace: true });
-        }
+        const target = returnTo
+          ? (returnTo.startsWith('/orders') ? ordersPath(orderTabFromOrder(paidOrder), paidOrder.id) : returnTo)
+          : backTarget(paidOrder.auctionId);
+        navigateWithTransition(navigate, target, { replace: true });
       }}
     />
   );
@@ -611,7 +597,7 @@ function LotDiscoveryPage({ apiClient, onOpenLot, onOpenMerchant }: { apiClient:
           />
         </FilterRow>
       </div>
-      <ResultList loading={lots.isLoading} empty={!lots.data?.items.length}>
+      <ResultList loading={lots.isLoading} empty={!lots.data?.items.length} emptyText={t('search.empty')}>
         {(lots.data?.items ?? []).map((lot) => (
           <LotResultCard
             key={lot.id}
@@ -650,7 +636,7 @@ function CategoryDetailPage({ apiClient, categoryId, onBack, onOpenLot }: { apiC
         <FilterSelect label={t('filter.sort')} value={lotSort} onChange={(value) => setLotSort(value as LotSortKey)} options={lotSortOptions()} />
         <FilterSelect label={t('filter.status')} value={lotStatus} onChange={(value) => setLotStatus(value as LotStatusFilter)} options={lotStatusOptions()} />
       </FilterRow>
-      <ResultList loading={lots.isLoading} empty={!lots.data?.items.length}>
+      <ResultList loading={lots.isLoading} empty={!lots.data?.items.length} emptyText={t('search.empty')}>
         {(lots.data?.items ?? []).map((lot) => (
           <LotResultCard key={lot.id} lot={lot} onOpen={() => onOpenLot(lot)} />
         ))}
@@ -1182,7 +1168,7 @@ function MerchantPage({ apiClient, merchantId, onBack, onOpenRoom, onOpenLot }: 
             options={[{ value: 'all', label: t('status.all') }, ...(categories.data?.items ?? []).map((item) => ({ value: item.id, label: item.name }))]}
           />
         </FilterRow>
-        <ResultList loading={lots.isLoading} empty={!lots.data?.items.length}>
+        <ResultList loading={lots.isLoading} empty={!lots.data?.items.length} emptyText={t('search.empty')}>
           {(lots.data?.items ?? []).map((lot) => (
             <LotResultCard key={lot.id} lot={lot} onOpen={() => onOpenLot(lot)} />
           ))}
@@ -1352,23 +1338,6 @@ function FilterSelect({ label, value, options, onChange }: { label: string; valu
         ))}
       </select>
     </label>
-  );
-}
-
-function ResultList({ loading, empty, children }: { loading: boolean; empty: boolean; children: ReactNode }) {
-  if (loading) return <LoadingBlock />;
-  if (empty) {
-    return <EmptyState text={t('search.empty')} />;
-  }
-  return <div className="result-list">{children}</div>;
-}
-
-function EmptyState({ text }: { text: string }) {
-  return (
-    <div className="empty-state">
-      <Package size={30} />
-      <span>{text}</span>
-    </div>
   );
 }
 

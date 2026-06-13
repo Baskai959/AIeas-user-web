@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_MIN_BID_INTERVAL_MS,
-  QUICK_BID_MAX_STEPS,
+  DEFAULT_QUICK_BID_MAX_STEPS,
   buildBidPlacePayload,
   formatBidAmountInput,
   getMinBidIntervalMs,
@@ -41,6 +41,16 @@ describe('bidding helpers', () => {
     expect(validateBidPrice(100, rule)).toEqual({ valid: true, price: 100 });
   });
 
+  it('uses the backend maxBidSteps value without a three-step frontend cap', () => {
+    const rule = { currentPrice: 0, minIncrement: 100, maxBidSteps: 5 };
+
+    expect(getQuickBidMaxSteps(rule)).toBe(5);
+    expect(getQuickBidPrice(rule, 5)).toBe(500);
+    expect(getQuickBidPrice(rule, 6)).toBe(500);
+    expect(validateBidPrice(500, rule)).toEqual({ valid: true, price: 500 });
+    expect(validateBidPrice(600, rule)).toEqual({ valid: false, reason: 'aboveMaxBidSteps', maxPrice: 500 });
+  });
+
   it('builds bid.place payload with expected current price', () => {
     expect(buildBidPlacePayload({ auctionId: '1001', price: 5800, expectedCurrentPrice: 5600 })).toEqual({
       auctionId: 1001,
@@ -58,10 +68,10 @@ describe('bidding helpers', () => {
     expect(formatBidAmountInput(5700)).toBe('57.00');
   });
 
-  it('calculates quick bid steps with a three-step cap and cap-price clamp', () => {
+  it('calculates quick bid steps with a default three-step limit and cap-price clamp', () => {
     const rule = { currentPrice: 85000, minIncrement: 5000, capPrice: 93000 };
 
-    expect(QUICK_BID_MAX_STEPS).toBe(3);
+    expect(DEFAULT_QUICK_BID_MAX_STEPS).toBe(3);
     expect(getQuickBidPrice(rule, 1)).toBe(90000);
     expect(getQuickBidPrice(rule, 2)).toBe(93000);
     expect(getQuickBidPrice(rule, 4)).toBe(93000);

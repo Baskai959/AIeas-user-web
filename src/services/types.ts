@@ -59,6 +59,7 @@ export interface AuctionRuleSnapshot {
   reservePrice?: number;
   capPrice?: number;
   incrementRule?: IncrementRule;
+  minBidIntervalMs?: number;
   antiSnipingSec?: number;
   antiExtendSec?: number;
   depositPolicy?: {

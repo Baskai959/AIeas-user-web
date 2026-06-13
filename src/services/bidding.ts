@@ -27,7 +27,7 @@ export type BidValidationResult =
   | { valid: false; reason: 'aboveCap'; capPrice: number }
   | { valid: false; reason: 'aboveMaxBidSteps'; maxPrice: number };
 
-export const QUICK_BID_MAX_STEPS = 3;
+export const DEFAULT_QUICK_BID_MAX_STEPS = 3;
 export const DEFAULT_MIN_BID_INTERVAL_MS = 3000;
 
 export function getNextBidPrice(rule: BidRuleInput): number {
@@ -89,8 +89,8 @@ export function getQuickBidPrice(rule: BidRuleInput, stepCount: number): number 
 }
 
 export function getQuickBidMaxSteps(rule: BidRuleInput): number {
-  const maxBidSteps = Math.floor(rule.maxBidSteps ?? QUICK_BID_MAX_STEPS);
-  return Math.max(1, Math.min(QUICK_BID_MAX_STEPS, maxBidSteps));
+  const maxBidSteps = Math.floor(rule.maxBidSteps ?? DEFAULT_QUICK_BID_MAX_STEPS);
+  return Math.max(1, maxBidSteps);
 }
 
 function getMaxBidPrice(rule: BidRuleInput): number {

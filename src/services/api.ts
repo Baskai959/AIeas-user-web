@@ -230,6 +230,7 @@ function normalizeRuleSnapshot(raw: Record<string, unknown>): NonNullable<LiveRo
     reservePrice: Number(snapshot.reservePrice ?? raw.reservePrice ?? 0),
     capPrice: Number(snapshot.capPrice ?? raw.capPrice ?? 0) || undefined,
     incrementRule,
+    minBidIntervalMs: Number(snapshot.minBidIntervalMs ?? raw.minBidIntervalMs ?? 0) || undefined,
     antiSnipingSec: Number(snapshot.antiSnipingSec ?? snapshot.antiSnipeSec ?? raw.antiSnipingSec ?? raw.antiSnipeSec ?? 0) || undefined,
     antiExtendSec: Number(snapshot.antiExtendSec ?? snapshot.extendSec ?? snapshot.extensionSec ?? raw.antiExtendSec ?? raw.extendSec ?? raw.extensionSec ?? 0) || undefined,
     depositPolicy:
@@ -808,10 +809,33 @@ async function blobToDemoAvatarUrl(blob: Blob): Promise<string> {
   });
 }
 
+const demoFollowedMerchantIdsStorageKey = 'aieas-demo-followed-merchants';
+
+function readDemoFollowedMerchantIds(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(demoFollowedMerchantIdsStorageKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string' && value.trim().length > 0) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeDemoFollowedMerchantIds(ids: Iterable<string>): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(demoFollowedMerchantIdsStorageKey, JSON.stringify([...new Set(ids)]));
+  } catch {
+    // Ignore local demo persistence failures and keep the in-memory state.
+  }
+}
+
 export class DemoApiClient extends ApiClient {
   private orders = demoOrderPage.items.map(cloneOrder);
   private auctionRecords = listDemoAuctionRecords().items.map(cloneAuctionRecord);
-  private followedMerchantIds = new Set<string>();
+  private followedMerchantIds = new Set<string>(readDemoFollowedMerchantIds());
 
   constructor(fetcher: Fetcher = defaultFetcher) {
     super('demo://local', fetcher);
@@ -931,12 +955,14 @@ export class DemoApiClient extends ApiClient {
   override async followMerchant(id: string): Promise<Merchant> {
     const merchant = findDemoMerchant(id);
     this.followedMerchantIds.add(merchant.id);
+    writeDemoFollowedMerchantIds(this.followedMerchantIds);
     return this.demoMerchantWithFollowState(merchant.id);
   }
 
   override async unfollowMerchant(id: string): Promise<Merchant> {
     const merchant = findDemoMerchant(id);
     this.followedMerchantIds.delete(merchant.id);
+    writeDemoFollowedMerchantIds(this.followedMerchantIds);
     return this.demoMerchantWithFollowState(merchant.id);
   }
 

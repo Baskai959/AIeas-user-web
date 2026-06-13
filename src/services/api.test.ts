@@ -72,7 +72,7 @@ describe('ApiClient', () => {
               currentPrice: 150100,
               startTime: '2026-06-04T12:00:00+08:00',
               endTime: '2026-06-04T12:00:00+08:00',
-              ruleSnapshot: { extendSec: 10, antiSnipeSec: 15 },
+              ruleSnapshot: { extendSec: 10, antiSnipeSec: 15, minBidIntervalMs: 1800 },
               incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 }
             }
           ]
@@ -103,7 +103,7 @@ describe('ApiClient', () => {
       description: 'Long detail text',
       currentPrice: 150100,
       startTsMs: Date.parse('2026-06-04T12:00:00+08:00'),
-      ruleSnapshot: expect.objectContaining({ antiExtendSec: 10, antiSnipingSec: 15 })
+      ruleSnapshot: expect.objectContaining({ antiExtendSec: 10, antiSnipingSec: 15, minBidIntervalMs: 1800 })
     });
     expect(stats).toMatchObject({ roomId: '1001', onlineCount: 328, watcherCount: 1208, bidCount: 36 });
     expect(fetcher).toHaveBeenNthCalledWith(1, 'http://mock.local/api/v1/live-sessions?limit=20&offset=0', expect.any(Object));
@@ -494,6 +494,21 @@ describe('ApiClient', () => {
 
     expect(receivedOrder).toMatchObject({ id: 'ord_2001', fulfillmentStatus: 'RECEIVED' });
     expect(recordAfterReceipt?.order).toMatchObject({ id: 'ord_2001', fulfillmentStatus: 'RECEIVED' });
+  });
+
+  it('persists followed merchants across demo-client recreation', async () => {
+    localStorage.clear();
+    const firstApi = new DemoApiClient(vi.fn());
+
+    await firstApi.followMerchant('merchant_01');
+    const stored = JSON.parse(localStorage.getItem('aieas-demo-followed-merchants') ?? '[]');
+    expect(stored).toContain('merchant_01');
+
+    const nextApi = new DemoApiClient(vi.fn());
+    const follows = await nextApi.listMyFollowedMerchants();
+
+    expect(follows.items).toHaveLength(1);
+    expect(follows.items[0]?.merchant).toMatchObject({ id: 'merchant_01', isFollowed: true });
   });
 
   it('provides initial ranking snapshots in local demo mode', async () => {

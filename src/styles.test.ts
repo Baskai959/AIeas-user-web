@@ -261,6 +261,16 @@ describe('mobile layout CSS', () => {
     expect(rule('.pay-page > .back-button')).toContain('margin-bottom: 0');
   });
 
+  it('keeps the result winning celebration in page flow so it does not cover the back button', () => {
+    expect(rule('.result-winning-celebration')).toContain('width: 100%');
+    expect(rule('.result-winning-celebration')).toContain('pointer-events: none');
+    expect(rule('.result-winning-card')).toContain('position: relative');
+    expect(rule('.result-winning-card')).toContain('width: 100%');
+    expect(rule('.result-winning-card .live-auction-alert-card')).toContain('position: relative');
+    expect(rule('.result-winning-card .live-auction-alert-card')).toContain('margin: 0 auto');
+    expect(rule('.result-winning-card .live-auction-alert-card')).toContain('transform: none');
+  });
+
   it('uses a following-specific room-card variant that keeps the secondary unfollow action in the bottom action row', () => {
     expect(rule('.activity-room-card.is-following')).toContain('grid-template-columns: 86px minmax(0, 1fr)');
     expect(rule('.activity-room-card.is-following .activity-room-body')).toContain('display: grid');

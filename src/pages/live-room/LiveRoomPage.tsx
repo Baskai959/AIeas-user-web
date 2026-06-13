@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type AnimationEvent as ReactAnimationEvent, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, type SetStateAction, type SyntheticEvent as ReactSyntheticEvent } from 'react';
+﻿import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, type SetStateAction, type SyntheticEvent as ReactSyntheticEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Toast } from 'antd-mobile';
 import { ArrowLeft, Gavel, Minus, Package, Plus, Radio, ShoppingBag, Trophy, Users, VideoOff, Volume2, VolumeX, WalletCards, X } from 'lucide-react';
@@ -8,6 +8,8 @@ import likeIconUrl from '../../../Icon/like.svg';
 import logoUrl from '../../../logo.png';
 import { LotImageGallery } from '../../components/LotImageGallery';
 import { Metric } from '../../components/Metric';
+import { EmptyState } from '../../components/EmptyState';
+import { SheetHeader } from '../../components/SheetHeader';
 import { SectionTitle } from '../../components/SectionTitle';
 import { VisualPlaceholder } from '../../components/VisualPlaceholder';
 import { buildOrderByAuctionId } from '../../features/account/auctionRecords';
@@ -27,11 +29,57 @@ import { demoLiveRoomStats, findDemoLiveRoom, listDemoLots } from '../../service
 import { isFreshRealtimeMessageByDomain, MockRealtimeClient, MockRealtimeControlClient, NativeWebSocketClient, nextRealtimeSeqByDomain, type RealtimeClient, type RealtimeMessage, type RealtimeSeqCursor, type TimeSyncResultPayload } from '../../services/realtime';
 import type { AuctionState, EnrollResult, LiveChatMessage, LiveRoom, LiveRoomLot, LiveRoomStats, MyAuctionTabKey, Order, PageResult, RankingItem } from '../../services/types';
 import { useLiveActivityStore } from '../../store/liveActivity';
+import { joinClassNames } from '../../utils/classNames';
 import { countdownMillisecondsThresholdMs, formatCountdown, formatMoney, getServerOffsetMs, getServerOffsetMsWithRtt, makeRequestId, shouldShowCountdownMilliseconds } from '../../utils/format';
+import { LiveAuctionAlertLayer, LiveCountdownAmbientLayer } from './LiveAuctionFeedback';
+import {
+  countdownAmbientBidPulseMs,
+  countdownAmbientEndExitMs,
+  countdownAmbientEndHoldMs,
+  countdownAmbientProgress,
+  countdownAmbientThresholdMs,
+  countdownAmbientTone,
+  countdownPressureDisplaySeconds,
+  countdownPressureExtendedMs,
+  getCountdownPressurePhase,
+  liveAuctionAlertDurationMs,
+  liveAuctionAlertPriority,
+  type AuctionEventAlertKind,
+  type CountdownAmbientEndEffect,
+  type CountdownAmbientState,
+  type CountdownExtensionPulse,
+  type LiveAuctionAlert,
+  useLiveAuctionAlerts
+} from './liveAuctionFeedbackModel';
+import { LiveRankingRail } from './LiveRankingRail';
+import { buildRankingAnimation, sortRankingItems, type RankingAnimationSource, type RankingBidHint } from './liveRankingModel';
+import { firstNonEmptyString, rankingBidderFallbackName } from './shared';
 
 const likeBurstParticles = Array.from({ length: 15 }, (_, index) => index);
 const liveVoiceUnlockEvents = ['pointerdown', 'touchend', 'keydown', 'click'] as const;
 const liveSessionLotListChangedEvents = new Set(['live_session.lot_mounted', 'live_session.lot_unmounted', 'live_session.lot_changed']);
+const emptyLiveRoomLotPage: PageResult<LiveRoomLot> = { items: [], total: 0, page: 1, page_size: 20 };
+
+function createRemotePendingRoom(roomId: string): LiveRoom {
+  return {
+    id: roomId,
+    title: t('state.loading'),
+    merchantName: '',
+    status: 'LIVE',
+    onlineCount: 0,
+    watcherCount: 0
+  };
+}
+
+function createRemotePendingStats(roomId: string): LiveRoomStats {
+  return {
+    roomId,
+    onlineCount: 0,
+    watcherCount: 0,
+    bidCount: 0,
+    gmvCent: 0
+  };
+}
 
 function isLiveSoundUnlockControlTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(target.closest('[data-live-sound-unlock-control="true"]'));
@@ -206,12 +254,9 @@ const LIVE_SHEET_ANIMATION_MS = {
 
 const AUCTION_ENDED_HOLD_MS = 5000;
 const AUCTION_CARD_ANIMATION_MS = 380;
-const WIN_CELEBRATION_DURATION_MS = 4200;
 const LIVE_SHEET_Z_INDEX_BASE = 110;
 const BID_CONFIRM_TIMEOUT_MS = 8000;
 const BID_ARBITRATION_TIMEOUT_MS = 15000;
-const RANKING_BID_ANIMATION_DURATION_MS = 500;
-const RANKING_SELF_BID_ANIMATION_DURATION_MS = 1000;
 const SCHEDULED_AUCTION_REFRESH_RETRY_DELAYS_MS = [0, 1000, 3000, 8000, 15000] as const;
 const AUCTION_COUNTDOWN_EXPIRED_REFRESH_RETRY_DELAYS_MS = [0, 1000, 3000, 8000, 15000] as const;
 
@@ -261,226 +306,6 @@ function isSameFloatingAuctionCardSnapshot(current: FloatingAuctionCardState, ne
   );
 }
 
-type RankingBidHint = {
-  auctionId: string;
-  bidderId: string;
-  price: number;
-  bidTsMs: number;
-};
-
-type RankingAnimationSource = 'initial' | 'bid.accepted' | 'snapshot';
-type RankingAnimationKind = 'top-slot-to-first' | 'divider-to-first' | 'current-row-to-first' | 'price-only';
-type RankingAnimationOrigin = 'top-slot' | 'divider' | 'current-row' | 'price';
-
-type RankingAnimation = {
-  id: string;
-  kind: RankingAnimationKind;
-  origin: RankingAnimationOrigin;
-  bidderId: string;
-  fromRank?: number;
-  toRank: 1;
-  isSelfBid: boolean;
-  durationMs: number;
-  movingItem: RankingItem;
-  exitItem?: RankingItem;
-  shiftedIds: string[];
-  enteringIds: string[];
-  exitingIds: string[];
-  priceUpdateIds: string[];
-};
-
-type RankingAnimationLayout = {
-  id: string;
-  fromY: number;
-  toY: number;
-  exitFromY: number;
-  exitToY: number;
-};
-
-const countdownAmbientParticles = [
-  { offset: '1px', bottom: '6%', size: '2px', delay: '0ms', duration: '1320ms', drift: '5px' },
-  { offset: '7px', bottom: '13%', size: '2px', delay: '120ms', duration: '1580ms', drift: '4px' },
-  { offset: '4px', bottom: '20%', size: '3px', delay: '240ms', duration: '1460ms', drift: '6px' },
-  { offset: '12px', bottom: '27%', size: '2px', delay: '360ms', duration: '1700ms', drift: '4px' },
-  { offset: '2px', bottom: '35%', size: '2px', delay: '500ms', duration: '1500ms', drift: '5px' },
-  { offset: '9px', bottom: '43%', size: '2px', delay: '640ms', duration: '1840ms', drift: '3px' },
-  { offset: '5px', bottom: '51%', size: '3px', delay: '760ms', duration: '1640ms', drift: '6px' },
-  { offset: '14px', bottom: '60%', size: '2px', delay: '900ms', duration: '1760ms', drift: '4px' },
-  { offset: '3px', bottom: '69%', size: '2px', delay: '1040ms', duration: '1560ms', drift: '5px' },
-  { offset: '10px', bottom: '77%', size: '2px', delay: '1180ms', duration: '1920ms', drift: '4px' },
-  { offset: '6px', bottom: '85%', size: '3px', delay: '1320ms', duration: '1680ms', drift: '6px' },
-  { offset: '15px', bottom: '93%', size: '2px', delay: '1460ms', duration: '1980ms', drift: '4px' },
-  { offset: '8px', bottom: '10%', size: '2px', delay: '80ms', duration: '1420ms', drift: '7px' },
-  { offset: '17px', bottom: '24%', size: '2px', delay: '320ms', duration: '1660ms', drift: '5px' },
-  { offset: '11px', bottom: '38%', size: '3px', delay: '560ms', duration: '1540ms', drift: '7px' },
-  { offset: '16px', bottom: '56%', size: '2px', delay: '820ms', duration: '1860ms', drift: '5px' },
-  { offset: '13px', bottom: '72%', size: '2px', delay: '1080ms', duration: '1600ms', drift: '6px' },
-  { offset: '18px', bottom: '88%', size: '3px', delay: '1360ms', duration: '1900ms', drift: '5px' }
-] as const;
-
-const countdownAmbientPulseSparks = [
-  { bottom: '8%', size: '3px', delay: '0ms', duration: '460ms', travelX: '18px', travelY: '-6px', scale: '1.26' },
-  { bottom: '13%', size: '2px', delay: '12ms', duration: '500ms', travelX: '24px', travelY: '8px', scale: '1.1' },
-  { bottom: '18%', size: '2px', delay: '24ms', duration: '440ms', travelX: '14px', travelY: '-14px', scale: '1.18' },
-  { bottom: '23%', size: '3px', delay: '36ms', duration: '540ms', travelX: '28px', travelY: '12px', scale: '1.32' },
-  { bottom: '29%', size: '2px', delay: '48ms', duration: '480ms', travelX: '20px', travelY: '-18px', scale: '1.06' },
-  { bottom: '34%', size: '2px', delay: '60ms', duration: '520ms', travelX: '26px', travelY: '4px', scale: '1.22' },
-  { bottom: '40%', size: '3px', delay: '72ms', duration: '500ms', travelX: '22px', travelY: '-10px', scale: '1.36' },
-  { bottom: '46%', size: '2px', delay: '84ms', duration: '560ms', travelX: '29px', travelY: '14px', scale: '1.08' },
-  { bottom: '52%', size: '2px', delay: '96ms', duration: '470ms', travelX: '16px', travelY: '-20px', scale: '1.18' },
-  { bottom: '57%', size: '3px', delay: '108ms', duration: '540ms', travelX: '27px', travelY: '2px', scale: '1.32' },
-  { bottom: '62%', size: '2px', delay: '120ms', duration: '450ms', travelX: '21px', travelY: '-8px', scale: '1.12' },
-  { bottom: '68%', size: '2px', delay: '132ms', duration: '580ms', travelX: '30px', travelY: '16px', scale: '1.04' },
-  { bottom: '73%', size: '3px', delay: '144ms', duration: '510ms', travelX: '23px', travelY: '-18px', scale: '1.4' },
-  { bottom: '79%', size: '2px', delay: '156ms', duration: '540ms', travelX: '28px', travelY: '7px', scale: '1.16' },
-  { bottom: '84%', size: '2px', delay: '168ms', duration: '470ms', travelX: '19px', travelY: '-14px', scale: '1.18' },
-  { bottom: '89%', size: '3px', delay: '180ms', duration: '560ms', travelX: '31px', travelY: '10px', scale: '1.28' },
-  { bottom: '93%', size: '2px', delay: '192ms', duration: '500ms', travelX: '25px', travelY: '-22px', scale: '1.1' },
-  { bottom: '96%', size: '2px', delay: '204ms', duration: '460ms', travelX: '15px', travelY: '12px', scale: '1.06' }
-] as const;
-
-type LiveAuctionAlertKind = 'countdown' | 'leading' | 'outbid' | 'extended' | 'closed' | 'won';
-type AuctionEventAlertKind = Exclude<LiveAuctionAlertKind, 'countdown'>;
-
-type LiveAuctionAlert = {
-  id: string;
-  kind: LiveAuctionAlertKind;
-  auctionId: string;
-  lotId?: string;
-  title: string;
-  subtitle?: string;
-  value?: string;
-  kicker?: string;
-  tone?: CountdownPressurePhase;
-  price?: number;
-  winnerName?: string;
-  bidCount?: number;
-  priority: number;
-  durationMs: number;
-};
-
-type LiveAuctionAlertInput = Omit<LiveAuctionAlert, 'id' | 'priority' | 'durationMs'> & {
-  priority?: number;
-  durationMs?: number;
-};
-
-type CountdownPressurePhase = 'idle' | 'warning' | 'critical' | 'extended';
-type CountdownAmbientTone = 'empty' | 'other' | 'self';
-type CountdownAmbientState = {
-  auctionId: string;
-  tone: CountdownAmbientTone;
-  progress: number;
-  pulseId?: number;
-  endPulseId?: number;
-  endPhase?: 'hold' | 'leaving';
-};
-type CountdownAmbientEndEffect = {
-  auctionId: string;
-  endTsMs: number;
-  phase: 'hold' | 'leaving';
-  pulseId: number;
-};
-type CountdownExtensionPulse = {
-  auctionId: string;
-  id: number;
-  seconds?: number;
-};
-
-const liveAuctionAlertPriority: Record<LiveAuctionAlertKind, number> = {
-  countdown: 10,
-  leading: 20,
-  outbid: 40,
-  extended: 30,
-  closed: 50,
-  won: 100
-};
-
-const liveAuctionAlertDurationMs: Record<LiveAuctionAlertKind, number> = {
-  countdown: 1400,
-  leading: 2600,
-  outbid: 3200,
-  extended: 2800,
-  closed: 3000,
-  won: WIN_CELEBRATION_DURATION_MS
-};
-
-const countdownPressureWarningMs = 10_000;
-const countdownPressureCriticalMs = 3000;
-const countdownPressureExtendedMs = 1800;
-const countdownAmbientThresholdMs = 30_000;
-const countdownAmbientBidPulseMs = 780;
-const countdownAmbientEndHoldMs = 1000;
-const countdownAmbientEndExitMs = 760;
-
-function countdownPressureDisplaySeconds(remainMs: number): number {
-  return Math.max(0, Math.floor(remainMs / 1000));
-}
-
-function getCountdownPressurePhase(remainMs: number, status?: AuctionState['status'], extended = false): CountdownPressurePhase {
-  if (extended) return 'extended';
-  if (status !== 'RUNNING' && status !== 'EXTENDED') return 'idle';
-  if (remainMs <= 0) return 'idle';
-  if (remainMs <= countdownPressureCriticalMs) return 'critical';
-  if (remainMs <= countdownPressureWarningMs) return 'warning';
-  return 'idle';
-}
-
-function countdownAmbientProgress(remainMs: number): number {
-  if (!Number.isFinite(remainMs)) return 0;
-  return Math.max(0, Math.min(1, (countdownAmbientThresholdMs - remainMs) / countdownAmbientThresholdMs));
-}
-
-function countdownAmbientTone(state: AuctionState, userId: string): CountdownAmbientTone {
-  const hasLeaderBid = Boolean(state.leaderBidderId) && (state.bidCount === undefined || state.bidCount > 0);
-  if (!hasLeaderBid) return 'empty';
-  return state.leaderBidderId === userId ? 'self' : 'other';
-}
-
-function useLiveAuctionAlerts() {
-  const [alerts, setAlerts] = useState<LiveAuctionAlert[]>([]);
-  const timersRef = useRef<Record<string, number>>({});
-
-  const dismissAlert = useCallback((id: string) => {
-    const timer = timersRef.current[id];
-    if (timer) {
-      window.clearTimeout(timer);
-      delete timersRef.current[id];
-    }
-    setAlerts((prev) => prev.filter((alert) => alert.id !== id));
-  }, []);
-
-  const pushAlert = useCallback(
-    (input: LiveAuctionAlertInput) => {
-      const id = makeRequestId(`auction-alert-${input.kind}`);
-      const alert: LiveAuctionAlert = {
-        ...input,
-        id,
-        priority: input.priority ?? liveAuctionAlertPriority[input.kind],
-        durationMs: input.durationMs ?? liveAuctionAlertDurationMs[input.kind]
-      };
-
-      Object.values(timersRef.current).forEach((timer) => window.clearTimeout(timer));
-      timersRef.current = {};
-      setAlerts([alert]);
-
-      if (alert.durationMs > 0) {
-        timersRef.current[id] = window.setTimeout(() => dismissAlert(id), alert.durationMs);
-      }
-    },
-    [dismissAlert]
-  );
-
-  useEffect(
-    () => () => {
-      Object.values(timersRef.current).forEach((timer) => window.clearTimeout(timer));
-      timersRef.current = {};
-    },
-    []
-  );
-
-  return { alerts, pushAlert, dismissAlert };
-}
-
 export default function LiveRoomPage({
   apiClient,
   roomId,
@@ -528,7 +353,7 @@ export default function LiveRoomPage({
   const [rankingAnimationSource, setRankingAnimationSource] = useState<RankingAnimationSource>('initial');
   const [enrolledAuctions, setEnrolledAuctions] = useState<Set<string>>(() => new Set());
   const [lotStates, setLotStates] = useState<Record<string, AuctionState>>({});
-  const [liveStats, setLiveStats] = useState<LiveRoomStats>(demoLiveRoomStats);
+  const [liveStats, setLiveStats] = useState<LiveRoomStats>(() => (import.meta.env.VITE_API_MODE === 'remote' ? createRemotePendingStats(roomId) : demoLiveRoomStats));
   const [countdownExtensionPulse, setCountdownExtensionPulse] = useState<CountdownExtensionPulse | undefined>();
   const [countdownAmbientPulse, setCountdownAmbientPulse] = useState<{ auctionId: string; id: number } | undefined>();
   const [countdownAmbientEndEffect, setCountdownAmbientEndEffect] = useState<CountdownAmbientEndEffect | undefined>();
@@ -648,21 +473,25 @@ export default function LiveRoomPage({
   const setStoredCommentDraft = useLiveActivityStore((state) => state.setCommentDraft);
   const clearStoredCommentDraft = useLiveActivityStore((state) => state.clearCommentDraft);
   const recordFootprint = useLiveActivityStore((state) => state.recordFootprint);
+  const isRemoteApiMode = import.meta.env.VITE_API_MODE === 'remote';
+  const roomPlaceholder = useMemo(() => (isRemoteApiMode ? createRemotePendingRoom(roomId) : findDemoLiveRoom(roomId)), [isRemoteApiMode, roomId]);
+  const lotsPlaceholder = useMemo(() => (isRemoteApiMode ? emptyLiveRoomLotPage : listDemoLots(roomId)), [isRemoteApiMode, roomId]);
+  const statsPlaceholder = useMemo(() => (isRemoteApiMode ? createRemotePendingStats(roomId) : demoLiveRoomStats), [isRemoteApiMode, roomId]);
 
   const roomQuery = useQuery({
     queryKey: ['live-room', roomId],
     queryFn: () => apiClient.getLiveRoom(roomId),
-    placeholderData: findDemoLiveRoom(roomId)
+    placeholderData: roomPlaceholder
   });
   const lotsQuery = useQuery({
     queryKey: ['live-room-lots', roomId],
     queryFn: () => apiClient.listLiveRoomLots(roomId),
-    placeholderData: listDemoLots(roomId)
+    placeholderData: lotsPlaceholder
   });
   const statsQuery = useQuery({
     queryKey: ['live-room-stats', roomId],
     queryFn: () => apiClient.getLiveRoomStats(roomId),
-    placeholderData: demoLiveRoomStats
+    placeholderData: statsPlaceholder
   });
   const myAuctionRecordsQuery = useQuery({
     queryKey: ['my-auction-records'],
@@ -675,8 +504,8 @@ export default function LiveRoomPage({
     placeholderData: { items: [], total: 0, page: 1, page_size: 20 }
   });
 
-  const room = roomQuery.data ?? findDemoLiveRoom(roomId);
-  const lots = lotsQuery.data?.items ?? listDemoLots(roomId).items;
+  const room = roomQuery.data ?? roomPlaceholder;
+  const lots = lotsQuery.data?.items ?? lotsPlaceholder.items;
   const merchantQuery = useQuery({
     queryKey: ['merchant', room.merchantId],
     queryFn: () => {
@@ -727,9 +556,10 @@ export default function LiveRoomPage({
   }, [statsQuery.data]);
 
   useEffect(() => {
+    if (isRemoteApiMode && !roomQuery.data) return;
     const coverUrl = liveRoomFootprintCoverUrl(room, lots, activeLot);
     recordFootprint(coverUrl && coverUrl !== room.coverUrl ? { ...room, coverUrl } : room);
-  }, [activeLot, lots, recordFootprint, room]);
+  }, [activeLot, isRemoteApiMode, lots, recordFootprint, room, roomQuery.data]);
 
   const applyServerTimeOffset = useCallback((offsetMs: number) => {
     if (!Number.isFinite(offsetMs)) return;
@@ -936,7 +766,7 @@ export default function LiveRoomPage({
       tone: activeCountdownPressurePhase,
       kicker: activeCountdownPressurePhase === 'critical' ? t('countdownPressure.criticalKicker') : t('countdownPressure.kicker'),
       title: isExtended ? t('countdownPressure.extendedTitle') : t('countdownPressure.title', { seconds }),
-      subtitle: activeLot.title ? `${subtitle} · ${activeLot.title}` : subtitle,
+      subtitle: activeLot.title ? `${subtitle} \u00B7 ${activeLot.title}` : subtitle,
       value: isExtended ? '+' : String(seconds),
       priority: liveAuctionAlertPriority.countdown,
       durationMs: liveAuctionAlertDurationMs.countdown
@@ -1530,7 +1360,8 @@ export default function LiveRoomPage({
     const finalStatus = String(payload.finalStatus ?? '').toUpperCase();
     const auctionId = String(payload.auctionId ?? '').trim();
     if (finalStatus === 'ACCEPTED') {
-      // bid.result 鏄湰娆″嚭浠风殑瀹氬悜缁撴灉锛孉CCEPTED 鍗虫湰浜哄嚭浠锋渶缁堟垚鍔熴€?      clearBidConfirmTimer();
+      // Clear the sync confirmation watchdog once the terminal accepted result arrives.
+      clearBidConfirmTimer();
       const acceptedPrice = realtimeNumber(realtimeBidPriceValue(payload), Number.NaN);
       if (auctionId && Number.isFinite(acceptedPrice)) {
         lastRankingBidRef.current = {
@@ -2424,198 +2255,6 @@ export default function LiveRoomPage({
   );
 }
 
-function LiveCountdownAmbientLayer({ state }: { state?: CountdownAmbientState }) {
-  if (!state) return null;
-  const progressPercent = `${(Math.round(state.progress * 1000) / 10).toFixed(1)}%`;
-  const style = { '--countdown-ambient-progress': progressPercent } as CSSProperties;
-  const endPhaseClass = state.endPhase ? ` is-end-${state.endPhase}` : '';
-  return (
-    <div className={`live-countdown-ambient is-${state.tone}${endPhaseClass}`} style={style} aria-hidden="true">
-      <span className="live-countdown-ambient-band is-left" />
-      <span className="live-countdown-ambient-band is-right" />
-      <span className="live-countdown-ambient-bloom is-left" />
-      <span className="live-countdown-ambient-bloom is-right" />
-      {(['left', 'right'] as const).map((side) => (
-        <span key={side} className={`live-countdown-ambient-particles is-${side}`}>
-          {countdownAmbientParticles.map((particle, index) => (
-            <span
-              key={`${side}-${index}`}
-              className="live-countdown-ambient-particle"
-              style={
-                {
-                  '--ambient-particle-bottom': particle.bottom,
-                  '--ambient-particle-offset': particle.offset,
-                  '--ambient-particle-size': particle.size,
-                  '--ambient-particle-delay': particle.delay,
-                  '--ambient-particle-duration': particle.duration,
-                  '--ambient-particle-drift-x': side === 'left' ? particle.drift : `-${particle.drift}`
-                } as CSSProperties
-              }
-            />
-          ))}
-        </span>
-      ))}
-      {state.pulseId ? (
-        <>
-          <span key={`pulse-${state.pulseId}`} className="live-countdown-ambient-pulse" />
-          {(['left', 'right'] as const).map((side) => (
-            <span key={`sparks-${side}-${state.pulseId}`} className={`live-countdown-ambient-pulse-sparks is-${side}`}>
-              {countdownAmbientPulseSparks.map((spark, index) => (
-                <span
-                  key={`${side}-${index}`}
-                  className="live-countdown-ambient-pulse-spark"
-                  style={
-                    {
-                      '--ambient-spark-bottom': spark.bottom,
-                      '--ambient-spark-size': spark.size,
-                      '--ambient-spark-delay': spark.delay,
-                      '--ambient-spark-duration': spark.duration,
-                      '--ambient-spark-travel-x': side === 'left' ? spark.travelX : `-${spark.travelX}`,
-                      '--ambient-spark-travel-y': spark.travelY,
-                      '--ambient-spark-scale': spark.scale
-                    } as CSSProperties
-                  }
-                />
-              ))}
-            </span>
-          ))}
-        </>
-      ) : null}
-      {state.endPulseId ? <span key={`end-pulse-${state.endPulseId}`} className="live-countdown-ambient-pulse is-end-pulse" /> : null}
-    </div>
-  );
-}
-
-function LiveAuctionAlertLayer({
-  alerts,
-  lots = [],
-  ordersByAuctionId,
-  onDismiss,
-  onPay
-}: {
-  alerts: LiveAuctionAlert[];
-  lots?: LiveRoomLot[];
-  ordersByAuctionId?: Map<string, Order>;
-  onDismiss?: (id: string) => void;
-  onPay?: (order: Order, auctionId: string) => void;
-}) {
-  if (!alerts.length) return null;
-  return (
-    <div className="live-auction-alert-layer" aria-live="polite">
-      {alerts.map((alert, index) => {
-        const lot = alert.lotId ? lots.find((item) => item.id === alert.lotId) : lots.find((item) => item.auctionId === alert.auctionId);
-        const order = ordersByAuctionId?.get(alert.auctionId);
-        return (
-          <LiveAuctionAlertCard
-            key={alert.id}
-            alert={alert}
-            index={index}
-            lot={lot}
-            order={order}
-            onDismiss={onDismiss}
-            onPay={onPay}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-function LiveAuctionAlertCard({
-  alert,
-  index,
-  lot,
-  order,
-  onDismiss,
-  onPay
-}: {
-  alert: LiveAuctionAlert;
-  index: number;
-  lot?: LiveRoomLot;
-  order?: Order;
-  onDismiss?: (id: string) => void;
-  onPay?: (order: Order, auctionId: string) => void;
-}) {
-  const isWon = alert.kind === 'won';
-  const isClosed = alert.kind === 'closed';
-  const toneClass = alert.tone && alert.tone !== 'idle' ? ` is-${alert.tone}` : '';
-  const pendingOrder = !order || !isPendingPayOrder(order);
-  const closedBidCount = Math.max(0, Math.floor(alert.bidCount ?? 0));
-  return (
-    <article
-      className={`live-auction-alert is-${alert.kind}${toneClass}`}
-      role="status"
-      aria-label={alert.subtitle ? `${alert.title}锛?{alert.subtitle}` : alert.title}
-      style={{ '--auction-alert-index': index } as CSSProperties}
-    >
-      {isWon ? (
-        <>
-          <div className="live-auction-success-heading">{t('auctionAlert.won.heading')}</div>
-          <div className="live-auction-alert-card live-auction-success-card">
-            <span className="live-auction-success-badge">
-              <span className="live-auction-success-avatar" aria-hidden="true" />
-              {t('auctionAlert.won.badge')}
-            </span>
-            <span className="live-auction-alert-kicker">{t('auctionAlert.won.shared')}</span>
-            <div className="live-auction-success-lot">
-              <div className="live-auction-success-cover">
-                <VisualPlaceholder title={lot?.title ?? alert.title} imageUrl={lot?.imageUrl} tone="gold" />
-              </div>
-              <div className="live-auction-success-copy">
-                <b>{lot?.title ?? alert.title}</b>
-                <p>{lot?.description ?? alert.subtitle ?? ''}</p>
-                <em>{formatMoney(order?.amount ?? alert.price ?? lot?.finalPrice ?? lot?.currentPrice ?? 0)}</em>
-              </div>
-            </div>
-            <div className="live-auction-success-deposit">
-              <span>{t('auctionAlert.won.deposit')}</span>
-              <strong>{t('auctionAlert.won.depositRefund')}</strong>
-            </div>
-            <button
-              className="live-auction-success-pay"
-              type="button"
-              disabled={pendingOrder}
-              onClick={() => {
-                if (!order) return;
-                onPay?.(order, alert.auctionId);
-              }}
-            >
-              {pendingOrder ? t('auction.orderPending') : t('auctionAlert.won.payWithAddress')}
-            </button>
-          </div>
-          <button className="live-auction-success-close" type="button" aria-label={t('common.close')} onClick={() => onDismiss?.(alert.id)}>
-            <X size={22} />
-          </button>
-        </>
-      ) : isClosed ? (
-        <>
-          <div className="live-auction-closed-heading">
-            <span>{t('auctionAlert.closed.headingPrimary')}</span>
-            <strong>{t('auctionAlert.closed.headingSecondary')}</strong>
-          </div>
-          <div className="live-auction-alert-card live-auction-closed-card">
-            <span className="live-auction-closed-winner">
-              <span className="live-auction-success-avatar" aria-hidden="true" />
-              {alert.winnerName ?? t('auctionAlert.closed.defaultWinner')}
-            </span>
-            <p>{t('auctionAlert.closed.roundSummary', { count: closedBidCount || 1 })}</p>
-            <em>{formatMoney(alert.price ?? 0)}</em>
-            <span className="live-auction-closed-price-label">{t('auctionAlert.closed.finalPrice')}</span>
-          </div>
-        </>
-      ) : (
-        <div className="live-auction-alert-card">
-          <span className="live-auction-alert-kicker">{alert.kicker ?? t(`auctionAlert.${alert.kind}.kicker` as MessageKey)}</span>
-          <strong className={alert.value ? 'live-auction-alert-value' : undefined}>{alert.value ?? alert.title}</strong>
-          {alert.value ? <span className="live-auction-alert-title">{alert.title}</span> : null}
-          {alert.subtitle ? <span>{alert.subtitle}</span> : null}
-          {alert.price !== undefined ? <em>{formatMoney(alert.price)}</em> : null}
-        </div>
-      )}
-    </article>
-  );
-}
-
 type LiveRoomVideoSurfaceHandle = {
   setAudiblePlayback: (enabled: boolean) => Promise<boolean>;
 };
@@ -2860,529 +2499,6 @@ function LiveCommentPanel({
   );
 }
 
-function LiveRankingRail({
-  items,
-  userId,
-  userNickname,
-  userAvatarUrl,
-  collapsed,
-  lastBid,
-  animateChanges,
-  onToggle
-}: {
-  items: RankingItem[];
-  userId: string;
-  userNickname?: string;
-  userAvatarUrl?: string;
-  collapsed: boolean;
-  lastBid?: RankingBidHint;
-  animateChanges: boolean;
-  onToggle: () => void;
-}) {
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  const boardRef = useRef<HTMLDivElement | null>(null);
-  const rankRowRefs = useRef(new Map<number, HTMLDivElement>());
-  const dividerRef = useRef<HTMLDivElement | null>(null);
-  const currentRowRef = useRef<HTMLDivElement | null>(null);
-  const previousItemsRef = useRef<RankingItem[]>([]);
-  const activeAnimationRef = useRef<RankingAnimation>();
-  const animationTimerRef = useRef<number>();
-  const animationCompletionFrameRef = useRef<number>();
-  const [animation, setAnimation] = useState<RankingAnimation>();
-  const [animationLayout, setAnimationLayout] = useState<RankingAnimationLayout>();
-  const [pinnedCurrentUser, setPinnedCurrentUser] = useState<{ active: boolean; item?: RankingItem }>();
-  const slots = useMemo(() => buildRankingSlots(items), [items]);
-  const currentUserItem = useMemo(() => items.find((item) => item.bidderId === userId), [items, userId]);
-  const currentUserRowItem = useMemo(
-    () => withCurrentUserAvatar(pinnedCurrentUser?.active ? pinnedCurrentUser.item : currentUserItem, userId, userAvatarUrl),
-    [currentUserItem, pinnedCurrentUser?.active, pinnedCurrentUser?.item, userAvatarUrl, userId]
-  );
-  const currentUserFallbackName = useMemo(() => firstNonEmptyString(userNickname) ?? rankingBidderFallbackName(userId), [userId, userNickname]);
-  const setRankRowRef = useCallback(
-    (rank: number) => (node: HTMLDivElement | null) => {
-      if (node) {
-        rankRowRefs.current.set(rank, node);
-      } else {
-        rankRowRefs.current.delete(rank);
-      }
-    },
-    []
-  );
-  const panelStyle = animation ? ({ '--ranking-duration-ms': `${animation.durationMs}ms` } as CSSProperties) : undefined;
-  const resolvedAnimationLayout = animation ? (animationLayout?.id === animation.id ? animationLayout : fallbackRankingAnimationLayout(animation)) : undefined;
-
-  const clearRankingAnimationTimers = useCallback(() => {
-    if (animationTimerRef.current) {
-      window.clearTimeout(animationTimerRef.current);
-      animationTimerRef.current = undefined;
-    }
-    if (animationCompletionFrameRef.current !== undefined) {
-      window.cancelAnimationFrame(animationCompletionFrameRef.current);
-      animationCompletionFrameRef.current = undefined;
-    }
-  }, []);
-
-  const clearRankingAnimation = useCallback(() => {
-    clearRankingAnimationTimers();
-    activeAnimationRef.current = undefined;
-    setAnimation(undefined);
-    setAnimationLayout(undefined);
-    setPinnedCurrentUser(undefined);
-  }, [clearRankingAnimationTimers]);
-
-  const completeRankingAnimation = useCallback(
-    (animationId?: string) => {
-      if (!animationId || activeAnimationRef.current?.id !== animationId) return;
-      clearRankingAnimationTimers();
-      activeAnimationRef.current = undefined;
-      setAnimation((current) => (current?.id === animationId ? undefined : current));
-      setAnimationLayout((current) => (current?.id === animationId ? undefined : current));
-      setPinnedCurrentUser(undefined);
-    },
-    [clearRankingAnimationTimers]
-  );
-
-  const scheduleRankingAnimationCompletion = useCallback(
-    (animationId?: string) => {
-      if (!animationId) return;
-      if (animationCompletionFrameRef.current !== undefined) {
-        window.cancelAnimationFrame(animationCompletionFrameRef.current);
-      }
-      animationCompletionFrameRef.current = window.requestAnimationFrame(() => {
-        animationCompletionFrameRef.current = undefined;
-        completeRankingAnimation(animationId);
-      });
-    },
-    [completeRankingAnimation]
-  );
-
-  useEffect(() => {
-    const previousItems = previousItemsRef.current;
-
-    if (!animateChanges) {
-      previousItemsRef.current = items;
-      if (activeAnimationRef.current) return;
-      clearRankingAnimation();
-      return;
-    }
-
-    const nextAnimation = buildRankingAnimation(previousItems, items, userId, lastBid);
-    if (!nextAnimation && activeAnimationRef.current) {
-      previousItemsRef.current = items;
-      return;
-    }
-
-    clearRankingAnimationTimers();
-    activeAnimationRef.current = nextAnimation;
-    setAnimation(nextAnimation);
-    setAnimationLayout(nextAnimation ? fallbackRankingAnimationLayout(nextAnimation) : undefined);
-    if (nextAnimation?.kind === 'current-row-to-first' && nextAnimation.isSelfBid) {
-      setPinnedCurrentUser({ active: true, item: previousItems.find((item) => item.bidderId === userId) });
-    } else {
-      setPinnedCurrentUser(undefined);
-    }
-    if (nextAnimation) {
-      animationTimerRef.current = window.setTimeout(() => {
-        completeRankingAnimation(nextAnimation.id);
-      }, nextAnimation.durationMs);
-    }
-    previousItemsRef.current = items;
-  }, [animateChanges, clearRankingAnimation, clearRankingAnimationTimers, completeRankingAnimation, items, lastBid, userId]);
-
-  useEffect(() => {
-    return () => {
-      clearRankingAnimationTimers();
-      activeAnimationRef.current = undefined;
-    };
-  }, [clearRankingAnimationTimers]);
-
-  useLayoutEffect(() => {
-    if (!animation || animation.kind === 'price-only') return;
-    const nextLayout = measureRankingAnimationLayout(animation, panelRef.current, boardRef.current, rankRowRefs.current, dividerRef.current, currentRowRef.current);
-    setAnimationLayout((current) =>
-      current &&
-      current.id === nextLayout.id &&
-      current.fromY === nextLayout.fromY &&
-      current.toY === nextLayout.toY &&
-      current.exitFromY === nextLayout.exitFromY &&
-      current.exitToY === nextLayout.exitToY
-        ? current
-        : nextLayout
-    );
-  }, [animation, slots, currentUserItem]);
-
-  return (
-    <aside className={collapsed ? 'live-ranking-rail is-collapsed' : 'live-ranking-rail'} aria-label={t('auction.ranking')}>
-      <button className="live-ranking-toggle" type="button" onClick={onToggle} aria-label={collapsed ? t('live.rankingExpand') : t('live.rankingCollapse')}>
-        {collapsed ? (
-          <>
-            <b>{t('live.rankingExpandText')}</b>
-            <span aria-hidden="true">&lt;</span>
-          </>
-        ) : (
-          <>
-            <b>{t('live.rankingCollapseText')}</b>
-            <span aria-hidden="true">&gt;</span>
-          </>
-        )}
-      </button>
-      {!collapsed ? (
-        <div ref={panelRef} className="live-ranking-panel" style={panelStyle}>
-          <h2 className="live-ranking-title">
-            <Trophy size={13} />
-            <span>{t('auction.ranking')}</span>
-          </h2>
-          <div ref={boardRef} className="live-ranking-board-viewport">
-            <div className="live-ranking-top-list">
-              {slots.map((slot) => (
-                <LiveRankingRow
-                  key={rankingSlotKey(slot)}
-                  rank={slot.rank}
-                  item={slot.item}
-                  userId={userId}
-                  animation={animation}
-                  rowRef={setRankRowRef(slot.rank)}
-                />
-              ))}
-            </div>
-            <div ref={dividerRef} className="live-ranking-divider" />
-            {animation && animation.kind !== 'price-only' && resolvedAnimationLayout && animation.exitItem ? <LiveRankingExitRow animation={animation} layout={resolvedAnimationLayout} /> : null}
-          </div>
-          <LiveRankingRow
-            rank={currentUserRowItem?.rank ?? '-'}
-            item={currentUserRowItem}
-            userId={userId}
-            animation={animation}
-            current
-            currentFallbackName={currentUserFallbackName}
-            rowRef={(node) => (currentRowRef.current = node)}
-          />
-          {animation && animation.kind !== 'price-only' && resolvedAnimationLayout ? (
-            <LiveRankingGhost animation={animation} layout={resolvedAnimationLayout} onComplete={scheduleRankingAnimationCompletion} />
-          ) : null}
-        </div>
-      ) : null}
-    </aside>
-  );
-}
-
-function LiveRankingRow({
-  rank,
-  item,
-  userId,
-  animation,
-  current = false,
-  currentFallbackName,
-  rowRef
-}: {
-  rank: number | '-';
-  item?: RankingItem;
-  userId: string;
-  animation?: RankingAnimation;
-  current?: boolean;
-  currentFallbackName?: string;
-  rowRef?: (node: HTMLDivElement | null) => void;
-}) {
-  const isPlaceholder = !item && !current;
-  const isCurrentUser = item?.bidderId === userId;
-  const isTopLeader = item?.rank === 1 && !current;
-  const animationBidderId = item?.bidderId;
-  const isMovementAnimation = animation && animation.kind !== 'price-only';
-  const isMovingTarget = Boolean(isMovementAnimation && animationBidderId === animation.bidderId && !current);
-  const isEnteringRow = Boolean(!isMovingTarget && !current && animationBidderId && animation?.enteringIds.includes(animationBidderId));
-  const rowClassName = joinClassNames(
-    'live-ranking-row',
-    current && 'live-ranking-current-row',
-    isPlaceholder && 'is-placeholder',
-    isCurrentUser && 'is-current-user',
-    isTopLeader && 'is-leading',
-    !current && animationBidderId && animation?.shiftedIds.includes(animationBidderId) && 'is-shifted-down',
-    isEnteringRow && 'is-entering',
-    isMovingTarget && 'is-moving-target',
-    animationBidderId && animation?.priceUpdateIds.includes(animationBidderId) && 'is-price-updating'
-  );
-  const rankClassName = joinClassNames(
-    'live-ranking-rank',
-    rank === 1 && 'is-gold',
-    rank === 2 && 'is-silver',
-    rank === 3 && 'is-bronze',
-    typeof rank === 'number' && rank > 3 && 'is-plain'
-  );
-  const priceClassName = joinClassNames(
-    'live-ranking-price',
-    !item && 'is-empty',
-    isTopLeader && 'is-leading-price',
-    animationBidderId && animation?.priceUpdateIds.includes(animationBidderId) && 'is-price-updating'
-  );
-
-  return (
-    <div ref={rowRef} className={rowClassName} data-rank={rank} data-bidder-id={item?.bidderId} data-current-user={current ? 'true' : undefined}>
-      <span className={rankClassName}>{item || current ? rank : rank}</span>
-      <RankingAvatar item={item} fallbackName={currentFallbackName} />
-      <strong className="live-ranking-name">{item?.nicknameMask ?? (current ? currentFallbackName : '')}</strong>
-      <b className={priceClassName}>{item ? formatMoney(item.price) : '-'}</b>
-    </div>
-  );
-}
-
-function LiveRankingGhost({
-  animation,
-  layout,
-  onComplete
-}: {
-  animation: RankingAnimation;
-  layout: RankingAnimationLayout;
-  onComplete: (animationId: string) => void;
-}) {
-  const handleAnimationEnd = useCallback(
-    (event: ReactAnimationEvent<HTMLDivElement>) => {
-      if (event.target !== event.currentTarget) return;
-      if (event.animationName && event.animationName !== rankingGhostAnimationName(animation.kind)) return;
-      onComplete(animation.id);
-    },
-    [animation.id, animation.kind, onComplete]
-  );
-
-  return (
-    <div
-      className={joinClassNames('live-ranking-ghost', 'live-ranking-row', 'is-leading', `is-${animation.kind}`, animation.isSelfBid ? 'is-self-bid' : 'is-other-bid')}
-      data-origin={animation.origin}
-      data-from-rank={animation.fromRank}
-      data-to-rank={animation.toRank}
-      data-bidder-id={animation.bidderId}
-      onAnimationEnd={handleAnimationEnd}
-      style={
-        {
-          '--ranking-duration-ms': `${animation.durationMs}ms`,
-          '--ranking-ghost-duration-ms': `${animation.durationMs}ms`,
-          '--ranking-from-y': `${layout.fromY}px`,
-          '--ranking-to-y': `${layout.toY}px`
-        } as CSSProperties
-      }
-    >
-      <span className="live-ranking-rank is-gold">1</span>
-      <RankingAvatar item={animation.movingItem} />
-      <strong className="live-ranking-name">{animation.movingItem.nicknameMask}</strong>
-      <b className="live-ranking-price is-leading-price is-price-updating">{formatMoney(animation.movingItem.price)}</b>
-    </div>
-  );
-}
-
-function LiveRankingExitRow({ animation, layout }: { animation: RankingAnimation; layout: RankingAnimationLayout }) {
-  if (!animation.exitItem) return null;
-  return (
-    <div
-      className="live-ranking-row live-ranking-exit-row is-exiting-to-divider"
-      data-bidder-id={animation.exitItem.bidderId}
-      style={
-        {
-          '--ranking-duration-ms': `${animation.durationMs}ms`,
-          '--ranking-exit-from-y': `${layout.exitFromY}px`,
-          '--ranking-exit-to-y': `${layout.exitToY}px`
-        } as CSSProperties
-      }
-    >
-      <span className="live-ranking-rank is-plain">{animation.exitItem.rank}</span>
-      <RankingAvatar item={animation.exitItem} />
-      <strong className="live-ranking-name">{animation.exitItem.nicknameMask}</strong>
-      <b className="live-ranking-price">{formatMoney(animation.exitItem.price)}</b>
-    </div>
-  );
-}
-
-function RankingAvatar({ item, fallbackName }: { item?: RankingItem; fallbackName?: string }) {
-  const [imageFailed, setImageFailed] = useState(false);
-  const avatarUrl = item?.avatarUrl;
-
-  useEffect(() => {
-    setImageFailed(false);
-  }, [avatarUrl]);
-
-  return (
-    <span className="live-ranking-avatar" aria-hidden="true">
-      {avatarUrl && !imageFailed ? <img src={avatarUrl} alt="" onError={() => setImageFailed(true)} /> : <span>{rankingAvatarText(item, fallbackName)}</span>}
-    </span>
-  );
-}
-
-function withCurrentUserAvatar(item: RankingItem | undefined, userId: string, userAvatarUrl?: string): RankingItem | undefined {
-  const avatarUrl = firstNonEmptyString(item?.avatarUrl, item?.bidderId === userId ? userAvatarUrl : undefined);
-  if (!item || !avatarUrl || item.avatarUrl === avatarUrl) return item;
-  return {
-    ...item,
-    avatarUrl
-  };
-}
-
-function buildRankingSlots(items: RankingItem[]): Array<{ rank: number; item?: RankingItem }> {
-  const sortedItems = sortRankingItems(items).slice(0, 8);
-  return Array.from({ length: 8 }, (_, index) => ({ rank: index + 1, item: sortedItems[index] }));
-}
-
-function rankingSlotKey(slot: { rank: number; item?: RankingItem }): string {
-  return slot.item ? `${slot.rank}-${slot.item.bidderId}-${slot.item.price}` : `${slot.rank}-empty`;
-}
-
-function buildRankingAnimation(previousItems: RankingItem[], nextItems: RankingItem[], userId: string, lastBid?: RankingBidHint): RankingAnimation | undefined {
-  if (!previousItems.length || !nextItems.length || rankingItemsEqual(previousItems, nextItems)) return undefined;
-  const previousByBidder = new Map(previousItems.map((item) => [item.bidderId, item]));
-  const nextByBidder = new Map(nextItems.map((item) => [item.bidderId, item]));
-  const bidderId = resolveRankingAnimationBidder(previousItems, nextItems, lastBid);
-  if (!bidderId) return undefined;
-  const nextBidderItem = nextByBidder.get(bidderId);
-  const previousBidderItem = previousByBidder.get(bidderId);
-  const fallbackMovingItem: RankingItem = previousBidderItem ?? {
-    rank: 1,
-    bidderId,
-    nicknameMask: rankingBidderFallbackName(bidderId),
-    price: lastBid?.price ?? 0,
-    bidTsMs: lastBid?.bidTsMs ?? Date.now()
-  };
-  const movingItem: RankingItem = nextBidderItem ?? {
-    ...fallbackMovingItem,
-    rank: 1,
-    price: lastBid?.price ?? fallbackMovingItem.price
-  };
-  const previousTopIds = topRankingIds(previousItems);
-  const nextTopIds = topRankingIds(nextItems);
-  const shiftedIds = nextTopIds.filter((id) => id !== bidderId && previousByBidder.has(id) && (previousByBidder.get(id)?.rank ?? 0) < (nextByBidder.get(id)?.rank ?? 0));
-  const enteringIds = nextTopIds.filter((id) => !previousTopIds.includes(id));
-  const exitingIds = previousTopIds.filter((id) => !nextTopIds.includes(id));
-  const previousRank = previousBidderItem?.rank;
-  const nextRank = nextBidderItem?.rank;
-  const rankChanged = previousRank !== undefined && nextRank !== undefined && previousRank !== nextRank;
-  const membershipChanged = enteringIds.length > 0 || exitingIds.length > 0;
-  const priceChanged = nextBidderItem && previousBidderItem && nextBidderItem.price !== previousBidderItem.price;
-  const isSelfBid = bidderId === userId;
-  const movesToFirst = nextRank === 1 && (rankChanged || membershipChanged);
-  const kind: RankingAnimationKind = movesToFirst
-    ? previousRank !== undefined && previousRank <= 8
-      ? 'top-slot-to-first'
-      : isSelfBid
-        ? 'current-row-to-first'
-        : 'divider-to-first'
-    : 'price-only';
-  if (kind === 'price-only' && !priceChanged) return undefined;
-  const exitItem = kind !== 'price-only' ? sortRankingItems(previousItems).find((item) => exitingIds.includes(item.bidderId) && item.bidderId !== bidderId) : undefined;
-  return {
-    id: `${bidderId}-${movingItem.bidTsMs}-${movingItem.price}`,
-    kind,
-    origin: rankingAnimationOrigin(kind),
-    bidderId,
-    fromRank: previousRank,
-    toRank: 1,
-    isSelfBid,
-    durationMs: isSelfBid && kind !== 'price-only' ? RANKING_SELF_BID_ANIMATION_DURATION_MS : RANKING_BID_ANIMATION_DURATION_MS,
-    movingItem,
-    exitItem,
-    shiftedIds,
-    enteringIds,
-    exitingIds,
-    priceUpdateIds: kind === 'price-only' ? [bidderId] : []
-  };
-}
-
-function rankingAnimationOrigin(kind: RankingAnimationKind): RankingAnimationOrigin {
-  if (kind === 'top-slot-to-first') return 'top-slot';
-  if (kind === 'divider-to-first') return 'divider';
-  if (kind === 'current-row-to-first') return 'current-row';
-  return 'price';
-}
-
-function rankingGhostAnimationName(kind: RankingAnimationKind): string {
-  if (kind === 'top-slot-to-first') return 'ranking-top-slot-to-first';
-  if (kind === 'divider-to-first') return 'ranking-divider-to-first';
-  if (kind === 'current-row-to-first') return 'ranking-current-row-to-first';
-  return '';
-}
-
-function resolveRankingAnimationBidder(previousItems: RankingItem[], nextItems: RankingItem[], lastBid?: RankingBidHint): string | undefined {
-  if (lastBid?.bidderId && nextItems.some((item) => item.bidderId === lastBid.bidderId)) return lastBid.bidderId;
-  const previousByBidder = new Map(previousItems.map((item) => [item.bidderId, item]));
-  return sortRankingItems(nextItems).find((item) => {
-    const previous = previousByBidder.get(item.bidderId);
-    return previous && (item.price > previous.price || item.rank < previous.rank);
-  })?.bidderId;
-}
-
-function topRankingIds(items: RankingItem[]): string[] {
-  return sortRankingItems(items)
-    .slice(0, 8)
-    .map((item) => item.bidderId);
-}
-
-const rankingFallbackFirstRowY = 48;
-const rankingFallbackRowStepY = 32;
-const rankingFallbackDividerY = rankingFallbackFirstRowY + rankingFallbackRowStepY * 8 + 2;
-const rankingFallbackCurrentRowY = rankingFallbackDividerY + 6;
-const rankingFallbackBoardDividerY = rankingFallbackRowStepY * 8 + 2;
-
-function fallbackRankingAnimationLayout(animation: RankingAnimation): RankingAnimationLayout {
-  const fromY =
-    animation.kind === 'top-slot-to-first'
-      ? rankingFallbackYForRank(animation.fromRank ?? 1)
-      : animation.kind === 'current-row-to-first'
-        ? rankingFallbackCurrentRowY
-        : animation.kind === 'divider-to-first'
-          ? rankingFallbackDividerY
-          : rankingFallbackYForRank(1);
-  return {
-    id: animation.id,
-    fromY,
-    toY: rankingFallbackYForRank(1),
-    exitFromY: rankingFallbackBoardYForRank(8),
-    exitToY: rankingFallbackBoardDividerY
-  };
-}
-
-function measureRankingAnimationLayout(animation: RankingAnimation, panel: HTMLDivElement | null, board: HTMLDivElement | null, rankRows: Map<number, HTMLDivElement>, divider: HTMLDivElement | null, currentRow: HTMLDivElement | null): RankingAnimationLayout {
-  const fallback = fallbackRankingAnimationLayout(animation);
-  const toY = relativeRankingTop(rankRows.get(1), panel, fallback.toY);
-  const fromY =
-    animation.kind === 'top-slot-to-first'
-      ? relativeRankingTop(rankRows.get(animation.fromRank ?? 1), panel, fallback.fromY)
-      : animation.kind === 'current-row-to-first'
-        ? relativeRankingTop(currentRow, panel, fallback.fromY)
-        : animation.kind === 'divider-to-first'
-          ? relativeRankingTop(divider, panel, fallback.fromY)
-          : fallback.fromY;
-  return {
-    id: animation.id,
-    fromY,
-    toY,
-    exitFromY: relativeRankingTop(rankRows.get(8), board, fallback.exitFromY),
-    exitToY: relativeRankingTop(divider, board, fallback.exitToY)
-  };
-}
-
-function rankingFallbackYForRank(rank: number): number {
-  return rankingFallbackFirstRowY + Math.max(0, rank - 1) * rankingFallbackRowStepY;
-}
-
-function rankingFallbackBoardYForRank(rank: number): number {
-  return Math.max(0, rank - 1) * rankingFallbackRowStepY;
-}
-
-function relativeRankingTop(element: HTMLElement | null | undefined, panel: HTMLElement | null, fallback: number): number {
-  if (!element || !panel) return fallback;
-  const elementRect = element.getBoundingClientRect();
-  const panelRect = panel.getBoundingClientRect();
-  if (!elementRect.height && !elementRect.top && !panelRect.top) return fallback;
-  return Math.round(elementRect.top - panelRect.top);
-}
-
-function sortRankingItems(items: RankingItem[]): RankingItem[] {
-  return [...items].sort((a, b) => a.rank - b.rank || b.price - a.price || b.bidTsMs - a.bidTsMs);
-}
-
-function rankingItemsEqual(previousItems: RankingItem[], nextItems: RankingItem[]): boolean {
-  if (previousItems.length !== nextItems.length) return false;
-  return previousItems.every((previousItem, index) => {
-    const nextItem = nextItems[index];
-    return nextItem && previousItem.rank === nextItem.rank && previousItem.bidderId === nextItem.bidderId && previousItem.price === nextItem.price && previousItem.bidTsMs === nextItem.bidTsMs && previousItem.avatarUrl === nextItem.avatarUrl;
-  });
-}
-
 function rankingSnapshotItemsEqual(previousItems: RankingItem[], nextItems: RankingItem[]): boolean {
   const previousSorted = sortRankingItems(previousItems);
   const nextSorted = sortRankingItems(nextItems);
@@ -3428,15 +2544,6 @@ function shouldApplyRankingSnapshot(currentItems: RankingItem[], snapshotItems: 
   if (!currentItems.length) return true;
   if (!snapshotItems.length) return false;
   return Math.max(...snapshotItems.map((item) => item.price)) >= Math.max(...currentItems.map((item) => item.price));
-}
-
-function rankingAvatarText(item?: RankingItem, fallbackName = ''): string {
-  const name = item?.nicknameMask ?? fallbackName;
-  return name.trim().slice(0, 1) || '-';
-}
-
-function joinClassNames(...items: Array<string | false | undefined>): string {
-  return items.filter(Boolean).join(' ');
 }
 
 function initialLiveChatMessages(roomId: string): LiveChatMessage[] {
@@ -3660,7 +2767,8 @@ function handleRealtimeMessage(message: RealtimeMessage, options: RealtimeHandle
     }
     options.onBidAck?.(requestId, payload);
     if (isAsync) {
-      // 寮傛褰㈡€侊細QUEUED 浠呭叆闃熷緟瑁佸喅锛堣鍐充腑锛夛紝REJECTED 涓虹粓鎬佸け璐ワ紱閮戒笉鏄€滃嚭浠锋垚鍔熲€濄€?      options.setNotice(String(payload.status ?? '').toUpperCase() === 'REJECTED' ? formatBidRejectedMessage(payload) : t('auction.bidArbitrating'));
+      // Async acknowledgements surface queueing immediately and only use rejection copy when the server already decided.
+      options.setNotice(String(payload.status ?? '').toUpperCase() === 'REJECTED' ? formatBidRejectedMessage(payload) : t('auction.bidArbitrating'));
     } else {
       options.setNotice(payload.accepted === false ? formatBidRejectedMessage(payload) : payload.accepted === true ? t('auction.bidAccepted') : t('auction.bidSubmitted'));
     }
@@ -3836,7 +2944,7 @@ function AuctionFloatingCard({
           <strong>{formatMoney(priceValue(lot, state))}</strong>
           <small>
             {t('auction.countdown')} {formatCountdown(remainMs, { milliseconds: true })}
-            {leader ? ` · ${leader}` : ''}
+            {leader ? ` \u00B7 ${leader}` : ''}
           </small>
         </div>
       </button>
@@ -4025,15 +3133,6 @@ function LotListSheet({
         </>
       )}
     </AnimatedSheetFrame>
-  );
-}
-
-function EmptyState({ text }: { text: string }) {
-  return (
-    <div className="empty-state">
-      <Package size={30} />
-      <span>{text}</span>
-    </div>
   );
 }
 
@@ -4575,17 +3674,6 @@ function DigitalHumanLiveStage({ room, idleVideoUrl, talkVideoUrl, initialMediaP
   );
 }
 
-function SheetHeader({ title, onClose }: { title: string; onClose: () => void }) {
-  return (
-    <header className="sheet-header">
-      <h2>{title}</h2>
-      <button type="button" aria-label={t('common.close')} onClick={onClose}>
-        <X size={18} />
-      </button>
-    </header>
-  );
-}
-
 function fallbackAuctionState(auctionId: string): AuctionState {
   return {
     auctionId,
@@ -4886,15 +3974,7 @@ function resolveRankingDisplayName(raw: Record<string, unknown>, bidderId: strin
 function isSelfRankingAlias(value?: string): boolean {
   if (!value) return false;
   const normalized = value.trim().toLowerCase();
-  return normalized === '我' || normalized === 'me';
-}
-
-function firstNonEmptyString(...values: unknown[]): string | undefined {
-  for (const value of values) {
-    const text = typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
-    if (text) return text;
-  }
-  return undefined;
+  return normalized === '\u6211' || normalized === 'me';
 }
 
 function lotCoverUrl(lot?: LiveRoomLot): string | undefined {
@@ -4903,11 +3983,6 @@ function lotCoverUrl(lot?: LiveRoomLot): string | undefined {
 
 function liveRoomFootprintCoverUrl(room: LiveRoom, lots: LiveRoomLot[], activeLot?: LiveRoomLot): string | undefined {
   return firstNonEmptyString(room.coverUrl, lotCoverUrl(activeLot), lots.map(lotCoverUrl).find(Boolean));
-}
-
-function rankingBidderFallbackName(bidderId: string): string {
-  const suffix = bidderId.replace(/[^\p{L}\p{N}]/gu, '').slice(-2).toUpperCase();
-  return suffix ? `鐢ㄦ埛**${suffix}` : t('common.demoUser');
 }
 
 function rankingAvatarUrl(raw: Record<string, unknown>, bidderId = '', userId = '', userAvatarUrl?: string): string | undefined {
@@ -4976,7 +4051,7 @@ function formatQuickBidDeltaAmount(cents: number): string {
   if (getRuntimeLocale() !== 'zh-CN') return formatMoney(normalized);
   const yuan = normalized / 100;
   const text = Number.isInteger(yuan) ? yuan.toFixed(0) : yuan.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
-  return `${text}元`;
+  return `${text}\u5143`;
 }
 
 function formatCountdownParts(ms: number): { hours: string; minutes: string; seconds: string; milliseconds?: string } {
@@ -4997,6 +4072,7 @@ function leaderAvatarText(name: string): string {
   const trimmed = name.trim();
   return trimmed ? Array.from(trimmed)[0] : '-';
 }
+
 
 
 
