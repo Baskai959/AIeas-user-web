@@ -384,10 +384,15 @@ describe('mobile layout CSS', () => {
     expect(rule('.lot-row-meta')).toContain('display: flex');
     expect(rule('.lot-row-meta')).toContain('align-items: center');
     expect(rule('.lot-row-meta')).toContain('gap: 6px');
+    expect(rule('.lot-row-meta .lot-schedule-slot')).toContain('display: inline-flex');
+    expect(rule('.lot-row-meta .lot-schedule-slot')).toContain('flex: 0 1 auto');
+    expect(rule('.lot-row-meta .lot-schedule-slot:empty')).toContain('display: none');
     expect(rule('.lot-row-meta .lot-schedule-line')).toContain('flex: 0 1 auto');
     expect(rule('.lot-row-meta .lot-schedule-line')).toContain('width: fit-content');
     expect(rule('.lot-row-meta .lot-schedule-line')).toContain('min-width: 0');
     expect(rule('.lot-row-meta .lot-schedule-line')).toContain('margin-top: 0');
+    expect(rule('.lot-schedule-line-measure')).toContain('position: fixed');
+    expect(rule('.lot-schedule-line-measure')).toContain('visibility: hidden');
     expect(css).not.toContain('.lot-thumb-frame::after');
     expect(rule('.lot-sequence')).toContain('position: absolute');
     expect(rule('.lot-sequence')).toContain('min-width: 18px');

@@ -3091,7 +3091,7 @@ function LotListSheet({
                 <div>
                   <div className="lot-row-meta">
                     <span className="status-badge">{lotStatusLabel(state.status)}</span>
-                    {scheduleText ? <span className="lot-schedule-line">{scheduleText}</span> : null}
+                    {scheduleText ? <LotListScheduleLine text={scheduleText} /> : null}
                   </div>
                   <h3>{lot.title}</h3>
                   {listIntro ? <p>{listIntro}</p> : null}
@@ -3134,6 +3134,72 @@ function LotListSheet({
       )}
     </AnimatedSheetFrame>
   );
+}
+
+function LotListScheduleLine({ text }: { text: string }) {
+  const slotRef = useRef<HTMLSpanElement>(null);
+  const [isHidden, setIsHidden] = useState(false);
+
+  useLayoutEffect(() => {
+    const slot = slotRef.current;
+    const parent = slot?.parentElement;
+    if (!slot || !parent) return;
+
+    const statusBadge = parent.querySelector<HTMLElement>('.status-badge');
+    let frameId: number | undefined;
+
+    const updateVisibility = () => {
+      const parentWidth = parent.clientWidth || parent.getBoundingClientRect().width;
+      const statusWidth = statusBadge ? statusBadge.offsetWidth || statusBadge.getBoundingClientRect().width : 0;
+      const styles = window.getComputedStyle(parent);
+      const gap = Number.parseFloat(styles.columnGap || styles.gap || '0') || 0;
+      const requiredWidth = measureLotScheduleLineWidth(text);
+
+      if (parentWidth <= 0 || requiredWidth <= 0) {
+        setIsHidden(false);
+        return;
+      }
+
+      setIsHidden(requiredWidth > Math.max(0, parentWidth - statusWidth - gap) + 0.5);
+    };
+
+    const scheduleUpdate = () => {
+      if (frameId !== undefined) window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+        frameId = undefined;
+        updateVisibility();
+      });
+    };
+
+    updateVisibility();
+
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(scheduleUpdate);
+    resizeObserver?.observe(parent);
+    if (statusBadge) resizeObserver?.observe(statusBadge);
+    window.addEventListener('resize', scheduleUpdate);
+
+    return () => {
+      if (frameId !== undefined) window.cancelAnimationFrame(frameId);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', scheduleUpdate);
+    };
+  }, [text]);
+
+  return (
+    <span ref={slotRef} className="lot-schedule-slot">
+      {isHidden ? null : <span className="lot-schedule-line">{text}</span>}
+    </span>
+  );
+}
+
+function measureLotScheduleLineWidth(text: string): number {
+  const measure = document.createElement('span');
+  measure.className = 'lot-schedule-line lot-schedule-line-measure';
+  measure.textContent = text;
+  document.body.appendChild(measure);
+  const width = measure.scrollWidth || measure.getBoundingClientRect().width;
+  measure.remove();
+  return width;
 }
 
 function sortLotListForSheet(lots: LiveRoomLot[], states: Record<string, AuctionState>, activeAuctionId?: string): Array<{ lot: LiveRoomLot; state: AuctionState; originalIndex: number }> {

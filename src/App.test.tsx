@@ -3303,6 +3303,68 @@ describe('App flow', () => {
     expect(screen.getByRole('dialog', { name: getMessage('live.goodsList') })).toBeInTheDocument();
   });
 
+  it('hides the live-room lot list schedule line when the time badge would be clipped', async () => {
+    const scheduledStartMs = now + 600_000;
+    const scheduledStartTime = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(scheduledStartMs));
+    vi.mocked(api.getLiveRoom).mockResolvedValueOnce({
+      id: 'room_1001',
+      title: '珠宝严选直播间',
+      merchantName: '云上珠宝',
+      status: 'LIVE',
+      videoSource: 'recorded',
+      onlineCount: 328,
+      watcherCount: 1208,
+      activeAuctionId: 'auc_2001',
+      videoUrl: '/media/live-room-demo.mp4'
+    });
+    vi.mocked(api.listLiveRoomLots).mockResolvedValueOnce({
+      items: [
+        {
+          id: 'lot_schedule_clipped',
+          auctionId: 'auc_2001',
+          roomId: 'room_1001',
+          merchantId: 'merchant_01',
+          categoryId: 'jewelry',
+          title: 'Small Screen Scheduled Lot',
+          subtitle: 'Compact intro',
+          status: 'WARMING_UP',
+          startPrice: 0,
+          currentPrice: 0,
+          startTsMs: scheduledStartMs,
+          endTsMs: now + 420_000,
+          ruleSnapshot: { incrementRule: { type: 'fixed', amount: 100, maxBidSteps: 10 } }
+        }
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20
+    });
+    seedSession();
+    window.history.pushState(null, '', '/live/room_1001');
+    renderApp();
+    const user = userEvent.setup();
+    const goodsEntry = await screen.findByRole('button', { name: getMessage('live.goodsEntry') });
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function clientWidthMock() {
+      if (this.classList.contains('lot-row-meta')) return 96;
+      return 320;
+    });
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function offsetWidthMock() {
+      if (this.classList.contains('status-badge')) return 78;
+      return 0;
+    });
+    vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function scrollWidthMock() {
+      if (this.classList.contains('lot-schedule-line')) return 56;
+      return 0;
+    });
+
+    await user.click(goodsEntry);
+    const drawer = await screen.findByRole('dialog', { name: getMessage('live.goodsList') });
+    const row = within(drawer).getByTestId('lot-row');
+
+    await waitFor(() => expect(within(row).queryByText(scheduledStartTime)).not.toBeInTheDocument());
+    expect(row.querySelector('.lot-schedule-slot')).toBeEmptyDOMElement();
+  });
+
   it('does not fall back to demo lots after the live room lots endpoint returns empty', async () => {
     vi.mocked(api.getLiveRoom).mockResolvedValueOnce({
       id: 'room_empty',
