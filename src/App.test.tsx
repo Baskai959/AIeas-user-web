@@ -2745,28 +2745,21 @@ describe('App flow', () => {
   });
 
   it('does not start the quick-bid interval after a rejected first bid', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(now);
-    const sockets = installNativeRealtimeSocket();
+    const sockets = installMockControlSocket();
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       seedSession();
       window.history.pushState(null, '', '/live/room_1001');
       renderApp();
 
-      await flushAppUntil(() => sockets.length > 0);
-      expect(sockets.length).toBeGreaterThan(0);
-      fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
-      await flushApp();
-      const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
+      await waitFor(() => expect(sockets.length).toBeGreaterThan(0));
+      fireEvent.click(await screen.findByRole('button', { name: getMessage('auction.lookAround') }));
+      const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
       fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
-      await flushApp();
-      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('product.bidNow') }));
-      await flushApp();
-      const bidDialog = screen.getByRole('dialog', { name: getMessage('bid.confirmTitle') });
+      fireEvent.click(await within(detailDialog).findByRole('button', { name: getMessage('product.bidNow') }));
+      const bidDialog = await screen.findByRole('dialog', { name: getMessage('bid.confirmTitle') });
 
       fireEvent.click(within(bidDialog).getByRole('button', { name: getMessage('bid.submitNow') }));
-      await flushApp();
       await act(async () => {
         emitLatestMockControl(sockets, {
           type: 'bid.ack',
@@ -2775,13 +2768,13 @@ describe('App flow', () => {
             auctionId: 'auc_2001',
             reason: 'BID_SERVICE_UNAVAILABLE',
             currentPrice: 150100,
-            message: '出价失败'
+            message: 'backend-custom-denied'
           }
         });
       });
-      await flushApp();
 
-      expect(within(bidDialog).getByText('出价失败')).toBeInTheDocument();
+      await waitFor(() => expect(within(bidDialog).getByText('backend-custom-denied')).toBeInTheDocument());
+      expect(within(bidDialog).queryByText(getMessage('auction.bidRejected'))).not.toBeInTheDocument();
       expect(within(bidDialog).queryByText(/出价太频繁/)).not.toBeInTheDocument();
       expect(warnSpy).toHaveBeenCalledWith(
         '[auction] bid rejected',
@@ -2790,12 +2783,12 @@ describe('App flow', () => {
           requestId: undefined,
           auctionId: 'auc_2001',
           reason: 'BID_SERVICE_UNAVAILABLE',
-          message: '出价失败',
+          message: 'backend-custom-denied',
           currentPrice: 150100
         })
       );
     } finally {
-      vi.useRealTimers();
+      warnSpy.mockRestore();
     }
   });
 
@@ -5950,6 +5943,7 @@ describe('App flow', () => {
 	      const submitButton = bidDialog.querySelector('button.quick-bid-submit') as HTMLButtonElement | null;
 	      expect(submitButton).not.toBeNull();
 	      expect(submitButton).toBeDisabled();
+	      expect(within(bidDialog).queryByText(getMessage('auction.bidRejectedHammerPending'))).not.toBeInTheDocument();
 	      // 即便强行触发点击，也不会发出 bid.place。
 	      fireEvent.click(submitButton as HTMLButtonElement);
 	      await flushApp();
@@ -5962,28 +5956,22 @@ describe('App flow', () => {
 	    }
 	  });
 
-	  it('shows the AUCTION_HAMMER_PENDING bid.ack reason with the friendly hammer-pending message', async () => {
-	    vi.useFakeTimers();
-	    vi.setSystemTime(now);
-	    const sockets = installNativeRealtimeSocket();
+	  it('falls back to the generic bid rejection message for AUCTION_HAMMER_PENDING bid.ack reasons', async () => {
+	    const sockets = installMockControlSocket();
 	    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 	    try {
 	      seedSession();
 	      window.history.pushState(null, '', '/live/room_1001');
 	      renderApp();
 
-	      await flushApp();
-	      fireEvent.click(screen.getByRole('button', { name: getMessage('auction.lookAround') }));
-	      await flushApp();
-	      const detailDialog = screen.getByRole('dialog', { name: getMessage('product.detail') });
+	      await waitFor(() => expect(sockets.length).toBeGreaterThan(0));
+	      fireEvent.click(await screen.findByRole('button', { name: getMessage('auction.lookAround') }));
+	      const detailDialog = await screen.findByRole('dialog', { name: getMessage('product.detail') });
 	      fireEvent.click(within(detailDialog).getByRole('button', { name: detailEnrollAndPayText }));
-	      await flushApp();
-	      fireEvent.click(within(detailDialog).getByRole('button', { name: getMessage('product.bidNow') }));
-	      await flushApp();
-	      const bidDialog = screen.getByRole('dialog', { name: getMessage('bid.confirmTitle') });
+	      fireEvent.click(await within(detailDialog).findByRole('button', { name: getMessage('product.bidNow') }));
+	      const bidDialog = await screen.findByRole('dialog', { name: getMessage('bid.confirmTitle') });
 
 	      fireEvent.click(within(bidDialog).getByRole('button', { name: getMessage('bid.submitNow') }));
-	      await flushApp();
 	      // 异步 REJECTED with reason=AUCTION_HAMMER_PENDING
 	      await act(async () => {
 	        emitLatestMockControl(sockets, {
@@ -5996,12 +5984,12 @@ describe('App flow', () => {
 	          }
 	        });
 	      });
-	      await flushApp();
 
-	      expect(within(bidDialog).getAllByText(getMessage('auction.bidRejectedHammerPending')).length).toBeGreaterThan(0);
+	      await waitFor(() => expect(within(bidDialog).getByText(getMessage('auction.bidRejected'))).toBeInTheDocument());
+	      expect(within(bidDialog).queryByText(getMessage('auction.bidRejectedHammerPending'))).not.toBeInTheDocument();
 	      expect(warnSpy).toHaveBeenCalled();
 	    } finally {
-	      vi.useRealTimers();
+	      warnSpy.mockRestore();
 	    }
 	  });
 

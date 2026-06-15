@@ -3545,6 +3545,9 @@ function BidSheet({
   const isBidPending = feedback.status === 'submitting' || feedback.status === 'arbitrating';
   const canDecrease = stepCount > 1 && isBiddingOpen && !isBidPending;
   const canIncrease = stepCount < maxBidSteps && selectedPrice < (rule.capPrice ?? Number.MAX_SAFE_INTEGER) && isBiddingOpen && !isBidPending;
+  const intervalWaitingMessage = shouldShowIntervalNotice && effectiveIntervalNoticeRemainingMs > 0
+    ? t('bid.intervalWaiting', { seconds: Math.ceil(effectiveIntervalNoticeRemainingMs / 1000) })
+    : '';
   const disabledReason = isHammerPending
     ? t('auction.bidRejectedHammerPending')
     : isClosed
@@ -3553,9 +3556,9 @@ function BidSheet({
         ? t('bid.priceOutdated')
         : !validation.valid
           ? formatBidValidationNotice(validation)
-          : shouldShowIntervalNotice && effectiveIntervalNoticeRemainingMs > 0
-            ? t('bid.intervalWaiting', { seconds: Math.ceil(effectiveIntervalNoticeRemainingMs / 1000) })
-            : '';
+          : intervalWaitingMessage;
+  const disabledReasonMessage = disabledReason === intervalWaitingMessage ? intervalWaitingMessage : '';
+  const feedbackMessage = feedback.status === 'error' ? visibleQuickBidFeedbackMessage(feedback.message) : '';
   const canSubmit = !disabledReason && !isBidPending;
   const submitText = isHammerPending
     ? t('auction.hammerInProgress')
@@ -3643,8 +3646,8 @@ function BidSheet({
             <Plus size={18} />
           </button>
         </div>
-        {feedback.status === 'error' ? <p className="quick-bid-feedback is-error">{feedback.message}</p> : null}
-        {disabledReason && !isClosed ? <p className="quick-bid-feedback is-error">{disabledReason}</p> : null}
+        {feedbackMessage ? <p className="quick-bid-feedback is-error">{feedbackMessage}</p> : null}
+        {disabledReasonMessage && !isClosed ? <p className="quick-bid-feedback is-error">{disabledReasonMessage}</p> : null}
         <button className="quick-bid-submit" type="button" disabled={!canSubmit} onClick={() => onSubmit(selectedPrice)}>
           {submitText}
         </button>
@@ -4083,16 +4086,34 @@ function formatBidValidationNotice(validation: BidValidationResult): string {
   return t('auction.bidInvalidAmount');
 }
 
+function visibleQuickBidFeedbackMessage(message: string): string {
+  const hiddenMessages = new Set([
+    t('auction.bidRealtimeTimeout'),
+    t('auction.bidTooFrequent'),
+    t('auction.bidInvalidAmount'),
+    t('auction.bidAboveMaxStepsGeneric'),
+    t('auction.bidAlreadyPending'),
+    t('auction.bidRejectedHammerPending'),
+    t('auction.closed'),
+    t('bid.priceOutdated'),
+    t('bid.currentAuctionEnded')
+  ]);
+  const hiddenMessagePrefixes = [
+    t('auction.bidBelowMinimum', { min: '' }).trim(),
+    t('auction.bidInvalidStep', { step: '' }).trim(),
+    t('auction.bidAboveCeiling', { ceiling: '' }).trim(),
+    t('auction.bidAboveMaxSteps', { max: '' }).trim()
+  ].filter(Boolean);
+  const normalizedMessage = message.trim();
+  const isHidden = hiddenMessages.has(normalizedMessage) || hiddenMessagePrefixes.some((prefix) => normalizedMessage.startsWith(prefix));
+  return normalizedMessage && !isHidden ? normalizedMessage : '';
+}
+
 function formatBidRejectedMessage(payload: Record<string, unknown>): string {
   const reason = String(payload.reason ?? '');
   if (reason === 'belowMinimum' || reason === 'BELOW_MIN_INCREMENT' || reason === 'invalidStep') return t('auction.bidTooSlow');
-  if (reason === 'FREQ_LIMIT') return t('auction.bidTooFrequent');
-  if (reason === 'ABOVE_MAX_BID_STEPS' || reason === 'ABOVE_EXPECTED_MAX_BID_STEPS') return t('auction.bidAboveMaxStepsGeneric');
   if (reason === 'HOT_AUCTION_QUEUE_FULL') return t('auction.bidQueueFull');
-  if (reason === 'USER_BID_ALREADY_PENDING') return t('auction.bidAlreadyPending');
-  if (reason === 'AUCTION_CLOSED' || reason === 'INVALID_STATE') return t('auction.closed');
-  if (reason === 'AUCTION_HAMMER_PENDING') return t('auction.bidRejectedHammerPending');
-  if (typeof payload.message === 'string' && payload.message.trim()) return payload.message;
+  if (typeof payload.message === 'string' && payload.message.trim()) return payload.message.trim();
   return t('auction.bidRejected');
 }
 
